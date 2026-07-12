@@ -50,14 +50,28 @@ async function runStep(stepId: StepId, opp: Opportunity, sizeUsd: number, opts?:
     case "hedge":
       return await binancePerp(opp.base, "SHORT", qty);
     case "withdraw": {
-      // Withdraw the bought coin from the buy venue to the tool wallet address.
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
       const net = NET_LABEL[chain] ?? chain;
-      const dest = destAddr(chain);
-      if (buy?.venue === "binance") return await binanceWithdraw(opp.base, net, dest, qty);
-      if (buy?.venue === "upbit") return await upbitWithdraw(opp.base, net, dest, qty);
-      if (buy?.venue === "bithumb") return await bithumbWithdraw(opp.base, dest, qty);
-      return { ok: true, dryRun: dry, message: `${buy?.venue} → 개인지갑 출금 (모의) · 미지원 거래소` };
+      const evm = getChain(chain)?.family === "evm";
+      const destVenue = sell?.venue ?? "upbit";
+      // EVM → personal wallet (hop). Non-EVM → destination exchange deposit addr (직접).
+      let dest: string;
+      let note = "";
+      if (evm) {
+        dest = destAddr(chain);
+      } else {
+        const fetched = await fetchDepositAddress(destVenue, opp.base, net);
+        dest = fetched || process.env.WALLET_DEPOSIT_FALLBACK || "0xDEPOSIT_TODO";
+        note = fetched ? ` → ${destVenue} 직접` : ` → ${destVenue} 직접 · 입금주소 미확인(키필요)`;
+      }
+      const call =
+        buy?.venue === "binance" ? binanceWithdraw(opp.base, net, dest, qty)
+        : buy?.venue === "upbit" ? upbitWithdraw(opp.base, net, dest, qty)
+        : buy?.venue === "bithumb" ? bithumbWithdraw(opp.base, dest, qty)
+        : null;
+      if (!call) return { ok: true, dryRun: dry, message: `${buy?.venue} 출금 (모의) · 미지원 거래소` };
+      const r = await call;
+      return { ok: r.ok, dryRun: r.dryRun, message: `${r.message}${note}` };
     }
     case "transfer": {
       // Personal wallet → destination exchange deposit address (the real send).
