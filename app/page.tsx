@@ -1026,7 +1026,6 @@ function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed: boole
       {runs.length > 0
         ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
-      <RebalanceCard />
       <GatesCard />
       <ToolsCard />
     </div>
@@ -1143,54 +1142,6 @@ function RiskCard({ inFlight }: { inFlight: number }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Rebalance helper — how much to move to flatten the global/KR capital skew.
-type Portfolio = { totalUsd: number; globalUsd: number; krUsd: number; skewPct: number; mock: boolean };
-function RebalanceCard() {
-  const [pf, setPf] = useState<Portfolio | null>(null);
-  useEffect(() => {
-    const load = () => fetch("/api/balances", { cache: "no-store" }).then((r) => r.json()).then((j) => setPf(j.portfolio ?? null)).catch(() => {});
-    void load();
-    const id = setInterval(load, 15000);
-    return () => clearInterval(id);
-  }, []);
-  if (!pf) return null;
-  const g = pf.globalUsd, k = pf.krUsd, total = g + k;
-  const target = total / 2; // aim 50:50 so either direction can execute without a transfer wait
-  const move = Math.abs(g - target); // move this much to balance
-  const toKr = g > k; // global heavy → send to KR (정프 준비), else repatriate
-  const gPct = total > 0 ? (g / total) * 100 : 50;
-  const balanced = move / (total || 1) < 0.1; // within 10%
-  return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>리밸런스 도우미</div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>
-        <span style={{ color: "var(--brand-2)" }}>글로벌 {usd(g)}</span>
-        <span style={{ color: "var(--sky)" }}>KR {usd(k)}</span>
-      </div>
-      <div style={{ display: "flex", height: 8, borderRadius: 999, overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)" }}>
-        <div style={{ width: `${gPct}%`, background: "var(--brand)" }} />
-        <div style={{ width: `${100 - gPct}%`, background: "var(--sky)" }} />
-      </div>
-      {balanced ? (
-        <div style={{ marginTop: 10, color: "var(--pos)", fontSize: 12, fontWeight: 600 }}>균형 양호 — 양방향 즉시 체결 가능 (전송 대기 없음)</div>
-      ) : (
-        <div style={{ marginTop: 10, padding: "9px 11px", borderRadius: 8, background: "var(--brand-soft)", fontSize: 12.5 }}>
-          <b style={{ color: "var(--brand-2)" }}>{usd(move)}</b>
-          <span style={{ color: "var(--text-dim)" }}>
-            {toKr
-              ? " 을 글로벌 → KR로 전송하면 50:50 (정프 실행 준비)"
-              : " 어치를 KR → 글로벌로 회수하면 50:50 (역프·재고 보충)"}
-          </span>
-          <div style={{ color: "var(--text-mute)", fontSize: 11, marginTop: 4 }}>
-            추천 코인: {toKr ? "XRP·TRX·SOL 등 전송 빠르고 저렴한 코인" : "원화 매도 후 USDT 전송, 또는 리패트리에이션"}
-          </div>
-        </div>
-      )}
-      {pf.mock && <div style={{ marginTop: 6, fontSize: 10, color: "var(--text-mute)" }}>데모 잔고 기준 — 키 넣으면 실잔고로 계산</div>}
     </div>
   );
 }
