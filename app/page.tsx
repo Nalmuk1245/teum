@@ -659,7 +659,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
         });
         const j = await res.json();
         if (typeof j.filledQty === "number" && j.filledQty > 0) qtyRef.current = j.filledQty;
-        return { ok: !!j.ok, message: j.message };
+        return { ok: !!j.ok, message: j.message, tx: j.tx };
       } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : "요청 실패" };
       }
@@ -890,7 +890,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             </div>
           </div>
 
-          <StepTimeline steps={plan} statuses={runner.statuses} messages={runner.messages} pauseAt={runner.pauseAt} />
+          <StepTimeline steps={plan} statuses={runner.statuses} messages={runner.messages} txs={runner.txs} pauseAt={runner.pauseAt} />
 
           {runner.phase === "error" && runner.error && <Warn text={runner.error} />}
 
@@ -990,11 +990,12 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
 
 // ── Execution flow timeline ───────────────────────────────────────────────────
 function StepTimeline({
-  steps, statuses, messages, pauseAt,
+  steps, statuses, messages, txs, pauseAt,
 }: {
   steps: ExecStep[];
   statuses: Record<string, StepPhase>;
   messages: Record<string, string>;
+  txs: Record<string, { hash: string; url: string | null }>;
   pauseAt: number;
 }) {
   return (
@@ -1010,6 +1011,7 @@ function StepTimeline({
           : st === "running" ? "var(--amber)"
           : paused ? "var(--brand-2)" : "var(--text-mute)";
         const sub = messages[s.id] ?? s.desc;
+        const tx = txs[s.id];
         return (
           <div key={s.id} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "4px 0" }}>
             <span
@@ -1024,6 +1026,28 @@ function StepTimeline({
                 {st === "done" ? " ✓" : st === "running" ? " …" : st === "error" ? " ✕" : st === "rolledback" ? " ↩ 롤백" : paused ? " · 확인 대기" : ""}
               </div>
               <div style={{ fontSize: 11, color: st === "error" ? "var(--neg)" : "var(--text-mute)" }}>{sub}</div>
+              {tx && (
+                <a
+                  href={tx.url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => { if (!tx.url) e.preventDefault(); }}
+                  title={tx.hash}
+                  className="tnum"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4, marginTop: 3,
+                    fontSize: 10.5, fontWeight: 600,
+                    color: tx.url ? "var(--sky)" : "var(--text-mute)",
+                    background: "var(--card-2)", border: "1px solid var(--border)",
+                    borderRadius: 4, padding: "2px 7px",
+                    textDecoration: "none",
+                    cursor: tx.url ? "pointer" : "default",
+                  }}
+                >
+                  tx {tx.hash.length > 18 ? `${tx.hash.slice(0, 10)}…${tx.hash.slice(-6)}` : tx.hash}
+                  {tx.url ? " ↗" : " (모의)"}
+                </a>
+              )}
             </div>
           </div>
         );

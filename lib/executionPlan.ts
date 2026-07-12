@@ -15,7 +15,13 @@ export type StepId =
 export type ExecStep = { id: StepId; label: string; desc: string };
 export type StepPhase = "pending" | "running" | "done" | "error" | "rolledback";
 export type RunPhase = "idle" | "running" | "paused" | "done" | "error";
-export type StepResult = { ok: boolean; message?: string };
+export type StepResult = {
+  ok: boolean;
+  message?: string;
+  /** On-chain transaction of this step (transfer send / deposit credit). url =
+   *  chain explorer link, null when there's nothing real to open (DRY_RUN). */
+  tx?: { hash: string; url: string | null };
+};
 export type AutoLevel = "manual" | "beforeWithdraw" | "auto";
 
 const VENUE: Record<string, string> = {
@@ -78,6 +84,7 @@ export function useFlowRunner(
 ) {
   const [statuses, setStatuses] = useState<Record<string, StepPhase>>({});
   const [messages, setMessages] = useState<Record<string, string>>({});
+  const [txs, setTxs] = useState<Record<string, NonNullable<StepResult["tx"]>>>({});
   const [phase, setPhase] = useState<RunPhase>("idle");
   const [pauseAt, setPauseAt] = useState(-1);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +154,7 @@ export function useFlowRunner(
       }
       if (!alive.current) { busy.current = false; return; }
       if (r.message) setMessages((m) => ({ ...m, [step.id]: r.message! }));
+      if (r.tx) setTxs((t) => ({ ...t, [step.id]: r.tx! }));
       if (!r.ok) {
         set(step.id, "error");
         // Partial-fill rollback — only BEFORE the irreversible withdraw
@@ -195,6 +203,7 @@ export function useFlowRunner(
     confirmed.current = new Set();
     setStatuses({});
     setMessages({});
+    setTxs({});
     setError(null);
     setPauseAt(-1);
     void loop();
@@ -221,10 +230,11 @@ export function useFlowRunner(
     confirmed.current = new Set();
     setStatuses({});
     setMessages({});
+    setTxs({});
     setError(null);
     setPhase("idle");
     setPauseAt(-1);
   };
 
-  return { statuses, messages, phase, pauseAt, error, start, confirmContinue, retry, reset };
+  return { statuses, messages, txs, phase, pauseAt, error, start, confirmContinue, retry, reset };
 }

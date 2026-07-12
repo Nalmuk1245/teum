@@ -25,7 +25,18 @@ function destAddr(chainKey: string): string | null {
   return walletAddress() ?? process.env.WALLET_ADDR_EVM ?? null;
 }
 
-type StepResult = { ok: boolean; dryRun: boolean; message: string; hash?: string | null; filledQty?: number };
+type StepResult = {
+  ok: boolean; dryRun: boolean; message: string; filledQty?: number;
+  /** On-chain tx of this step + explorer link (null link when simulated). */
+  tx?: { hash: string; url: string | null };
+};
+// Explorer link for a tx on the opp's transfer chain.
+function txInfo(chainLabel: string | undefined, hash: string | null | undefined, dry: boolean) {
+  if (!hash) return undefined;
+  const chain = getChain(chainKeyFromLabel(chainLabel));
+  const url = !dry && chain?.explorer ? `${chain.explorer}${hash}` : null;
+  return { hash, url };
+}
 const fail = (message: string): StepResult => ({ ok: false, dryRun: CONFIG.DRY_RUN, message });
 // A step we haven't wired: fine to no-op in DRY_RUN, but in live mode a silent
 // pass would let the machine run real orders around a hole — hard fail.
@@ -125,10 +136,19 @@ async function runStep(
         confirms: opp.transfer?.network?.confirms ?? 1,
       });
       const noteAddr = fetched?.address ? "" : " · 입금주소 미확인(키필요)";
-      return { ok: res.ok, dryRun: res.dryRun, message: `개인지갑 → ${destVenue} 송금 · ${res.message}${noteAddr}`, hash: res.hash };
+      return {
+        ok: res.ok, dryRun: res.dryRun,
+        message: `개인지갑 → ${destVenue} 송금 · ${res.message}${noteAddr}`,
+        tx: txInfo(opp.transfer?.network?.chain, res.hash, res.dryRun),
+      };
     }
-    case "deposit":
-      return await checkDeposit(sell?.venue ?? "upbit", opp.base, opts.sinceTs ?? Date.now() - 60 * 60 * 1000);
+    case "deposit": {
+      const r = await checkDeposit(sell?.venue ?? "upbit", opp.base, opts.sinceTs ?? Date.now() - 60 * 60 * 1000);
+      return {
+        ok: r.ok, dryRun: r.dryRun, message: r.message,
+        tx: txInfo(opp.transfer?.network?.chain, r.txHash, r.dryRun),
+      };
+    }
     case "sell": {
       if (sell?.venue === "binance") return await binanceSpot(opp.base, "SELL", { qty });
       if (sell?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });

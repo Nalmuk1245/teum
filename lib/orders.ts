@@ -5,7 +5,7 @@
 import crypto from "crypto";
 import { CONFIG } from "./config";
 
-export type OrderResult = { ok: boolean; dryRun: boolean; id: string | null; message: string; filledQty?: number };
+export type OrderResult = { ok: boolean; dryRun: boolean; id: string | null; message: string; filledQty?: number; txHash?: string };
 
 // DRY_RUN → simulate ok. LIVE without the venue key → HARD FAIL: a silent no-op
 // leg would let the state machine proceed into real orders on the other side
@@ -238,10 +238,10 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
     if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 입금 확인`, !!key);
     try {
       const j = await binanceSignedGet("/sapi/v1/capital/deposit/hisrec", { coin: base, startTime: sinceTs });
-      const credited = Array.isArray(j) && j.some(
-        (d: { status?: number; insertTime?: number }) => d.status === 1 && (d.insertTime ?? 0) >= sinceTs,
-      );
-      return { ok: credited, dryRun: false, id: null, message: credited ? `Binance ${base} 입금 확인` : "입금 대기" };
+      const rec = Array.isArray(j)
+        ? j.find((d: { status?: number; insertTime?: number; txId?: string }) => d.status === 1 && (d.insertTime ?? 0) >= sinceTs)
+        : undefined;
+      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txId, message: rec ? `Binance ${base} 입금 확인` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -253,11 +253,11 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const query = new URLSearchParams({ currency: base }).toString();
       const res = await fetch(`https://api.upbit.com/v1/deposits?${query}`, { headers: { Authorization: upbitAuth(query) }, cache: "no-store" });
       const j = await res.json();
-      const credited = Array.isArray(j) && j.some(
-        (d: { state?: string; created_at?: string }) =>
-          d.state === "ACCEPTED" && new Date(d.created_at ?? 0).getTime() >= sinceTs,
-      );
-      return { ok: credited, dryRun: false, id: null, message: credited ? `Upbit ${base} 입금 확인` : "입금 대기" };
+      const rec = Array.isArray(j)
+        ? j.find((d: { state?: string; created_at?: string; txid?: string }) =>
+            d.state === "ACCEPTED" && new Date(d.created_at ?? 0).getTime() >= sinceTs)
+        : undefined;
+      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txid, message: rec ? `Upbit ${base} 입금 확인` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
