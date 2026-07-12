@@ -1,0 +1,10 @@
+/node_modules
+/.next
+/out
+next-env.d.ts
+*.tsbuildinfo
+
+# secrets — exchange API keys live here, never commit
+.env
+.env.local
+.env*.local

@@ -1,0 +1,86 @@
+:root {
+  /* ── Modern dark fintech palette ──────────────────────────────── */
+  --bg: #0a0d14; /* app background (deep navy-charcoal) */
+  --bg-grad: radial-gradient(1200px 600px at 78% -8%, #141a2b 0%, #0a0d14 55%);
+  --card: #111725; /* elevated surface */
+  --card-2: #161d2e; /* nested / hover */
+  --card-3: #1c2336;
+  --border: #222b3d;
+  --border-strong: #2d3852;
+
+  --text: #e7ecf5;
+  --text-dim: #94a0b8;
+  --text-mute: #5a6580;
+
+  /* brand accent */
+  --brand: #7c6cff;
+  --brand-2: #9a7bff;
+  --brand-soft: rgba(124, 108, 255, 0.14);
+  --brand-grad: linear-gradient(135deg, #7c6cff 0%, #9a7bff 100%);
+
+  /* semantic P&L */
+  --pos: #34d399;
+  --pos-soft: rgba(52, 211, 153, 0.13);
+  --neg: #fb7185;
+  --neg-soft: rgba(251, 113, 133, 0.13);
+
+  /* strategy hues */
+  --sky: #38bdf8;
+  --amber: #fbbf24;
+  --teal: #2dd4bf;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --num: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  background-image: var(--bg-grad);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4766;
+  background-clip: content-box;
+}

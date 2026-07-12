@@ -1,0 +1,28 @@
+{
+  "name": "arb-cockpit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal semi-automated arbitrage cockpit — kimchi / cross-CEX / funding-basis / CEX-DEX, one-click execute.",
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "start": "next start -p 3100",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "ethers": "^6.17.0",
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tronweb": "^6.4.0",
+    "xrpl": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.4"
+  }
+}
