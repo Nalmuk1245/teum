@@ -33,7 +33,8 @@
 - [x] **김프 멀티글로벌** — (업비트|빗썸) × (바낸|바이비트|OKX) 조합 중 best-net 선택. 헷지는 코인 기준 Binance perp 유지. 라이브 오버레이도 글로벌 다리 일반화(quote==USDT)
 - [ ] 바이비트/OKX 서명 주문·출금·잔고 (지금 글로벌 다리로 채택되면 라이브 하드페일)
 - [ ] cross-cex 실주문 배선 (bybit/okx 서명 주문·출금 — 지금 라이브 하드페일)
-- [ ] **funding-basis** — 펀딩 vs 현물 캐시앤캐리
+- [x] **funding-basis** — 크로스벤유 펀딩 차익 (lighter/binance/bybit/hyperliquid, 8h 정규화·예측 레이트·정산 카운트다운·손익분기, 전용 탭) — 모니터링 전용
+- [ ] 펀딩 실행 배선 — HL/Lighter 서명 주문 (perp DEX SDK)
 - [ ] **cex-dex** — DEX 라우터 견적 + 온체인 실행
 
 ## 🟢 P3 — 안전·리스크
@@ -47,8 +48,11 @@
 - [ ] **갭 히스토리** — 프리미엄 시계열·지속시간·히트율, 코인별 스파크라인
 - [ ] **KRW 리패트리에이션** — 오프램프(은행 한도·환전) 추적
 - [ ] 모니터 필터/정렬/즐겨찾기 (최소 net·거래량·선물유무, 임계 알림음)
+- [x] 실행 타임라인 tx 해시 + 체인 익스플로러 링크 (송금·입금 단계)
+- [ ] 출금 단계 조기 tx 표시 (바낸 출금 히스토리 폴링)
+- [ ] 펀딩 레이트 지속성 검증 (히스토리 필요 — 갭 히스토리와 함께)
 
 ## ⚪ 정리 (자잘)
 - [ ] `EXCLUDE`에 누락 스테이블 추가 (USDE/USD1 등) `lib/arbitrage.ts`·`config.ts`
-- [ ] 안 쓰는 `app/api/execute` + `lib/execution.ts` 제거 (`exec-step`로 대체됨)
+- [x] 안 쓰는 `app/api/execute` + `lib/execution.ts` 제거
 - [ ] EVM 외 잔고 RPC 안정화(공개 RPC 레이트리밋 → env로 교체)
