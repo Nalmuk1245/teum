@@ -19,6 +19,8 @@ export const CONFIG = {
   MIN_KR_VOLUME_KRW: 500_000_000,
   /** Sanity cap — a |premium| above this is stale/broken data, not an edge. */
   MAX_ABS_PREMIUM_PCT: 40,
+  /** Live market orders abort when the book-estimated slippage exceeds this. */
+  MAX_SLIPPAGE_PCT: Number(process.env.MAX_SLIPPAGE_PCT ?? 0.5),
 } as const;
 
 /** Default round-trip cost model per strategy (% of notional). Tune later. */

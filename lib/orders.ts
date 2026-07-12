@@ -5,7 +5,12 @@
 import crypto from "crypto";
 import { CONFIG } from "./config";
 
-export type OrderResult = { ok: boolean; dryRun: boolean; id: string | null; message: string; filledQty?: number; txHash?: string };
+export type OrderResult = {
+  ok: boolean; dryRun: boolean; id: string | null; message: string;
+  filledQty?: number; // base actually filled
+  quoteFilled?: number; // quote currency actually spent/received (fees excl.)
+  txHash?: string;
+};
 
 // DRY_RUN → simulate ok. LIVE without the venue key → HARD FAIL: a silent no-op
 // leg would let the state machine proceed into real orders on the other side
@@ -70,7 +75,8 @@ export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { qu
     const ok = !!j.orderId;
     // executedQty = actual base filled (post-fill; fees may further deduct base on BUY).
     const filledQty = j.executedQty ? Number(j.executedQty) : undefined;
-    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, filledQty, message: ok ? `Binance ${base} ${side} 체결${filledQty ? ` ${filledQty}` : ""}` : (j.msg || "주문 실패") };
+    const quoteFilled = j.cummulativeQuoteQty ? Number(j.cummulativeQuoteQty) : undefined;
+    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, filledQty, quoteFilled, message: ok ? `Binance ${base} ${side} 체결${filledQty ? ` ${filledQty}` : ""}` : (j.msg || "주문 실패") };
   } catch (e) {
     return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
   }
@@ -92,6 +98,116 @@ export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: 
     return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, message: ok ? `Binance ${base} 선물 ${action}` : (j.msg || "선물 주문 실패") };
   } catch (e) {
     return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "선물 주문 실패" };
+  }
+}
+
+// ── Limit-order primitives (live unwind loop) ────────────────────────────────
+// Place a LIMIT sell, poll fills, cancel — on Binance spot and Upbit. Bithumb
+// limit flow is not wired (live unwind on a bithumb leg fails fast upstream).
+
+export async function binanceLimitSell(base: string, qty: number, price: number): Promise<OrderResult> {
+  const { key } = bnKeys();
+  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 지정가 매도 ${qty}@${price}`, !!key);
+  try {
+    const j = await binanceSigned("api.binance.com", "/api/v3/order", {
+      symbol: `${base}USDT`, side: "SELL", type: "LIMIT", timeInForce: "GTC",
+      quantity: await roundQty("spot", `${base}USDT`, qty), price,
+    });
+    const ok = !!j.orderId;
+    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, message: ok ? `지정가 매도 등록 @${price}` : (j.msg || "주문 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+  }
+}
+
+/** Executed base qty + received quote so far for a Binance spot order. */
+export async function binanceOrderFills(base: string, orderId: string): Promise<{ filledQty: number; quoteFilled: number; open: boolean } | null> {
+  const { key } = bnKeys();
+  if (CONFIG.DRY_RUN || !key) return null;
+  try {
+    const j = await binanceSignedGet("/api/v3/order", { symbol: `${base}USDT`, orderId });
+    if (!j.orderId) return null;
+    return {
+      filledQty: Number(j.executedQty ?? 0),
+      quoteFilled: Number(j.cummulativeQuoteQty ?? 0),
+      open: j.status === "NEW" || j.status === "PARTIALLY_FILLED",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function binanceCancelOrder(base: string, orderId: string): Promise<boolean> {
+  const { key, secret } = bnKeys();
+  if (CONFIG.DRY_RUN || !key || !secret) return true;
+  try {
+    const q = new URLSearchParams({ symbol: `${base}USDT`, orderId, recvWindow: "5000", timestamp: String(Date.now()) }).toString();
+    const sig = crypto.createHmac("sha256", secret).update(q).digest("hex");
+    const res = await fetch(`https://api.binance.com/api/v3/order?${q}&signature=${sig}`, {
+      method: "DELETE", headers: { "X-MBX-APIKEY": key }, cache: "no-store",
+    });
+    const j = await res.json();
+    return !!j.orderId || j.status === "CANCELED";
+  } catch {
+    return false;
+  }
+}
+
+export async function upbitLimitSell(base: string, volume: number, priceKrw: number): Promise<OrderResult> {
+  const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} 지정가 매도 ${volume}@₩${priceKrw}`, !!(key && secret));
+  try {
+    const query = new URLSearchParams({
+      market: `KRW-${base}`, side: "ask", ord_type: "limit",
+      volume: String(volume), price: String(priceKrw),
+    }).toString();
+    const res = await fetch(`https://api.upbit.com/v1/orders`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: query, cache: "no-store",
+    });
+    const j = await res.json();
+    const ok = !!j.uuid;
+    return { ok, dryRun: false, id: j.uuid ?? null, message: ok ? `지정가 매도 등록 @₩${priceKrw}` : (j.error?.message || "주문 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+  }
+}
+
+export async function upbitOrderFills(uuid: string): Promise<{ filledQty: number; quoteFilled: number; open: boolean } | null> {
+  const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return null;
+  try {
+    const query = new URLSearchParams({ uuid }).toString();
+    const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+    });
+    const j = await res.json();
+    if (!j?.uuid) return null;
+    const trades: Array<{ funds: string }> = j.trades ?? [];
+    return {
+      filledQty: Number(j.executed_volume ?? 0),
+      quoteFilled: trades.reduce((s2, t) => s2 + Number(t.funds), 0),
+      open: j.state === "wait" || j.state === "watch",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function upbitCancelOrder(uuid: string): Promise<boolean> {
+  const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return true;
+  try {
+    const query = new URLSearchParams({ uuid }).toString();
+    const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+    });
+    const j = await res.json();
+    return !!j?.uuid;
+  } catch {
+    return false;
   }
 }
 
@@ -127,6 +243,23 @@ function upbitAuth(query: string) {
   return `Bearer ${upbitJwt(key, secret, query)}`;
 }
 
+/** Fetch an Upbit order's real fills (volume + KRW funds). Best-effort. */
+async function upbitOrderDetail(uuid: string): Promise<{ filledQty?: number; quoteKrw?: number } | null> {
+  const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+  if (!key || !secret) return null;
+  await new Promise((r) => setTimeout(r, 600)); // market orders fill ~instantly
+  const query = new URLSearchParams({ uuid }).toString();
+  const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
+    headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+  });
+  const j = await res.json();
+  if (!j?.uuid) return null;
+  const trades: Array<{ volume: string; funds: string }> = j.trades ?? [];
+  const filledQty = Number(j.executed_volume ?? 0) || trades.reduce((s2, t) => s2 + Number(t.volume), 0) || undefined;
+  const quoteKrw = trades.reduce((s2, t) => s2 + Number(t.funds), 0) || undefined;
+  return { filledQty, quoteKrw };
+}
+
 export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volume?: number; priceKrw?: number }): Promise<OrderResult> {
   const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} ${side === "ask" ? "매도" : "매수"}`, !!(key && secret));
@@ -143,7 +276,13 @@ export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volu
     });
     const j = await res.json();
     const ok = !!j.uuid;
-    return { ok, dryRun: false, id: j.uuid ?? null, message: ok ? `Upbit ${base} ${side === "ask" ? "매도" : "매수"} 체결` : (j.error?.message || "주문 실패") };
+    // Best-effort real-fill lookup — the create response has no fills.
+    let filledQty: number | undefined, quoteFilled: number | undefined;
+    if (ok) {
+      const d = await upbitOrderDetail(j.uuid).catch(() => null);
+      if (d) { filledQty = d.filledQty; quoteFilled = d.quoteKrw; }
+    }
+    return { ok, dryRun: false, id: j.uuid ?? null, filledQty, quoteFilled, message: ok ? `Upbit ${base} ${side === "ask" ? "매도" : "매수"} 체결` : (j.error?.message || "주문 실패") };
   } catch (e) {
     return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
   }
@@ -262,5 +401,22 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
   }
-  return sim(`${venue} ${base} 입금 확인 (미배선)`, false); // bithumb TODO — live → fail via sim
+  if (venue === "bithumb") {
+    const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
+    if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bithumb ${base} 입금 확인`, !!(key && secret));
+    try {
+      // searchGb 4 = coin deposit. transfer_date is in MICROseconds.
+      const j = await bithumbSigned("/info/user_transactions", {
+        order_currency: base, payment_currency: "KRW", searchGb: "4", count: "20",
+      });
+      if (j.status !== "0000") return { ok: false, dryRun: false, id: null, message: j.message || "입금 조회 실패" };
+      const rec = (Array.isArray(j.data) ? j.data : []).find(
+        (d: { transfer_date?: number | string }) => Number(d.transfer_date ?? 0) / 1000 >= sinceTs,
+      );
+      return { ok: !!rec, dryRun: false, id: null, message: rec ? `Bithumb ${base} 입금 확인` : "입금 대기" };
+    } catch (e) {
+      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+    }
+  }
+  return sim(`${venue} ${base} 입금 확인 (미배선)`, false); // 그 외 venue — live → fail via sim
 }

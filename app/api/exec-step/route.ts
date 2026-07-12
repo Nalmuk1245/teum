@@ -2,19 +2,17 @@ import { NextResponse } from "next/server";
 import type { Opportunity } from "@/lib/types";
 import { CONFIG, TAG_REQUIRED } from "@/lib/config";
 import { sendToken, walletAddress } from "@/lib/wallet";
-import { chainKeyFromLabel, getChain } from "@/lib/chains";
+import { BINANCE_NET, chainKeyFromLabel, getChain } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
 import { binanceSpot, binancePerp, binanceWithdraw, upbitOrder, upbitWithdraw, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
+import { estimateLegSlippage } from "@/lib/quote";
+import { fetchUsdKrw } from "@/lib/exchanges";
 import type { StepId } from "@/lib/executionPlan";
 
 export const dynamic = "force-dynamic";
 
-// Exchange net_type/network label per chain key (approx; real strings vary).
-const NET_LABEL: Record<string, string> = {
-  ethereum: "ETH", polygon: "MATIC", arbitrum: "ARBITRUM", optimism: "OPTIMISM",
-  base: "BASE", bsc: "BSC", avalanche: "AVAXC", xrp: "XRP", tron: "TRX", solana: "SOL",
-};
+const NET_LABEL = BINANCE_NET; // shared exchange network codes
 
 // Our wallet's receive address on a chain family (for the withdraw destination).
 function destAddr(chainKey: string): string | null {
@@ -27,6 +25,8 @@ function destAddr(chainKey: string): string | null {
 
 type StepResult = {
   ok: boolean; dryRun: boolean; message: string; filledQty?: number;
+  /** Real fill of this leg: base qty + quote amount in `ccy` (settle uses it). */
+  fill?: { qty?: number; quote?: number; ccy?: string };
   /** On-chain tx of this step + explorer link (null link when simulated). */
   tx?: { hash: string; url: string | null };
 };
@@ -51,7 +51,10 @@ const unwired = (message: string): StepResult =>
 // `qty` = the actual quantity carried from the previous step (fill-adjusted).
 async function runStep(
   stepId: StepId, opp: Opportunity, sizeUsd: number,
-  opts: { rollback?: boolean; qty?: number; sinceTs?: number },
+  opts: {
+    rollback?: boolean; qty?: number; sinceTs?: number;
+    fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string };
+  },
 ): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
   const buy = opp.legs.find((l) => l.side === "buy");
@@ -65,10 +68,23 @@ async function runStep(
 
   switch (stepId) {
     case "buy": {
-      if (buy?.venue === "binance") return await binanceSpot(opp.base, "BUY", { quoteUsd: sizeUsd });
-      if (buy?.venue === "upbit") return await upbitOrder(opp.base, "bid", { priceKrw: qty * (buy.price || 0) });
-      if (buy?.venue === "bithumb") return await bithumbOrder(opp.base, "bid", qty);
-      return unwired(`${buy?.venue} ${opp.base} 매수`);
+      if (!buy) return fail("매수 다리 없음");
+      // Live slippage cap — a thin book can eat the whole edge in one market order.
+      if (!dry) {
+        const est = await estimateLegSlippage(buy.venue, buy.symbol, "buy", {
+          quoteAmount: buy.quote === "KRW" ? qty * (buy.price || 0) : sizeUsd,
+        });
+        if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+          return fail(`매수 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
+        }
+      }
+      const r =
+        buy.venue === "binance" ? await binanceSpot(opp.base, "BUY", { quoteUsd: sizeUsd })
+        : buy.venue === "upbit" ? await upbitOrder(opp.base, "bid", { priceKrw: qty * (buy.price || 0) })
+        : buy.venue === "bithumb" ? await bithumbOrder(opp.base, "bid", qty)
+        : null;
+      if (!r) return unwired(`${buy.venue} ${opp.base} 매수`);
+      return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: buy.quote } };
     }
     case "hedge":
       return await binancePerp(opp.base, "SHORT", qty);
@@ -150,14 +166,42 @@ async function runStep(
       };
     }
     case "sell": {
-      if (sell?.venue === "binance") return await binanceSpot(opp.base, "SELL", { qty });
-      if (sell?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });
-      if (sell?.venue === "bithumb") return await bithumbOrder(opp.base, "ask", qty);
-      return unwired(`${sell?.venue} ${opp.base} 매도`);
+      if (!sell) return fail("매도 다리 없음");
+      if (!dry) {
+        const est = await estimateLegSlippage(sell.venue, sell.symbol, "sell", { baseQty: qty });
+        if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+          return fail(`매도 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
+        }
+      }
+      const r =
+        sell.venue === "binance" ? await binanceSpot(opp.base, "SELL", { qty })
+        : sell.venue === "upbit" ? await upbitOrder(opp.base, "ask", { volume: qty })
+        : sell.venue === "bithumb" ? await bithumbOrder(opp.base, "ask", qty)
+        : null;
+      if (!r) return unwired(`${sell.venue} ${opp.base} 매도`);
+      return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: sell.quote } };
     }
     case "close":
       return await binancePerp(opp.base, "CLOSE", qty);
     case "settle": {
+      // Prefer REAL fills threaded from the buy/sell steps; KRW legs convert at
+      // the venue's live USDT/KRW. Falls back to the scan-time estimate.
+      const f = opts.fills;
+      if (f?.buyQuote && f?.sellQuote) {
+        const toUsd = async (amt: number, ccy?: string) => {
+          if (ccy !== "KRW") return amt;
+          const kv = (sell?.quote === "KRW" ? sell.venue : buy?.venue) ?? "upbit";
+          const fx = await fetchUsdKrw(kv);
+          return fx ? amt / fx : 0;
+        };
+        const buyUsd = await toUsd(f.buyQuote, f.buyCcy);
+        const sellUsd = await toUsd(f.sellQuote, f.sellCcy);
+        if (buyUsd > 0 && sellUsd > 0) {
+          const pnl = sellUsd - buyUsd;
+          const pct = (pnl / buyUsd) * 100;
+          return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 실체결 기반` };
+        }
+      }
       const pnl = (opp.netPct / 100) * sizeUsd;
       return { ok: true, dryRun: dry, message: `정산 · 순수익 ${opp.netPct >= 0 ? "+" : ""}${opp.netPct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 추정치` };
     }
@@ -183,6 +227,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       stepId?: StepId; opportunity?: Opportunity; sizeUsd?: number;
       rollback?: boolean; qty?: number; sinceTs?: number;
+      fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string };
     };
     if (!body.stepId || !body.opportunity) {
       return NextResponse.json({ ok: false, message: "stepId + opportunity 필요" }, { status: 400 });
@@ -201,7 +246,7 @@ export async function POST(req: Request) {
       }
     }
     const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0, {
-      rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs,
+      rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills,
     });
     return NextResponse.json(result);
   } catch (e) {

@@ -15,6 +15,8 @@
 
 import crypto from "crypto";
 import type { TransferStatus, Venue, WalletStatus } from "./types";
+import { BINANCE_NET, chainKeyFromLabel } from "./chains";
+import { COIN_NETWORK, COIN_NETWORK_DEFAULT } from "./config";
 
 // ── Bithumb (public) ──────────────────────────────────────────────────────────
 async function fetchBithumb(): Promise<Map<string, WalletStatus>> {
@@ -99,11 +101,21 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       coin: string;
       depositAllEnable: boolean;
       withdrawAllEnable: boolean;
+      networkList?: Array<{ network: string; depositEnable: boolean; withdrawEnable: boolean }>;
     }>;
     if (!Array.isArray(arr)) return null;
     const m = new Map<string, WalletStatus>();
     for (const c of arr) {
-      m.set(c.coin, { deposit: !!c.depositAllEnable, withdraw: !!c.withdrawAllEnable });
+      // Per-network gate: the coin-level flags say "some network works", but we
+      // transfer on ONE specific chain (COIN_NETWORK) — if that chain is
+      // suspended while another is up, coin-level would greenlight a trade that
+      // strands at the withdraw step. Match our chain's networkList entry.
+      const chainKey = chainKeyFromLabel((COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).chain);
+      const wanted = BINANCE_NET[chainKey];
+      const net = wanted ? c.networkList?.find((n) => n.network === wanted) : undefined;
+      m.set(c.coin, net
+        ? { deposit: !!net.depositEnable, withdraw: !!net.withdrawEnable }
+        : { deposit: !!c.depositAllEnable, withdraw: !!c.withdrawAllEnable });
     }
     return m;
   } catch {

@@ -43,6 +43,39 @@ function sellInto(bids: LevelUsd[], baseAmount: number) {
   return { proceeds, filled: false };
 }
 
+/**
+ * Pre-trade slippage estimate for ONE leg from its live book — used as the
+ * last-line market-order gate (CONFIG.MAX_SLIPPAGE_PCT). Currency-agnostic:
+ * walks the raw book, so KRW books work unchanged. null = book unavailable.
+ */
+export async function estimateLegSlippage(
+  venue: Venue,
+  symbol: string,
+  side: "buy" | "sell",
+  size: { quoteAmount?: number; baseQty?: number },
+): Promise<{ slipPct: number; filled: boolean } | null> {
+  const ad = getAdapter(venue);
+  if (!ad?.fetchOrderBook) return null;
+  const book = await ad.fetchOrderBook(symbol);
+  if (!book.bids.length || !book.asks.length) return null;
+  const lv = (rows: { price: number; size: number }[]) =>
+    rows.map((r) => ({ priceUsd: r.price, size: r.size }));
+  if (side === "buy") {
+    const target = size.quoteAmount ?? (size.baseQty ?? 0) * book.asks[0].price;
+    if (target <= 0) return null;
+    const r = buyInto(lv(book.asks), target);
+    if (r.base <= 0) return { slipPct: Infinity, filled: false };
+    const vwap = target / r.base;
+    return { slipPct: ((vwap - book.asks[0].price) / book.asks[0].price) * 100, filled: r.filled };
+  }
+  const qty = size.baseQty ?? 0;
+  if (qty <= 0) return null;
+  const r = sellInto(lv(book.bids), qty);
+  if (!r.filled && r.proceeds <= 0) return { slipPct: Infinity, filled: false };
+  const vwap = r.proceeds / qty; // full qty basis; partial fill drags vwap down (conservative)
+  return { slipPct: ((book.bids[0].price - vwap) / book.bids[0].price) * 100, filled: r.filled };
+}
+
 export async function quoteOpportunity(
   opp: Opportunity,
   sizeUsd: number,

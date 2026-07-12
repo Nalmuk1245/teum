@@ -642,10 +642,14 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
   // becomes the qty every later step uses — never the nominal sizeUsd/price.
   const qtyRef = useRef<number | undefined>(undefined);
   const runStartTs = useRef<number>(0);
+  // Real fills from the buy/sell legs — the settle step turns these into
+  // realized (not estimated) P&L.
+  const fillsRef = useRef<{ buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string }>({});
   const runStep = useCallback(
     async (stepId: StepId, opts?: { rollback?: boolean }): Promise<StepResult> => {
       if (stepId === "buy" && !opts?.rollback) {
         qtyRef.current = undefined; // fresh entry — reset carried qty
+        fillsRef.current = {};
         runStartTs.current = Date.now(); // deposit check: only credits after this
       }
       try {
@@ -655,10 +659,15 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
           body: JSON.stringify({
             stepId, opportunity: opp, sizeUsd, rollback: opts?.rollback,
             qty: qtyRef.current, sinceTs: runStartTs.current || undefined,
+            fills: stepId === "settle" ? fillsRef.current : undefined,
           }),
         });
         const j = await res.json();
         if (typeof j.filledQty === "number" && j.filledQty > 0) qtyRef.current = j.filledQty;
+        if (j.fill?.quote && !opts?.rollback) {
+          if (stepId === "buy") { fillsRef.current.buyQuote = j.fill.quote; fillsRef.current.buyCcy = j.fill.ccy; }
+          if (stepId === "sell") { fillsRef.current.sellQuote = j.fill.quote; fillsRef.current.sellCcy = j.fill.ccy; }
+        }
         return { ok: !!j.ok, message: j.message, tx: j.tx };
       } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : "요청 실패" };

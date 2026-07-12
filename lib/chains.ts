@@ -46,3 +46,10 @@ export function chainKeyFromLabel(label?: string): string {
 }
 
 export const getChain = (key: string): ChainInfo | undefined => CHAINS[key];
+
+// Binance's network code per chain key (withdraw/deposit-address `network`
+// param and networkList[].network matching).
+export const BINANCE_NET: Record<string, string> = {
+  ethereum: "ETH", polygon: "MATIC", arbitrum: "ARBITRUM", optimism: "OPTIMISM",
+  base: "BASE", bsc: "BSC", avalanche: "AVAXC", xrp: "XRP", tron: "TRX", solana: "SOL",
+};

@@ -15,11 +15,11 @@
 - [x] 토큰 컨트랙트 확장 (AAVE/MKR/LDO/CRV/GRT/SAND/MANA/APE…)
 - [x] **스마트 청산(UI+시뮬)** — 남은물량 기준 10/25/50/전량 부분청산, 지정가→리페그→바닥/타임아웃, 체결분 비례 숏청산(델타중립), 실시간 잔량·실현손익 (`lib/unwind.ts`, PositionPanel)
 - [x] **전체 코드리뷰 반영 (2026-07-12)** — ①태그/메모 필수 코인 강제(TAG_REQUIRED, 태그 없으면 출금/송금 차단) ②라이브 하드페일 원칙(체인미상·주소미확인·토큰미확인·키없음·미배선 = 라이브에서 무조건 실패) ③mock 라이브 실행 거부 + EXEC_TOKEN 인증 ④실행 직전 재견적(매수/출금/매도 전) + 엣지 사망 시 자동 중단 ⑤실행 중 파라미터 스냅샷+컨트롤 잠금 ⑥unmount/모드전환 가드 ⑦승인 더블클릭 가드 ⑧실패 지점부터 재시도(retry) ⑨롤백 결과 캡처(실패 시 수동처리 표시) ⑩LOT_SIZE stepSize 반올림 ⑪실체결량 스레딩(buy 체결량→후속 단계) ⑫입금확인 시작시간 이후 필터 ⑬포지션 패널 buy 후 활성 ⑭WS 재구독 델타만+재연결 리셋 ⑮라이브 갭 방향부호(역전 노출) ⑯FX 폴백 게이트 ⑰스캔 race 가드 ⑱뎁스캡 그리드 시드 ⑲입금주소 태그 반환+서명 인코딩 ⑳죽은코드 삭제(execute/execution.ts/placeOrder/ExecReport)
-- [ ] **스마트 청산 라이브 배선** — 지정가 주문+체결폴링+취소/리페그+비례 숏청산 실루프 (지금 시뮬만, 라이브 하드블록)
-- [ ] 빗썸 입금 크레딧 조회 (user_transactions)
-- [ ] 실 체결가 기반 정산(지금 추정치 표기) + 슬리피지 상한
+- [x] **스마트 청산 라이브 배선** — 지정가(바낸/업비트)+체결폴링+취소/리페그(3라운드)+프리미엄 바닥/타임아웃 시장가+라운드별 비례 숏청산. 빗썸 다리는 명시적 실패. /api/unwind에 EXEC_TOKEN·mock 가드
+- [x] 빗썸 입금 크레딧 조회 (user_transactions, searchGb=4, 시간필터)
+- [x] 실 체결가 기반 정산 (바낸 cummulativeQuoteQty·업비트 주문상세 trades → settle 실현 PnL, KRW는 라이브 환율 환산) + 라이브 시장가 슬리피지 상한(MAX_SLIPPAGE_PCT, 기본 0.5%)
 - [ ] page.tsx 컴포넌트 분리(1300줄), KIND_META/VENUE_LABEL 중복 정리
-- [ ] 바이낸스 networkList per-network 게이트(코인 단위→체인 단위)
+- [x] 바이낸스 networkList per-network 게이트 (COIN_NETWORK 체인 매칭 엔트리의 withdrawEnable/depositEnable, 미매칭시 코인 단위 폴백)
 - [ ] **로컬에서 키 넣고 실테스트 → `DRY_RUN=false`** (본인 PC, 실자금, EXEC_TOKEN 설정)
 
 ## 🟠 P1 — 게이트·상태 서명 배선 (키 넣으면 대부분 자동)
