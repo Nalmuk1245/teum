@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
 import { pct, usd, price } from "@/lib/format";
-import { useLivePrices, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
+import { useLivePrices, type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, useFlowRunner, type AutoLevel, type ExecStep, type StepPhase, type StepId, type StepResult } from "@/lib/executionPlan";
 import InventoryPanel from "./components/InventoryPanel";
 
@@ -36,21 +36,26 @@ export default function Cockpit() {
   // Two separated tools: "monitor" = gap viewing only (no execute), "execute" = trading.
   const [mode, setMode] = useState<"monitor" | "execute">("monitor");
 
-  // Monotonic sequence — a slow, stale /api/scan response must never overwrite
-  // a newer one that already landed.
+  // Ordering guard — a stale /api/scan response must never overwrite a newer
+  // one. Compare against the last APPLIED seq (not the last issued): requiring
+  // seq === latest-issued would discard every response whenever responses run
+  // slower than the 8s poll interval (permanent "스캔 중" livelock).
   const scanSeq = useRef(0);
+  const appliedSeq = useRef(0);
+  const [scanTs, setScanTs] = useState(0);
   const load = useCallback(async () => {
     const seq = ++scanSeq.current;
     try {
       const res = await fetch("/api/scan", { cache: "no-store" });
       const j = await res.json();
-      if (seq !== scanSeq.current) return; // superseded
+      if (seq <= appliedSeq.current) return; // an equal-or-newer response already applied
+      appliedSeq.current = seq;
       setOpps(j.opportunities ?? []);
       setMeta(j.meta ?? null);
+      setScanTs(Date.now());
+      setLoading(false);
     } catch {
       /* keep stale */
-    } finally {
-      if (seq === scanSeq.current) setLoading(false);
     }
   }, []);
 
@@ -68,7 +73,17 @@ export default function Cockpit() {
   const bestEdge = opps.length ? Math.max(...opps.map((o) => o.netPct)) : null;
   const isMobile = useIsMobile();
   // Real-time overlay — client WebSockets recompute premium/net sub-second.
-  const { overlay: liveOverlay, status: liveStatus } = useLivePrices(opps, true);
+  const { overlay: liveOverlay, status: liveStatus, ages: liveAges } = useLivePrices(opps, true);
+  // Best live opportunity (for the sticky summary bar).
+  const best = useMemo(() => {
+    let top: { o: Opportunity; net: number } | null = null;
+    for (const o of opps) {
+      if (o.mock) continue;
+      const net = liveOverlay[o.id]?.netPct ?? o.netPct;
+      if (!top || net > top.net) top = { o, net };
+    }
+    return top;
+  }, [opps, liveOverlay]);
 
   return (
     <main style={{ minHeight: "100dvh" }}>
@@ -77,25 +92,24 @@ export default function Cockpit() {
         style={{
           position: "sticky", top: 0, zIndex: 20,
           display: "flex", alignItems: "center", gap: isMobile ? 10 : 14,
-          padding: isMobile ? "11px 14px" : "14px 24px",
+          padding: isMobile ? "9px 12px" : "9px 16px",
           borderBottom: "1px solid var(--border)",
-          background: "rgba(10,13,20,0.72)",
+          background: "rgba(11,14,17,0.85)",
           backdropFilter: "blur(12px)",
         }}
       >
         <div
           style={{
-            width: 30, height: 30, borderRadius: 9,
+            width: 28, height: 28, borderRadius: 6,
             background: "var(--brand-grad)",
-            boxShadow: "0 4px 14px rgba(124,108,255,0.45)",
             display: "grid", placeItems: "center",
-            color: "#fff", fontWeight: 800, fontSize: 15,
+            color: "#181a20", fontWeight: 800, fontSize: 14,
           }}
         >
           ⇄
         </div>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em" }}>
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
             Arb Cockpit
           </span>
           {!isMobile && (
@@ -105,22 +119,25 @@ export default function Cockpit() {
           )}
         </div>
         <span style={{ flex: 1 }} />
-        <LiveDots status={liveStatus} isMobile={isMobile} />
+        <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
         {meta?.mock && !isMobile && <Pill text="목업" tone="var(--sky)" soft />}
-        <Pill
-          text={meta?.dryRun ? "모의(Dry-run)" : "실주문"}
-          tone={meta?.dryRun ? "var(--pos)" : "var(--neg)"}
-          soft
-          dot
-        />
+        {/* Don't flash "실주문"(red) before meta loads — unknown ≠ live. */}
+        {meta && (
+          <Pill
+            text={meta.dryRun ? "모의" : "실주문"}
+            tone={meta.dryRun ? "var(--pos)" : "var(--neg)"}
+            soft
+            dot
+          />
+        )}
       </header>
 
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: isMobile ? "14px 12px" : "24px" }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: isMobile ? "10px 10px" : "16px" }}>
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
             display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
-            padding: 4, marginBottom: isMobile ? 14 : 18,
+            padding: 4, marginBottom: isMobile ? 10 : 14,
             background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
           }}
         >
@@ -167,8 +184,8 @@ export default function Cockpit() {
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(3, 1fr)",
-            gap: isMobile ? 8 : 14,
-            marginBottom: isMobile ? 14 : 20,
+            gap: isMobile ? 6 : 10,
+            marginBottom: isMobile ? 10 : 14,
           }}
         >
           <Tile label="기회" value={String(opps.length)} sub={`전략 ${KINDS.length}종`} compact={isMobile} />
@@ -202,7 +219,7 @@ export default function Cockpit() {
                 onClick={() => setFilter(k)}
                 style={{
                   border: "none", cursor: "pointer", borderRadius: 999,
-                  padding: "7px 14px", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+                  padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
                   background: active ? "var(--brand-soft)" : "transparent",
                   color: active ? "var(--brand-2)" : "var(--text-dim)",
                   transition: "background 120ms, color 120ms",
@@ -219,13 +236,58 @@ export default function Cockpit() {
         </div>
 
         {/* ── Board ────────────────────────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>기회 테이블</span>
+          <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
+        </div>
         <Board rows={rows} loading={loading} onExecute={setSelected} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} />
 
-        <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14 }}>
+        <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
           순수익 = 총차익 − 예상 왕복비용. 김프는 실데이터 연동, 거래소간/펀딩/CEX-DEX는
           목업 스텁입니다.
         </p>
       </div>
+
+      {/* ── Sticky summary bar (var1) — best live opportunity at a glance ── */}
+      {best && (
+        <div
+          style={{
+            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30,
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "9px 14px",
+            background: "rgba(11,14,17,0.92)", backdropFilter: "blur(10px)",
+            borderTop: "1px solid var(--border)",
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: 999, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
+          <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
+            최고 <b style={{ color: "var(--text)" }}>{best.o.base}</b>
+          </span>
+          <span className="tnum" style={{ fontSize: 14, fontWeight: 700, color: best.net > 0 ? "var(--pos)" : "var(--neg)" }}>
+            {pct(best.net)}
+          </span>
+          <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>
+            ≈{usd(Math.abs((best.net / 100) * 1000))}/1k
+          </span>
+          <span style={{ flex: 1 }} />
+          <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+            수익 기회 <b style={{ color: "var(--pos)" }}>{positive}</b>건
+          </span>
+          {mode === "execute" && best.o.executable && (
+            <button
+              type="button"
+              onClick={() => setSelected(best.o)}
+              style={{
+                border: "none", borderRadius: "var(--radius-sm)", padding: "6px 14px",
+                background: "var(--brand-grad)", color: "#0b0e11",
+                fontWeight: 700, fontSize: 12, cursor: "pointer",
+              }}
+            >
+              실행
+            </button>
+          )}
+        </div>
+      )}
 
       {selected && mode === "execute" && (
         <ExecuteModal opp={selected} onClose={() => setSelected(null)} isMobile={isMobile} />
@@ -248,14 +310,14 @@ function Tile({
     <div
       style={{
         background: "var(--card)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius)", padding: compact ? "12px 12px" : "16px 18px",
+        borderRadius: "var(--radius)", padding: compact ? "8px 10px" : "10px 14px",
         boxShadow: "var(--shadow-sm)",
       }}
     >
       <div style={{ color: "var(--text-dim)", fontSize: compact ? 11 : 12, fontWeight: 500, whiteSpace: "nowrap" }}>{label}</div>
       <div
         className="tnum"
-        style={{ color: tone ?? "var(--text)", fontSize: compact ? 20 : 26, fontWeight: 700, letterSpacing: "-0.02em", marginTop: compact ? 3 : 4 }}
+        style={{ color: tone ?? "var(--text)", fontSize: compact ? 17 : 20, fontWeight: 700, letterSpacing: "-0.02em", marginTop: compact ? 3 : 4 }}
       >
         {value}
       </div>
@@ -289,7 +351,7 @@ function Board({
         <div
           style={{
             display: "grid", gridTemplateColumns: showExecute ? COLS : COLS_MON, gap: 10,
-            padding: "12px 18px", color: "var(--text-mute)", fontSize: 11,
+            padding: "7px 12px", color: "var(--text-mute)", fontSize: 10.5,
             fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
             borderBottom: "1px solid var(--border)",
           }}
@@ -330,7 +392,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
   const netTone = net > 0 ? "var(--pos)" : net < 0 ? "var(--neg)" : "var(--text-dim)";
   const [buy, sell] = o.legs;
   return (
-    <div style={{ padding: "13px 14px", borderBottom: "1px solid var(--border)" }}>
+    <div style={{ padding: "9px 11px 9px 9px", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${km.color}` }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}>
           <span
@@ -347,14 +409,20 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
           <span style={{ fontWeight: 700, fontSize: 15 }}>{o.base}</span>
           {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 4, padding: "0 3px" }}>mock</span>}
         </span>
-        <span
-          className="tnum"
-          style={{
-            background: net > 0 ? "var(--pos-soft)" : net < 0 ? "var(--neg-soft)" : "transparent",
-            color: netTone, fontWeight: 800, fontSize: 16, borderRadius: 8, padding: "3px 9px", flex: "0 0 auto",
-          }}
-        >
-          {pct(net)}
+        <span style={{ textAlign: "right", flex: "0 0 auto" }}>
+          <span
+            className="tnum"
+            style={{
+              display: "inline-block",
+              background: net > 0 ? "var(--pos-soft)" : net < 0 ? "var(--neg-soft)" : "transparent",
+              color: netTone, fontWeight: 800, fontSize: 16, borderRadius: 6, padding: "2px 8px",
+            }}
+          >
+            {pct(net)}
+          </span>
+          <span className="tnum" style={{ display: "block", fontSize: 10, color: "var(--text-mute)", marginTop: 1 }}>
+            ≈{usd(Math.abs((net / 100) * 1000))}/1k
+          </span>
         </span>
       </div>
 
@@ -389,7 +457,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
               border: o.executable ? "none" : "1px solid var(--border-strong)",
               background: o.executable ? "var(--brand-grad)" : "transparent",
               color: o.executable ? "#fff" : "var(--text-mute)",
-              boxShadow: o.executable ? "0 4px 12px rgba(124,108,255,0.3)" : "none",
+              boxShadow: "none",
               flex: "0 0 auto",
             }}
           >
@@ -414,7 +482,7 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
       onMouseLeave={() => setHover(false)}
       style={{
         display: "grid", gridTemplateColumns: showExecute ? COLS : COLS_MON, gap: 10, alignItems: "center",
-        padding: "13px 18px", borderBottom: "1px solid var(--border)", fontSize: 13,
+        padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: 12.5,
         background: hover ? "var(--card-2)" : "transparent",
         transition: "background 100ms",
       }}
@@ -489,8 +557,8 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
             cursor: o.executable ? "pointer" : "not-allowed",
             border: o.executable ? "none" : "1px solid var(--border-strong)",
             background: o.executable ? "var(--brand-grad)" : "transparent",
-            color: o.executable ? "#fff" : "var(--text-mute)",
-            boxShadow: o.executable ? "0 4px 12px rgba(124,108,255,0.3)" : "none",
+            color: o.executable ? "#181a20" : "var(--text-mute)",
+            boxShadow: "none",
           }}
         >
           실행
@@ -793,8 +861,8 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                 disabled={sizeUsd <= 0}
                 style={{
                   flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
-                  background: "var(--brand-grad)", color: "#fff", fontWeight: 700, fontSize: 14,
-                  cursor: "pointer", boxShadow: "0 6px 18px rgba(124,108,255,0.35)",
+                  background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14,
+                  cursor: "pointer", 
                 }}
               >
                 {runner.phase === "done" ? "다시 실행" : "실행 시작 →"}
@@ -806,7 +874,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                   onClick={runner.confirmContinue}
                   style={{
                     flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
-                    background: "var(--brand-grad)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                    background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14, cursor: "pointer",
                   }}
                 >
                   {plan[runner.pauseAt]?.id === "withdraw" ? "⚠ 출금 승인 →" : "다음 단계 →"}
@@ -832,7 +900,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                   onClick={runner.retry}
                   style={{
                     flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
-                    background: "var(--brand-grad)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                    background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14, cursor: "pointer",
                   }}
                 >
                   실패 지점부터 재시도
@@ -1209,31 +1277,59 @@ function TransferPanel({ opp }: { opp: Opportunity }) {
   );
 }
 
-// ── small bits ────────────────────────────────────────────────────────────────
-function LiveDots({ status, isMobile }: { status: LiveStatus; isMobile?: boolean }) {
-  const any = status.binance || status.upbit || status.bithumb;
-  const dot = (on: boolean, label: string) => (
-    <span key={label} title={label} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-      <span
-        style={{
-          width: 6, height: 6, borderRadius: 999,
-          background: on ? "var(--pos)" : "var(--text-mute)",
-          boxShadow: on ? "0 0 6px var(--pos)" : "none",
-        }}
-      />
-      {!isMobile && <span style={{ fontSize: 10, color: on ? "var(--text-dim)" : "var(--text-mute)" }}>{label}</span>}
+// Board freshness: live WS overlay active, or seconds since the last scan.
+function ScanAge({ ts, live }: { ts: number; live: boolean }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((v) => v + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const age = ts ? Math.max(0, Math.round((Date.now() - ts) / 1000)) : null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--text-mute)" }}>
+      {live && (
+        <>
+          <span style={{ width: 5, height: 5, borderRadius: 999, background: "var(--pos)" }} />
+          <span style={{ color: "var(--pos)", fontWeight: 600 }}>실시간</span>
+          <span>·</span>
+        </>
+      )}
+      <span className="tnum">{age == null ? "스캔 대기" : `스캔 ${age}s 전`}</span>
     </span>
   );
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 6 : 9, marginRight: 2 }}>
-      {!isMobile && (
-        <span style={{ fontSize: 11, fontWeight: 600, color: any ? "var(--pos)" : "var(--text-mute)" }}>
-          {any ? "실시간" : "연결 중"}
+}
+
+// ── small bits ────────────────────────────────────────────────────────────────
+// Venue chips with data freshness (var1 idea) — "몇 초 전 데이터인가"가 아비에선
+// 연결 여부보다 중요한 신호다.
+function LiveDots({ status, ages, isMobile }: { status: LiveStatus; ages: LiveAges; isMobile?: boolean }) {
+  const chip = (on: boolean, age: number | null, label: string) => {
+    const fresh = on && age != null && age <= 5;
+    const tone = fresh ? "var(--pos)" : on ? "var(--amber)" : "var(--text-mute)";
+    return (
+      <span
+        key={label}
+        title={`${label} · ${age != null ? age + "s 전" : "미수신"}`}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          border: "1px solid var(--border)", borderRadius: 4,
+          padding: isMobile ? "2px 5px" : "2px 7px",
+          background: "var(--card)",
+        }}
+      >
+        <span style={{ width: 5, height: 5, borderRadius: 999, background: tone }} />
+        <span className="tnum" style={{ fontSize: 10, fontWeight: 600, color: on ? "var(--text-dim)" : "var(--text-mute)" }}>
+          {label}
+          {!isMobile && age != null && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}> {age}s</span>}
         </span>
-      )}
-      {dot(status.binance, "BN")}
-      {dot(status.upbit, "UP")}
-      {dot(status.bithumb, "BT")}
+      </span>
+    );
+  };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginRight: 2 }}>
+      {chip(status.binance, ages.binance, "BN")}
+      {chip(status.upbit, ages.upbit, "UP")}
+      {chip(status.bithumb, ages.bithumb, "BT")}
     </span>
   );
 }

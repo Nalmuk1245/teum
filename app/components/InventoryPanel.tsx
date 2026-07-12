@@ -29,13 +29,17 @@ export default function InventoryPanel({ isMobile }: { isMobile?: boolean }) {
   if (!pf) return null;
   const g = Math.max(0, Math.min(100, pf.skewPct)); // global share %
   const skewed = g < 35 || g > 65;
+  // 가용률 — 거래소 자본 중 즉시 주문 가능한 현금(USDT/KRW) 비중.
+  const exchTotal = pf.venues.reduce((s, v) => s + v.totalUsd, 0);
+  const cashTotal = pf.venues.reduce((s, v) => s + v.cashUsd, 0);
+  const availPct = exchTotal > 0 ? (cashTotal / exchTotal) * 100 : 0;
 
   return (
     <div
       style={{
         background: "var(--card)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "16px 18px",
-        marginBottom: isMobile ? 14 : 18, boxShadow: "var(--shadow-sm)",
+        borderRadius: "var(--radius)", padding: isMobile ? "9px 11px" : "12px 14px",
+        marginBottom: isMobile ? 10 : 14, boxShadow: "var(--shadow-sm)",
       }}
     >
       {/* header */}
@@ -47,6 +51,9 @@ export default function InventoryPanel({ isMobile }: { isMobile?: boolean }) {
           </span>
         )}
         <span style={{ flex: 1 }} />
+        <span className="tnum" title="즉시 주문 가능한 현금 비중" style={{ fontSize: 11, color: "var(--brand-2)", fontWeight: 600 }}>
+          가용 {availPct.toFixed(0)}%
+        </span>
         <span className="tnum" style={{ fontSize: 15, fontWeight: 700 }}>{usd(pf.totalUsd)}</span>
         <button
           type="button"

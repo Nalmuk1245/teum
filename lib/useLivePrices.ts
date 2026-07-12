@@ -13,6 +13,8 @@ import type { Opportunity } from "./types";
 
 export type LiveGap = { premiumPct: number; grossPct: number; netPct: number };
 export type LiveStatus = { binance: boolean; upbit: boolean; bithumb: boolean };
+/** Seconds since each venue's last WS message (null = never received). */
+export type LiveAges = { binance: number | null; upbit: number | null; bithumb: number | null };
 
 export function useLivePrices(opps: Opportunity[], enabled: boolean) {
   const oppsRef = useRef(opps);
@@ -25,6 +27,8 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
 
   const [overlay, setOverlay] = useState<Record<string, LiveGap>>({});
   const [status, setStatus] = useState<LiveStatus>({ binance: false, upbit: false, bithumb: false });
+  const lastMsg = useRef<{ binance: number; upbit: number; bithumb: number }>({ binance: 0, upbit: 0, bithumb: 0 });
+  const [ages, setAges] = useState<LiveAges>({ binance: null, upbit: null, bithumb: null });
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
@@ -59,6 +63,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         try {
           const arr = JSON.parse(e.data as string);
           if (!Array.isArray(arr)) return;
+          lastMsg.current.binance = Date.now();
           set("binance", true); // green only once data actually arrives
           for (const t of arr) {
             if (typeof t.s === "string" && t.s.endsWith("USDT")) {
@@ -106,6 +111,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
           const text = new TextDecoder().decode(e.data as ArrayBuffer);
           const m = JSON.parse(text);
           if (m.code && typeof m.trade_price === "number") {
+            lastMsg.current.upbit = Date.now();
             set("upbit", true);
             const base = String(m.code).replace("KRW-", "");
             if (base === "USDT") fx.current.upbit = m.trade_price;
@@ -151,6 +157,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
             const base = String(c.symbol).replace("_KRW", "");
             const px = Number(c.closePrice);
             if (!px) return;
+            lastMsg.current.bithumb = Date.now();
             set("bithumb", true);
             if (base === "USDT") fx.current.bithumb = px;
             else bt.current.set(base, px);
@@ -194,6 +201,9 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         ov[o.id] = { premiumPct, grossPct, netPct: grossPct - o.costPct };
       }
       setOverlay(ov);
+      const now = Date.now();
+      const age = (t: number) => (t ? Math.round((now - t) / 1000) : null);
+      setAges({ binance: age(lastMsg.current.binance), upbit: age(lastMsg.current.upbit), bithumb: age(lastMsg.current.bithumb) });
     };
     timers.push(setInterval(recompute, 600));
 
@@ -223,5 +233,5 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
     };
   }, [enabled]);
 
-  return { overlay, status };
+  return { overlay, status, ages };
 }
