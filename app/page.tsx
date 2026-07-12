@@ -18,6 +18,26 @@ const KINDS = Object.keys(KIND_META) as StrategyKind[];
 // Funding has its own tab — the gap board/filter only covers one-shot strategies.
 const GAP_KINDS = KINDS.filter((k) => k !== "funding-basis");
 
+// Live net crossing this fires the spike alert (beep + notification + flash).
+const ALERT_NET_PCT = 0.5;
+
+// Short attention beep via WebAudio — no asset file needed.
+function beep() {
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.36);
+    osc.onended = () => void ctx.close();
+  } catch { /* audio blocked until first user gesture — fine */ }
+}
+
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
@@ -74,15 +94,60 @@ export default function Cockpit() {
   const gapOpps = useMemo(() => opps.filter((o) => o.kind !== "funding-basis"), [opps]);
   const fundingOpps = useMemo(() => opps.filter((o) => o.kind === "funding-basis"), [opps]);
   const pool = funding ? fundingOpps : gapOpps;
-  const rows = useMemo(
-    () => (funding || filter === "all" ? pool : pool.filter((o) => o.kind === filter)),
-    [pool, filter, funding],
-  );
-  const positive = pool.filter((o) => o.netPct > 0).length;
-  const bestEdge = pool.length ? Math.max(...pool.map((o) => o.netPct)) : null;
   const isMobile = useIsMobile();
   // Real-time overlay — client WebSockets recompute premium/net sub-second.
   const { overlay: liveOverlay, status: liveStatus, ages: liveAges } = useLivePrices(opps, true);
+  // Gap rows re-rank by the LIVE net — a coin that spikes right now jumps to the
+  // top immediately instead of waiting for the next 8s scan's ordering.
+  const rows = useMemo(() => {
+    const base = funding || filter === "all" ? pool : pool.filter((o) => o.kind === filter);
+    if (funding) return base;
+    const liveNet = (o: Opportunity) => liveOverlay[o.id]?.netPct ?? o.netPct;
+    return [...base].sort((a, b) => liveNet(b) - liveNet(a));
+  }, [pool, filter, funding, liveOverlay]);
+  const positive = pool.filter((o) => o.netPct > 0).length;
+  const bestEdge = pool.length ? Math.max(...pool.map((o) => o.netPct)) : null;
+
+  // ── Spike alerts — live net crossing the threshold beeps + notifies + flashes.
+  const [alertsOn, setAlertsOn] = useState(false);
+  useEffect(() => { setAlertsOn(localStorage.getItem("ac.alerts") === "1"); }, []);
+  const toggleAlerts = () => {
+    const v = !alertsOn;
+    setAlertsOn(v);
+    localStorage.setItem("ac.alerts", v ? "1" : "0");
+    if (v && "Notification" in window && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
+  };
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  const aboveRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const crossed: { id: string; base: string; net: number }[] = [];
+    const nowAbove = new Set<string>();
+    for (const o of gapOpps) {
+      if (o.mock) continue;
+      const net = liveOverlay[o.id]?.netPct ?? o.netPct;
+      if (net >= ALERT_NET_PCT) {
+        nowAbove.add(o.id);
+        if (!aboveRef.current.has(o.id)) crossed.push({ id: o.id, base: o.base, net });
+      }
+    }
+    aboveRef.current = nowAbove;
+    if (!crossed.length) return;
+    setFlashIds((prev) => new Set([...prev, ...crossed.map((c) => c.id)]));
+    const t = setTimeout(() => setFlashIds(new Set()), 4000);
+    if (alertsOn) {
+      beep();
+      if ("Notification" in window && Notification.permission === "granted") {
+        const top = crossed.sort((a, b) => b.net - a.net)[0];
+        new Notification(`갭 포착 — ${top.base} +${top.net.toFixed(2)}%`, {
+          body: crossed.length > 1 ? `외 ${crossed.length - 1}건 임계 돌파` : "순수익 임계 돌파",
+          tag: "arb-spike",
+        });
+      }
+    }
+    return () => clearTimeout(t);
+  }, [liveOverlay, gapOpps, alertsOn]);
   // Best live opportunity in the current pool (for the sticky summary bar).
   const best = useMemo(() => {
     let top: { o: Opportunity; net: number } | null = null;
@@ -323,9 +388,28 @@ export default function Cockpit() {
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>
             {funding ? "펀딩 스프레드 (숏 받는쪽 → 롱 내는쪽)" : "기회 테이블"}
           </span>
-          <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+            {!funding && (
+              <button
+                type="button"
+                onClick={toggleAlerts}
+                title={`라이브 순수익 +${ALERT_NET_PCT}% 돌파 시 알림음 + 브라우저 알림`}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: alertsOn ? "var(--brand-soft)" : "transparent",
+                  border: `1px solid ${alertsOn ? "var(--brand)" : "var(--border)"}`,
+                  color: alertsOn ? "var(--brand-2)" : "var(--text-mute)",
+                  borderRadius: 4, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+                }}
+              >
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
+                알림 {alertsOn ? "ON" : "OFF"}
+              </button>
+            )}
+            <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
+          </span>
         </div>
-        <Board rows={rows} loading={loading} onExecute={(o) => { setOpenRunId(null); setSelected(o); }} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} />
+        <Board rows={rows} loading={loading} onExecute={(o) => { setOpenRunId(null); setSelected(o); }} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} flash={flashIds} />
 
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
           {funding
@@ -418,7 +502,7 @@ const COLS = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 84px 84px 104px";
 const COLS_MON = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 84px 84px"; // monitor: no execute column
 
 function Board({
-  rows, loading, onExecute, mobile, showExecute, live,
+  rows, loading, onExecute, mobile, showExecute, live, flash,
 }: {
   rows: Opportunity[];
   loading: boolean;
@@ -426,6 +510,7 @@ function Board({
   mobile?: boolean;
   showExecute?: boolean;
   live?: Record<string, LiveGap>;
+  flash?: Set<string>;
 }) {
   return (
     <div
@@ -461,9 +546,9 @@ function Board({
       ) : (
         rows.map((o) =>
           mobile ? (
-            <OppCard key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} />
+            <OppCard key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} />
           ) : (
-            <Row key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} />
+            <Row key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} />
           ),
         )
       )}
@@ -472,7 +557,7 @@ function Board({
 }
 
 // Mobile opportunity card — stacked layout instead of the wide desktop table.
-function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap }) {
+function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean }) {
   const km = KIND_META[o.kind];
   const net = live?.netPct ?? o.netPct;
   const gross = live?.grossPct ?? o.grossPct;
@@ -480,7 +565,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
   const [buy, sell] = o.legs;
   const isApr = o.rateBasis === "apr";
   return (
-    <div style={{ padding: "9px 11px 9px 9px", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${km.color}` }}>
+    <div className={flashing ? "spike-flash" : undefined} style={{ padding: "9px 11px 9px 9px", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${km.color}` }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}>
           <span
@@ -563,7 +648,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
   );
 }
 
-function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap }) {
+function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean }) {
   const km = KIND_META[o.kind];
   const [hover, setHover] = useState(false);
   const net = live?.netPct ?? o.netPct;
@@ -575,6 +660,7 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      className={flashing ? "spike-flash" : undefined}
       style={{
         display: "grid", gridTemplateColumns: showExecute ? COLS : COLS_MON, gap: 10, alignItems: "center",
         padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: 12.5,

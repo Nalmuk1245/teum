@@ -82,3 +82,12 @@ input {
   background: #3a4766;
   background-clip: content-box;
 }
+
+/* Spike alert — a row whose live net just crossed the threshold */
+@keyframes spike-flash {
+  0% { background: rgba(47, 214, 176, 0.28); }
+  100% { background: transparent; }
+}
+.spike-flash {
+  animation: spike-flash 1.2s ease-out 3;
+}
