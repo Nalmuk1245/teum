@@ -210,14 +210,69 @@ const crossCex: Strategy = {
   },
 };
 
-// ── FUNDING-BASIS — perp funding vs spot (cash-and-carry) ──────────────────────
+// ── FUNDING-BASIS — cross-venue funding-rate arbitrage (perp vs perp) ──────────
+// Same coin, funding differs across perp venues. SHORT the high-funding venue
+// (receive funding), LONG the low-funding venue (pay least / receive if
+// negative) → delta-neutral, no on-chain transfer, capture the funding SPREAD
+// every 8h. Hyperliquid & Lighter often diverge sharply from the CEX cluster,
+// which is where the real edge lives. Headline is APR (held ongoing).
+const FUNDING_MIN_APR = 8; // % — below this the spread doesn't clear fees/risk
+const perpSymbol = (venue: Venue, base: string) =>
+  venue === "okx" ? `${base}-USDT-SWAP`
+  : venue === "hyperliquid" || venue === "lighter" ? base
+  : `${base}USDT`;
+
 const fundingBasis: Strategy = {
   kind: "funding-basis",
   label: "FUNDING",
-  async scan() {
-    // TODO: pull perp funding + spot; net APR = funding − borrow − fees. Long
-    // spot / short perp when funding is richly positive.
-    return [];
+  async scan(ctx) {
+    const fmap = ctx.funding;
+    if (!fmap || fmap.size === 0) return [];
+    const out: Opportunity[] = [];
+
+    for (const [base, rates] of fmap) {
+      if (CONFIG.EXCLUDE.has(base)) continue;
+      if (rates.length < 2) continue; // need at least two venues to spread
+
+      let hi = rates[0], lo = rates[0];
+      for (const r of rates) {
+        if (r.aprPct > hi.aprPct) hi = r;
+        if (r.aprPct < lo.aprPct) lo = r;
+      }
+      if (hi.venue === lo.venue) continue;
+
+      const grossApr = hi.aprPct - lo.aprPct; // annualized funding spread captured
+      if (grossApr < FUNDING_MIN_APR) continue;
+
+      // One-time round trip: taker to open + close on BOTH legs (4 fills).
+      const pf = FEES.perpTakerPct;
+      const roundTripPct =
+        2 * ((pf[hi.venue] ?? 0.05) + (pf[lo.venue] ?? 0.05));
+      // Break-even: spread must out-earn the entry cost. Days to break even.
+      const dailyPct = grossApr / 365;
+      const breakEvenDays = dailyPct > 0 ? roundTripPct / dailyPct : Infinity;
+
+      out.push({
+        id: id("funding-basis", base),
+        kind: "funding-basis",
+        base,
+        legs: [
+          // "buy" = long the low-funding venue, "sell" = short the high one.
+          { venue: lo.venue, side: "buy", symbol: perpSymbol(lo.venue, base), price: 0, quote: "USDT" },
+          { venue: hi.venue, side: "sell", symbol: perpSymbol(hi.venue, base), price: 0, quote: "USDT" },
+        ],
+        grossPct: grossApr,
+        costPct: roundTripPct,
+        netPct: grossApr, // ongoing yield; round trip is a one-time drag (see note)
+        notionalCapUsd: null,
+        executable: false, // perp-DEX / cross-venue order routing not wired yet
+        rateBasis: "apr",
+        note: `숏 ${hi.venue} / 롱 ${lo.venue} · 진입비용 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"}`,
+        ts: now(),
+      });
+    }
+    out.sort((a, b) => b.netPct - a.netPct);
+    return out.slice(0, 20);
   },
 };
 

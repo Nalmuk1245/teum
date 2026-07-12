@@ -45,6 +45,15 @@ export const FEES = {
   fxSpreadPct: 0.15,
   /** Default per-leg market-impact estimate (refine with real depth). */
   slippagePct: 0.1,
+  /** Perp taker fee (%) per venue — for the funding-basis round trip. Lighter
+   *  is currently zero-fee; HL ~0.045%. */
+  perpTakerPct: {
+    binance: 0.045,
+    bybit: 0.055,
+    okx: 0.05,
+    hyperliquid: 0.045,
+    lighter: 0.0,
+  } as Record<string, number>,
 };
 
 // On-chain transfer/withdrawal cost as % of notional. Real withdrawal fees are

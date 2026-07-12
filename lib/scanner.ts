@@ -8,10 +8,11 @@ import { EXCHANGES } from "./exchanges";
 import { STRATEGIES } from "./strategies";
 import { fetchTransferStatus } from "./transfers";
 import { fetchPerpBases } from "./perps";
+import { fetchFundingRates } from "./funding";
 
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");
-  const [entries, transfers, perps] = await Promise.all([
+  const [entries, transfers, perps, funding] = await Promise.all([
     Promise.all(
       cexAdapters.map(
         async (a) => [a.venue, await a.fetchTickers()] as [Venue, TickerMap],
@@ -19,6 +20,7 @@ async function buildContext(): Promise<ScanContext> {
     ),
     fetchTransferStatus(),
     fetchPerpBases(),
+    fetchFundingRates(),
   ]);
   const tickers: Partial<Record<Venue, TickerMap>> = {};
   for (const [venue, map] of entries) tickers[venue] = map;
@@ -27,7 +29,7 @@ async function buildContext(): Promise<ScanContext> {
   // rate that can inflate every premium by 1-3%, so flag it (fxLive=false) and
   // let strategies refuse to fabricate premiums from it.
   const liveFx = tickers.upbit?.get("USDT")?.price ?? tickers.bithumb?.get("USDT")?.price ?? null;
-  return { tickers, usdKrw: liveFx ?? CONFIG.USD_KRW, fxLive: liveFx != null, transfers, perps };
+  return { tickers, usdKrw: liveFx ?? CONFIG.USD_KRW, fxLive: liveFx != null, transfers, perps, funding };
 }
 
 export async function scanAll(): Promise<Opportunity[]> {

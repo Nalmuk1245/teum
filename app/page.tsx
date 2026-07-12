@@ -267,7 +267,7 @@ export default function Cockpit() {
             {pct(best.net)}
           </span>
           <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>
-            ≈{usd(Math.abs((best.net / 100) * 1000))}/1k
+            {best.o.rateBasis === "apr" ? "APR · " : ""}≈{usd(Math.abs((best.net / 100) * 1000))}/{best.o.rateBasis === "apr" ? "yr" : "1k"}
           </span>
           <span style={{ flex: 1 }} />
           <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
@@ -391,6 +391,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
   const gross = live?.grossPct ?? o.grossPct;
   const netTone = net > 0 ? "var(--pos)" : net < 0 ? "var(--neg)" : "var(--text-dim)";
   const [buy, sell] = o.legs;
+  const isApr = o.rateBasis === "apr";
   return (
     <div style={{ padding: "9px 11px 9px 9px", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${km.color}` }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -421,7 +422,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
             {pct(net)}
           </span>
           <span className="tnum" style={{ display: "block", fontSize: 10, color: "var(--text-mute)", marginTop: 1 }}>
-            ≈{usd(Math.abs((net / 100) * 1000))}/1k
+            {isApr ? "APR · " : ""}≈{usd(Math.abs((net / 100) * 1000))}/{isApr ? "yr" : "1k"}
           </span>
         </span>
       </div>
@@ -429,9 +430,9 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
       <div style={{ color: "var(--text-dim)", fontSize: 12.5, margin: "9px 0 10px" }}>
         {buy && sell ? (
           <>
-            <b style={{ color: "var(--pos)", fontWeight: 600 }}>매수</b> {buy.venue}
+            <b style={{ color: "var(--pos)", fontWeight: 600 }}>{isApr ? "롱" : "매수"}</b> {vlabel(buy.venue)}
             <span style={{ color: "var(--text-mute)", margin: "0 6px" }}>→</span>
-            <b style={{ color: "var(--neg)", fontWeight: 600 }}>매도</b> {sell.venue}
+            <b style={{ color: "var(--neg)", fontWeight: 600 }}>{isApr ? "숏" : "매도"}</b> {vlabel(sell.venue)}
           </>
         ) : "—"}
       </div>
@@ -439,9 +440,13 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
           <span className="tnum" style={{ color: "var(--text-mute)", fontSize: 12 }}>
-            총차익 {pct(gross, false)} · 비용 −{o.costPct.toFixed(2)}%
-            {o.notionalCapUsd ? ` · 한도 ${usd(o.notionalCapUsd)}` : ""}
+            {isApr
+              ? `펀딩 스프레드 ${pct(gross, false)} APR · 진입 −${o.costPct.toFixed(2)}%`
+              : `총차익 ${pct(gross, false)} · 비용 −${o.costPct.toFixed(2)}%${o.notionalCapUsd ? ` · 한도 ${usd(o.notionalCapUsd)}` : ""}`}
           </span>
+          {o.note && isApr && (
+            <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{o.note}</span>
+          )}
           {o.transfer?.blocked && (
             <span style={{ color: "var(--neg)", fontSize: 11, fontWeight: 600 }}>⛔ 입출금 중단</span>
           )}
@@ -476,6 +481,7 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
   const gross = live?.grossPct ?? o.grossPct;
   const netTone = net > 0 ? "var(--pos)" : net < 0 ? "var(--neg)" : "var(--text-dim)";
   const [buy, sell] = o.legs;
+  const isApr = o.rateBasis === "apr";
   return (
     <div
       onMouseEnter={() => setHover(true)}
@@ -515,9 +521,9 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
       <span style={{ color: "var(--text-dim)", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {buy && sell ? (
           <>
-            <b style={{ color: "var(--pos)", fontWeight: 600 }}>매수</b> {buy.venue}
+            <b style={{ color: "var(--pos)", fontWeight: 600 }}>{isApr ? "롱" : "매수"}</b> {vlabel(buy.venue)}
             <span style={{ color: "var(--text-mute)", margin: "0 7px" }}>→</span>
-            <b style={{ color: "var(--neg)", fontWeight: 600 }}>매도</b> {sell.venue}
+            <b style={{ color: "var(--neg)", fontWeight: 600 }}>{isApr ? "숏" : "매도"}</b> {vlabel(sell.venue)}
             {o.transfer?.blocked && (
               <span style={{ color: "var(--neg)", marginLeft: 8, fontSize: 11, fontWeight: 600 }}>⛔ 중단</span>
             )}
@@ -526,7 +532,7 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
       </span>
 
       <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-        {pct(gross, false)}
+        {pct(gross, false)}{isApr ? " APR" : ""}
       </span>
       <span className="tnum" style={{ textAlign: "right", color: "var(--text-mute)" }}>
         −{o.costPct.toFixed(2)}%
@@ -542,7 +548,7 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
         {pct(net)}
       </span>
       <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-        {usd(o.notionalCapUsd)}
+        {isApr ? "—" : usd(o.notionalCapUsd)}
       </span>
 
       {/* execute */}
@@ -1198,7 +1204,9 @@ function LegRow({
 const VENUE_LABEL: Record<string, string> = {
   binance: "Binance", upbit: "Upbit", bithumb: "Bithumb",
   bybit: "Bybit", okx: "OKX", uniswap: "Uniswap",
+  hyperliquid: "Hyperliquid", lighter: "Lighter",
 };
+const vlabel = (v?: string) => (v ? VENUE_LABEL[v] ?? v : "—");
 const WL_KEY = "ac.whitelist.v1";
 
 function statusChip(enabled: boolean | null): { t: string; c: string } {

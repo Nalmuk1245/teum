@@ -6,6 +6,8 @@ export type Venue =
   | "bithumb"
   | "bybit"
   | "okx"
+  | "hyperliquid" // perp DEX
+  | "lighter" // perp DEX (zkLighter)
   | "uniswap"
   | "wallet"; // personal self-custody wallet (in-transit / on-chain assets)
 
@@ -58,6 +60,9 @@ export type Opportunity = {
   executable: boolean;
   hasPerp?: boolean; // Binance USDT-M perp exists → hedgeable
   transfer?: TransferGate; // deposit/withdraw status + ETA for the settlement legs
+  /** How grossPct/netPct should be read: "trade" = one-shot % (default), "apr"
+   *  = annualized yield (funding arb, held ongoing). */
+  rateBasis?: "trade" | "apr";
   note?: string;
   mock?: boolean; // sample data, not a live signal
   ts: number;
@@ -76,7 +81,12 @@ export type ScanContext = {
   fxLive: boolean; // usdKrw came from a live KR USDT market (false = env fallback)
   transfers?: TransferStatus; // per-coin deposit/withdraw availability
   perps?: Set<string>; // bases with a Binance USDT-M perp (hedgeable)
+  funding?: FundingMap; // per-coin funding rates across perp venues
 };
+
+/** Per-coin funding across perp venues, normalized to an 8h rate (fraction). */
+export type FundingRate = { venue: Venue; rate8h: number; aprPct: number };
+export type FundingMap = Map<string, FundingRate[]>;
 
 export type BookLevel = { price: number; size: number }; // price in venue quote, size in base
 export type OrderBook = { bids: BookLevel[]; asks: BookLevel[] };
