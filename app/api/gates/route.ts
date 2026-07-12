@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchTransferStatus } from "@/lib/transfers";
+import { swr } from "@/lib/ttlCache";
 import type { Venue, WalletStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 // ?coin= filters to one base.
 export async function GET(req: Request) {
   const coin = new URL(req.url).searchParams.get("coin")?.toUpperCase();
-  const ts = await fetchTransferStatus();
+  const ts = await swr("gates", 60_000, fetchTransferStatus);
   const venues = Object.keys(ts.byVenue) as Venue[];
 
   // Union of coins across venues (or just the requested one).

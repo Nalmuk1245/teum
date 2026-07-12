@@ -11,6 +11,20 @@ import { fetchPerpBases } from "./perps";
 import { fetchFundingRates } from "./funding";
 import { recordGap, pruneHistory, confidence } from "./history";
 
+// Slow-moving inputs don't need a fresh fetch every scan tick — gates/funding
+// change on the minutes scale, the perp list on the days scale. TTL-cache them
+// (globalThis so all route bundles share) and only tickers stay per-scan fresh.
+type TtlEntry = { v: unknown; ts: number };
+const gc = globalThis as unknown as { __arbTtl?: Map<string, TtlEntry> };
+gc.__arbTtl ??= new Map();
+async function ttl<T>(key: string, ms: number, fn: () => Promise<T>): Promise<T> {
+  const hit = gc.__arbTtl!.get(key);
+  if (hit && Date.now() - hit.ts < ms) return hit.v as T;
+  const v = await fn();
+  gc.__arbTtl!.set(key, { v, ts: Date.now() });
+  return v;
+}
+
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");
   const [entries, transfers, perps, funding] = await Promise.all([
@@ -19,9 +33,9 @@ async function buildContext(): Promise<ScanContext> {
         async (a) => [a.venue, await a.fetchTickers()] as [Venue, TickerMap],
       ),
     ),
-    fetchTransferStatus(),
-    fetchPerpBases(),
-    fetchFundingRates(),
+    ttl("transfers", 60_000, fetchTransferStatus),
+    ttl("perps", 10 * 60_000, fetchPerpBases),
+    ttl("funding", 30_000, fetchFundingRates),
   ]);
   const tickers: Partial<Record<Venue, TickerMap>> = {};
   for (const [venue, map] of entries) tickers[venue] = map;

@@ -65,6 +65,9 @@
 - [ ] 출금 단계 조기 tx 표시 (바낸 출금 히스토리 폴링)
 - [ ] 펀딩 레이트 지속성 검증 (히스토리 필요 — 갭 히스토리와 함께)
 
+## ⚡ 성능
+- [x] **스캔 서버 캐시 + 백그라운드 루프** — /api/scan이 warm 스냅샷 즉시 응답(~0.2s, 이전 3~10s+), 서버가 8초마다 백그라운드 갱신(첫 요청만 대기, stale-while-revalidate). 게이트 60s·펀딩 30s·perp 10분 TTL 분리, balances 10s·gates 60s SWR
+
 ## ⚪ 정리 (자잘)
 - [ ] `EXCLUDE`에 누락 스테이블 추가 (USDE/USD1 등) `lib/arbitrage.ts`·`config.ts`
 - [x] 안 쓰는 `app/api/execute` + `lib/execution.ts` 제거
