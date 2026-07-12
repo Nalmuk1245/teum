@@ -3,14 +3,17 @@
 > 현재 전부 **DRY-RUN**. 아래를 채우면 실전화. 키는 `.env.local`에만.
 
 ## 🔴 P0 — 실전화 (실제 자금 이동, 키 필요)
-`app/api/exec-step/route.ts`의 스텁을 실제 API로:
-- [ ] **실주문** — 바낸 현물 매수/매도(서명), USDT-M 숏/청산(서명), 업비트 매도(JWT) → `buy`/`sell`/`hedge`/`close`
-- [ ] **실출금** — 바낸 → 개인지갑 (Binance `/sapi/v1/capital/withdraw`, 서명, 화이트리스트) → `withdraw`
-- [ ] **토큰 전송 맵** — ERC20/TRC20/SPL 컨트랙트·decimals 매핑 (`lib/wallet.ts`, 지금 네이티브만)
-- [ ] **입금 확인 폴링** — 목적지 거래소 입금 크레딧 확인(서명) → `deposit`
-- [ ] **정산** — 실제 체결가 기반 P&L(실현) → `settle`
-- [ ] 비EVM(XRP/TRON/SOL) 전송 로컬 실테스트 후 `DRY_RUN=false`
+`app/api/exec-step/route.ts` + `lib/orders.ts` (전부 DRY-RUN 게이트, 휴면):
+- [x] **실주문** — 바낸 현물 매수/매도, USDT-M 숏/청산, 업비트 매수/매도 (서명 배선) — `lib/orders.ts`
+- [x] **실출금** — 바낸 → 개인지갑 (Binance `/capital/withdraw`, 서명)
+- [x] **토큰 전송 맵** — 주요 ERC20/TRC20 컨트랙트·decimals (`lib/tokens.ts`), 미확인 코인은 플래그
+- [x] **정산** — 순수익% + USD PnL → `settle`
+- [ ] **빗썸 주문/출금** (v1 HMAC-SHA512 서명) — 지금 스텁
+- [ ] **업비트 출금** (withdraw JWT) — 매수 KR·매도 글로벌(역프) 경로용
+- [ ] **입금 확인 폴링** — 목적지 거래소 크레딧 실확인(서명) → `deposit` (지금 즉시 통과)
+- [ ] 미확인 토큰 컨트랙트 추가 (`lib/tokens.ts` 확장)
 - [ ] **부분체결 롤백** — 한 다리만 체결 시 자동 원복/헷지 유지, 체결 정합성 검증
+- [ ] 비EVM(XRP/TRON/SOL) + 실주문 로컬 실테스트 후 `DRY_RUN=false`
 
 ## 🟠 P1 — 게이트·상태 서명 배선 (키 넣으면 대부분 자동)
 - [ ] **빗썸 잔고** — v1 HMAC-SHA512 private (`lib/balances.ts` `bithumb()` 스텁)
