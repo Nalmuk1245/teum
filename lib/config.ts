@@ -38,6 +38,8 @@ export const FEES = {
     binance: 0.1,
     upbit: 0.05,
     bithumb: 0.04,
+    bybit: 0.1,
+    okx: 0.1,
   } as Record<string, number>,
   /** USDT/KRW conversion + rate variance across the trade window. */
   fxSpreadPct: 0.15,

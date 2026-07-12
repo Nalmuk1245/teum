@@ -180,11 +180,110 @@ const bithumb: ExchangeAdapter = {
   },
 };
 
+// ── Bybit (global CEX, USDT quote) ────────────────────────────────────────────
+const bybit: ExchangeAdapter = {
+  venue: "bybit",
+  kind: "cex",
+  async fetchTickers() {
+    const out: TickerMap = new Map();
+    try {
+      const res = await fetch("https://api.bybit.com/v5/market/tickers?category=spot", {
+        cache: "no-store", signal: AbortSignal.timeout(6000),
+      });
+      const j = (await res.json()) as {
+        retCode: number;
+        result?: { list?: Array<{ symbol: string; lastPrice: string; turnover24h: string }> };
+      };
+      if (j.retCode !== 0) return out;
+      for (const r of j.result?.list ?? []) {
+        if (!r.symbol.endsWith("USDT")) continue;
+        out.set(r.symbol.slice(0, -4), {
+          price: Number(r.lastPrice),
+          quote: "USDT",
+          quoteVolumeUsd: Number(r.turnover24h),
+        });
+      }
+    } catch {
+      /* network */
+    }
+    return out;
+  },
+  async fetchOrderBook(symbol) {
+    try {
+      const res = await fetch(
+        `https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${symbol}&limit=50`,
+        { cache: "no-store", signal: AbortSignal.timeout(6000) },
+      );
+      const j = (await res.json()) as {
+        retCode: number;
+        result?: { a?: [string, string][]; b?: [string, string][] };
+      };
+      if (j.retCode !== 0 || !j.result) return EMPTY_BOOK;
+      const map = (rows: [string, string][] = []) =>
+        rows.map(([p, q]) => ({ price: Number(p), size: Number(q) }));
+      return { bids: map(j.result.b), asks: map(j.result.a) };
+    } catch {
+      return EMPTY_BOOK;
+    }
+  },
+};
+
+// ── OKX (global CEX, USDT quote) ──────────────────────────────────────────────
+const okx: ExchangeAdapter = {
+  venue: "okx",
+  kind: "cex",
+  async fetchTickers() {
+    const out: TickerMap = new Map();
+    try {
+      const res = await fetch("https://www.okx.com/api/v5/market/tickers?instType=SPOT", {
+        cache: "no-store", signal: AbortSignal.timeout(6000),
+      });
+      const j = (await res.json()) as {
+        code: string;
+        data?: Array<{ instId: string; last: string; volCcy24h: string }>;
+      };
+      if (j.code !== "0") return out;
+      for (const r of j.data ?? []) {
+        if (!r.instId.endsWith("-USDT")) continue;
+        out.set(r.instId.slice(0, -5), {
+          price: Number(r.last),
+          quote: "USDT",
+          quoteVolumeUsd: Number(r.volCcy24h),
+        });
+      }
+    } catch {
+      /* network */
+    }
+    return out;
+  },
+  async fetchOrderBook(symbol) {
+    try {
+      // symbol arrives OKX-native: BASE-USDT
+      const res = await fetch(`https://www.okx.com/api/v5/market/books?instId=${symbol}&sz=50`, {
+        cache: "no-store", signal: AbortSignal.timeout(6000),
+      });
+      const j = (await res.json()) as {
+        code: string;
+        data?: Array<{ asks: string[][]; bids: string[][] }>;
+      };
+      const d = j.data?.[0];
+      if (j.code !== "0" || !d) return EMPTY_BOOK;
+      const map = (rows: string[][] = []) =>
+        rows.map(([p, q]) => ({ price: Number(p), size: Number(q) }));
+      return { bids: map(d.bids), asks: map(d.asks) };
+    } catch {
+      return EMPTY_BOOK;
+    }
+  },
+};
+
 export const EXCHANGES: Record<string, ExchangeAdapter> = {
   binance,
   upbit,
   bithumb,
-  // TODO: bybit, okx (cross-cex + funding), uniswap (cex-dex / on-chain).
+  bybit,
+  okx,
+  // TODO: uniswap (cex-dex / on-chain).
 };
 
 export function getAdapter(venue: Venue): ExchangeAdapter | undefined {

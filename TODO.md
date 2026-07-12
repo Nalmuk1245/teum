@@ -29,7 +29,8 @@
 - [ ] **개인지갑 토큰 보유** — ERC20/SPL 잔고 조회 (`lib/walletBalances.ts`, 지금 네이티브만)
 
 ## 🟡 P2 — 전략 확장
-- [ ] **cross-cex** — 바이비트/OKX 어댑터 + 전략 (전송 없어 제일 싸게 실전화) `lib/strategies.ts`
+- [x] **cross-cex** — 바이비트/OKX 어댑터(티커+오더북) + 실전략 (거래소간 갭, 양다리 USDT, 유동성·새니티 필터, 송금 게이트, 실호가 견적까지 연동)
+- [ ] cross-cex 실주문 배선 (bybit/okx 서명 주문·출금 — 지금 라이브 하드페일)
 - [ ] **funding-basis** — 펀딩 vs 현물 캐시앤캐리
 - [ ] **cex-dex** — DEX 라우터 견적 + 온체인 실행
 

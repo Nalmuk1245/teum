@@ -125,14 +125,85 @@ const kimchi: Strategy = {
   },
 };
 
-// ── CROSS-CEX — same coin, price gap between two CEXes ─────────────────────────
+// ── CROSS-CEX — same coin, price gap between two global CEXes ──────────────────
+// Both legs are USDT so there's no FX; cost = taker×2 + on-chain transfer +
+// slippage. Majors rarely gap >0.1% — the tail (new listings, depegs) is where
+// this fires.
+const CROSS_VENUES: Venue[] = ["binance", "bybit", "okx"];
+const CROSS_MIN_GROSS = 0.1; // % — below this it's noise, not an edge
+const crossSymbol = (venue: Venue, base: string) =>
+  venue === "okx" ? `${base}-USDT` : `${base}USDT`;
+
 const crossCex: Strategy = {
   kind: "cross-cex",
   label: "CROSS-CEX",
-  async scan() {
-    // TODO: diff base prices across binance/bybit/okx tickers; net = gap −
-    // (taker×2 + withdrawal fee). Needs bybit/okx adapters + transfer status.
-    return [];
+  async scan(ctx) {
+    const out: Opportunity[] = [];
+    const maps = CROSS_VENUES
+      .map((v) => ({ v, m: ctx.tickers[v] }))
+      .filter((x): x is { v: Venue; m: NonNullable<typeof x.m> } => !!x.m && x.m.size > 0);
+    if (maps.length < 2) return out;
+
+    // Union of bases seen on at least two venues.
+    const bases = new Map<string, { v: Venue; price: number; vol: number }[]>();
+    for (const { v, m } of maps) {
+      for (const [base, t] of m) {
+        if (CONFIG.EXCLUDE.has(base)) continue;
+        if (t.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue; // both legs must be liquid
+        if (!t.price) continue;
+        const arr = bases.get(base) ?? [];
+        arr.push({ v, price: t.price, vol: t.quoteVolumeUsd });
+        bases.set(base, arr);
+      }
+    }
+
+    for (const [base, quotes] of bases) {
+      if (quotes.length < 2) continue;
+      let lo = quotes[0], hi = quotes[0];
+      for (const q of quotes) {
+        if (q.price < lo.price) lo = q;
+        if (q.price > hi.price) hi = q;
+      }
+      const gross = ((hi.price - lo.price) / lo.price) * 100;
+      if (gross < CROSS_MIN_GROSS) continue;
+      if (gross > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // stale/broken feed
+
+      const cost =
+        (FEES.takerPct[lo.v] ?? 0.1) + (FEES.takerPct[hi.v] ?? 0.1) +
+        (NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT) + FEES.slippagePct;
+      const net = gross - cost;
+
+      const transfer: TransferGate = {
+        // Wallet status for bybit/okx isn't wired → null (unknown).
+        withdraw: { venue: lo.v, enabled: walletStatus(ctx.transfers, lo.v, base)?.withdraw ?? null },
+        deposit: { venue: hi.v, enabled: walletStatus(ctx.transfers, hi.v, base)?.deposit ?? null },
+        etaMin: TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN,
+        blocked: false,
+        network: COIN_NETWORK[base] ?? COIN_NETWORK_DEFAULT,
+      };
+      transfer.blocked =
+        transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
+
+      out.push({
+        id: id("cross-cex", base),
+        kind: "cross-cex",
+        base,
+        legs: [
+          { venue: lo.v, side: "buy", symbol: crossSymbol(lo.v, base), price: lo.price, quote: "USDT" },
+          { venue: hi.v, side: "sell", symbol: crossSymbol(hi.v, base), price: hi.price, quote: "USDT" },
+        ],
+        grossPct: gross,
+        costPct: cost,
+        netPct: net,
+        notionalCapUsd: null,
+        executable: net > 0 && !transfer.blocked,
+        transfer,
+        ts: now(),
+      });
+    }
+    // Keep the tail from flooding the board.
+    out.sort((a, b) => b.netPct - a.netPct);
+    return out.slice(0, 20);
   },
 };
 
