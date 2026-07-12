@@ -9,6 +9,7 @@ import { STRATEGIES } from "./strategies";
 import { fetchTransferStatus } from "./transfers";
 import { fetchPerpBases } from "./perps";
 import { fetchFundingRates } from "./funding";
+import { recordGap, pruneHistory, confidence } from "./history";
 
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");
@@ -38,7 +39,20 @@ export async function scanAll(): Promise<Opportunity[]> {
   const opps = batches.flat();
   if (CONFIG.USE_MOCK) opps.push(...MOCK_OPPS());
   if (ctx.perps) for (const o of opps) o.hasPerp = ctx.perps.has(o.base);
-  opps.sort((a, b) => b.netPct - a.netPct);
+
+  // Persistence: record each live opp's net into rolling history and attach the
+  // held-duration / hit-rate. Rank by a confidence-weighted score so fresh
+  // one-scan spikes sink below sustained edges of similar size (not hidden).
+  const ts = Date.now();
+  const seen = new Set<string>();
+  for (const o of opps) {
+    if (o.mock) continue;
+    seen.add(o.id);
+    o.persistence = recordGap(o.id, o.netPct, ts);
+  }
+  pruneHistory(seen, ts);
+  const score = (o: Opportunity) => (o.mock ? o.netPct : o.netPct * confidence(o.persistence));
+  opps.sort((a, b) => score(b) - score(a));
   return opps;
 }
 

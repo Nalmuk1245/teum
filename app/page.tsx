@@ -514,14 +514,15 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
         </span>
       </div>
 
-      <div style={{ color: "var(--text-dim)", fontSize: 12.5, margin: "9px 0 10px" }}>
+      <div style={{ color: "var(--text-dim)", fontSize: 12.5, margin: "9px 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
         {buy && sell ? (
-          <>
+          <span>
             <b style={{ color: "var(--pos)", fontWeight: 600 }}>{isApr ? "롱" : "매수"}</b> {vlabel(buy.venue)}
             <span style={{ color: "var(--text-mute)", margin: "0 6px" }}>→</span>
             <b style={{ color: "var(--neg)", fontWeight: 600 }}>{isApr ? "숏" : "매도"}</b> {vlabel(sell.venue)}
-          </>
-        ) : "—"}
+          </span>
+        ) : <span>—</span>}
+        {!isApr && <PersistChip p={o.persistence} />}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -598,11 +599,11 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
       {/* pair */}
       <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
         <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{o.base}</span>
-        {o.mock && (
+        {o.mock ? (
           <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 5, padding: "0 4px" }}>
             mock
           </span>
-        )}
+        ) : !isApr && <PersistChip p={o.persistence} />}
       </span>
 
       {/* route */}
@@ -1645,6 +1646,25 @@ function FundingCountdown({ meta }: { meta: NonNullable<Opportunity["fundingMeta
       }}
     >
       다음 정산 {h > 0 ? `${h}h ` : ""}{m}m{soon ? " · 임박" : ""}
+    </span>
+  );
+}
+
+// Gap persistence chip — how long the edge has held (flicker vs sustained).
+function PersistChip({ p }: { p?: Opportunity["persistence"] }) {
+  if (!p || p.samples < 2) return null;
+  const held = p.heldSec;
+  const sustained = held >= 24;
+  const label = held >= 60 ? `${Math.floor(held / 60)}m${held % 60 ? ` ${held % 60}s` : ""}` : `${held}s`;
+  const tone = held <= 0 ? "var(--text-mute)" : sustained ? "var(--pos)" : "var(--amber)";
+  return (
+    <span
+      className="tnum"
+      title={`지속 ${label} · 적중률 ${p.hitRatePct}%`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600, color: tone }}
+    >
+      <span style={{ width: 4, height: 4, borderRadius: 999, background: tone }} />
+      {held <= 0 ? "신규" : `지속 ${label}`}
     </span>
   );
 }

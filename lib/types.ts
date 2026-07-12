@@ -63,6 +63,8 @@ export type Opportunity = {
   /** How grossPct/netPct should be read: "trade" = one-shot % (default), "apr"
    *  = annualized yield (funding arb, held ongoing). */
   rateBasis?: "trade" | "apr";
+  /** Gap persistence — how long/steadily this edge has held (flicker vs real). */
+  persistence?: { heldSec: number; hitRatePct: number; samples: number };
   /** Funding-basis timing: when the SHORT leg next settles + both intervals. */
   fundingMeta?: { nextTs: number | null; shortIntervalH: number | null; longIntervalH: number | null };
   note?: string;
