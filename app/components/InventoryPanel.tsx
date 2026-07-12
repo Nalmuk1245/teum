@@ -83,16 +83,29 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
     return <div style={{ color: "var(--text-mute)", padding: 32, textAlign: "center" }}>잔고 조회 중…</div>;
   }
   const { g, skewed, availPct } = derive(pf);
+  const allVenues = [...pf.venues, ...(pf.wallet ? [pf.wallet] : [])];
+
+  // Aggregate holdings across every venue + the wallet (cash included).
+  type Agg = { asset: string; amount: number; usdValue: number; where: string[] };
+  const aggMap = new Map<string, Agg>();
+  const add = (asset: string, amount: number, usdValue: number, where: string) => {
+    const a = aggMap.get(asset) ?? { asset, amount: 0, usdValue: 0, where: [] };
+    a.amount += amount; a.usdValue += usdValue;
+    if (!a.where.includes(where)) a.where.push(where);
+    aggMap.set(asset, a);
+  };
+  for (const v of allVenues) {
+    if (!v.connected) continue;
+    const label = VLABEL[v.venue] ?? v.venue;
+    if (v.cashUsd > 0) add(v.cashLabel, v.cashRaw, v.cashUsd, label);
+    for (const c of v.coins) add(c.asset, c.amount, c.usdValue, label);
+  }
+  const agg = [...aggMap.values()].sort((a, b) => b.usdValue - a.usdValue);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 14 }}>
-      {/* Headline */}
-      <div
-        style={{
-          background: "var(--card)", border: "1px solid var(--border)",
-          borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px",
-        }}
-      >
+      {/* ── Headline ── */}
+      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>총자본 (USD 환산)</span>
           {pf.mock && (
@@ -106,8 +119,10 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
           </span>
         </div>
         <div className="tnum" style={{ fontSize: 26, fontWeight: 800, marginTop: 4 }}>{usd(pf.totalUsd)}</div>
+        <div className="tnum" style={{ fontSize: 11, color: "var(--text-mute)", marginTop: 2 }}>
+          환율 ₩{Math.round(pf.usdKrw).toLocaleString("en-US")}/USDT 기준
+        </div>
 
-        {/* skew bar: global (USDT) vs KR (KRW) */}
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, margin: "14px 0 5px" }}>
           <span style={{ color: "var(--brand-2)" }}>글로벌 · USDT {usd(pf.globalUsd)}</span>
           <span style={{ color: "var(--sky)" }}>KR · 원화 {usd(pf.krUsd)}</span>
@@ -135,59 +150,99 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
         )}
       </div>
 
-      {/* Per-venue detail — always expanded on the assets tab */}
-      <div
-        style={{
-          background: "var(--card)", border: "1px solid var(--border)",
-          borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px",
-          display: "flex", flexDirection: "column", gap: 12,
-        }}
-      >
-        <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>거래소별 잔고</span>
-        {pf.venues.map((v) => (
-          <VenueRow key={v.venue} v={v} detailed />
-        ))}
-        {pf.wallet && (
-          <>
-            <div style={{ borderTop: "1px solid var(--border)" }} />
-            <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>
-              개인지갑 <span style={{ color: "var(--text-mute)", fontWeight: 400 }}>· 자체보관/전송 중</span>
-            </span>
-            <VenueRow v={pf.wallet} detailed />
-          </>
-        )}
+      {/* ── Aggregated holdings (all venues + wallet) ── */}
+      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+        <div style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600, marginBottom: 10 }}>자산별 합산</div>
+        <AssetTable
+          header
+          rows={agg.map((a) => ({
+            asset: a.asset, amount: a.amount, usdValue: a.usdValue,
+            sub: a.where.join(" · "), sharePct: pf.totalUsd > 0 ? (a.usdValue / pf.totalUsd) * 100 : 0,
+          }))}
+        />
       </div>
+
+      {/* ── Per-venue detail ── */}
+      {allVenues.map((v) => (
+        <VenueCard key={v.venue} v={v} isMobile={isMobile} totalUsd={pf.totalUsd} />
+      ))}
     </div>
   );
 }
 
-function VenueRow({ v, detailed }: { v: VenueBalance; detailed?: boolean }) {
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontWeight: 700, fontSize: 13 }}>{VLABEL[v.venue] ?? v.venue}</span>
-        {v.connected ? (
-          <span className="tnum" style={{ fontSize: 13, color: "var(--text-dim)" }}>{usd(v.totalUsd)}</span>
-        ) : (
-          <span style={{ fontSize: 11, color: "var(--text-mute)" }}>키 필요</span>
-        )}
+// One venue's detail card: cash row + every coin row with amount/price/value/share.
+function VenueCard({ v, isMobile, totalUsd }: { v: VenueBalance; isMobile?: boolean; totalUsd: number }) {
+  const label = VLABEL[v.venue] ?? v.venue;
+  if (!v.connected) {
+    return (
+      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 700, fontSize: 13.5 }}>{label}</span>
+        <span style={{ fontSize: 11.5, color: "var(--text-mute)" }}>키 필요 — .env.local에 API 키를 넣으면 실잔고가 표시됩니다</span>
       </div>
-      {v.connected && (
-        <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-mute)" }}>
-          {v.cashRaw > 0 && (
-            <span className="tnum">
-              {v.cashLabel === "KRW" ? krw(v.cashRaw) : `${v.cashRaw.toLocaleString("en-US", { maximumFractionDigits: 0 })} USDT`}
-            </span>
-          )}
-          {v.coins.slice(0, detailed ? 12 : 4).map((c, i) => (
-            <span key={c.asset}>
-              {v.cashRaw > 0 || i > 0 ? " · " : ""}
-              <span style={{ color: "var(--text-dim)" }}>{c.asset}</span> {usd(c.usdValue)}
-            </span>
-          ))}
-          {v.coins.length === 0 && v.cashRaw === 0 && <span>—</span>}
+    );
+  }
+  const rows = [
+    ...(v.cashUsd > 0 ? [{ asset: v.cashLabel, amount: v.cashRaw, usdValue: v.cashUsd, sub: "현금", sharePct: v.totalUsd > 0 ? (v.cashUsd / v.totalUsd) * 100 : 0 }] : []),
+    ...v.coins.map((c) => ({ asset: c.asset, amount: c.amount, usdValue: c.usdValue, sub: undefined as string | undefined, sharePct: v.totalUsd > 0 ? (c.usdValue / v.totalUsd) * 100 : 0 })),
+  ];
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontWeight: 700, fontSize: 13.5, whiteSpace: "nowrap" }}>{label}</span>
+        {v.venue === "wallet" && <span style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>자체보관 · 전송 중</span>}
+        <span style={{ flex: 1 }} />
+        <span className="tnum" style={{ fontSize: 14, fontWeight: 700 }}>{usd(v.totalUsd)}</span>
+        <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-mute)" }}>
+          {totalUsd > 0 ? `전체의 ${((v.totalUsd / totalUsd) * 100).toFixed(0)}%` : ""}
+        </span>
+      </div>
+      {rows.length ? <AssetTable rows={rows} /> : <div style={{ color: "var(--text-mute)", fontSize: 12 }}>보유 없음</div>}
+    </div>
+  );
+}
+
+// Shared asset table: 자산 | 수량(+단가) | 평가액(+비중 bar)
+function AssetTable({ rows, header }: {
+  rows: { asset: string; amount: number; usdValue: number; sub?: string; sharePct: number }[];
+  header?: boolean;
+}) {
+  const fmtAmt = (n: number) =>
+    n >= 1000 ? Math.round(n).toLocaleString("en-US")
+    : n >= 1 ? n.toLocaleString("en-US", { maximumFractionDigits: 4 })
+    : n.toLocaleString("en-US", { maximumFractionDigits: 8 });
+  const price = (r: { asset: string; amount: number; usdValue: number }) => {
+    if (r.asset === "KRW" || r.asset === "USDT" || r.amount <= 0) return null;
+    const p = r.usdValue / r.amount;
+    return p >= 1 ? `$${p.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : `$${p.toPrecision(3)}`;
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {header && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(64px,1fr) 1.4fr 1.2fr", gap: 8, fontSize: 10, color: "var(--text-mute)", padding: "0 0 4px" }}>
+          <span>자산</span><span style={{ textAlign: "right" }}>수량 · 단가</span><span style={{ textAlign: "right" }}>평가액 · 비중</span>
         </div>
       )}
+      {rows.map((r) => (
+        <div key={r.asset + (r.sub ?? "")} style={{ display: "grid", gridTemplateColumns: "minmax(64px,1fr) 1.4fr 1.2fr", gap: 8, alignItems: "center", padding: "5px 0", borderTop: "1px solid var(--border)" }}>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ fontWeight: 700, fontSize: 12.5 }}>{r.asset}</span>
+            {r.sub && <span style={{ display: "block", fontSize: 9.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sub}</span>}
+          </span>
+          <span className="tnum" style={{ textAlign: "right", fontSize: 12, color: "var(--text-dim)" }}>
+            {r.asset === "KRW" ? krw(r.amount) : fmtAmt(r.amount)}
+            {price(r) && <span style={{ display: "block", fontSize: 9.5, color: "var(--text-mute)" }}>@{price(r)}</span>}
+          </span>
+          <span style={{ textAlign: "right" }}>
+            <span className="tnum" style={{ fontSize: 12.5, fontWeight: 600 }}>{usd(r.usdValue)}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 2 }}>
+              <span style={{ width: 46, height: 3, borderRadius: 999, background: "var(--bg)", overflow: "hidden" }}>
+                <span style={{ display: "block", width: `${Math.min(100, r.sharePct)}%`, height: "100%", background: "var(--brand)" }} />
+              </span>
+              <span className="tnum" style={{ fontSize: 9.5, color: "var(--text-mute)", minWidth: 26 }}>{r.sharePct.toFixed(0)}%</span>
+            </span>
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
