@@ -184,10 +184,11 @@ async function runStep(
     }
     case "deposit": {
       const r = await checkDeposit(sell?.venue ?? "upbit", opp.base, opts.sinceTs ?? Date.now() - 60 * 60 * 1000);
-      return {
-        ok: r.ok, dryRun: r.dryRun, message: r.message,
-        tx: txInfo(opp.transfer?.network?.chain, r.txHash, r.dryRun),
-      };
+      // DRY → sim chip; LIVE → real credited txid from the deposit record.
+      const dtx = r.dryRun
+        ? { hash: `sim:${chainKeyFromLabel(opp.transfer?.network?.chain) || "chain"}:deposit:${opp.base}`, url: null }
+        : txInfo(opp.transfer?.network?.chain, r.txHash, r.dryRun);
+      return { ok: r.ok, dryRun: r.dryRun, message: r.message, tx: dtx };
     }
     case "sell": {
       if (!sell) return fail("매도 다리 없음");
