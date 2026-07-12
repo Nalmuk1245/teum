@@ -34,8 +34,12 @@ async function buildContext(): Promise<ScanContext> {
       ),
     ),
     ttl("transfers", 60_000, fetchTransferStatus),
-    ttl("perps", 10 * 60_000, fetchPerpBases),
-    ttl("funding", 30_000, fetchFundingRates),
+    // Perp listings change on the days scale — worst case a brand-new perp's
+    // hedge toggle lags by up to the TTL, so keep it at 1h (not longer).
+    ttl("perps", 60 * 60_000, fetchPerpBases),
+    // Funding settles every 1–8h; the countdown is computed from nextTs
+    // client-side, so a 2min rate refresh loses nothing visible.
+    ttl("funding", 2 * 60_000, fetchFundingRates),
   ]);
   const tickers: Partial<Record<Venue, TickerMap>> = {};
   for (const [venue, map] of entries) tickers[venue] = map;
