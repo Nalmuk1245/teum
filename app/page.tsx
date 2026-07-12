@@ -14,6 +14,8 @@ const KIND_META: Record<StrategyKind, { label: string; color: string }> = {
   "cex-dex": { label: "CEX-DEX", color: "var(--teal)" },
 };
 const KINDS = Object.keys(KIND_META) as StrategyKind[];
+// Funding has its own tab — the gap board/filter only covers one-shot strategies.
+const GAP_KINDS = KINDS.filter((k) => k !== "funding-basis");
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
@@ -33,8 +35,10 @@ export default function Cockpit() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StrategyKind | "all">("all");
   const [selected, setSelected] = useState<Opportunity | null>(null);
-  // Two separated tools: "monitor" = gap viewing only (no execute), "execute" = trading.
-  const [mode, setMode] = useState<"monitor" | "execute">("monitor");
+  // Three separated tools: "monitor" = one-shot gap viewing, "funding" =
+  // ongoing funding-spread yields (APR — a different animal from gaps),
+  // "execute" = trading.
+  const [mode, setMode] = useState<"monitor" | "funding" | "execute">("monitor");
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -65,25 +69,30 @@ export default function Cockpit() {
     return () => clearInterval(id);
   }, [load]);
 
+  // Funding lives in its own tab — APR yields don't belong on a one-shot gap board.
+  const funding = mode === "funding";
+  const gapOpps = useMemo(() => opps.filter((o) => o.kind !== "funding-basis"), [opps]);
+  const fundingOpps = useMemo(() => opps.filter((o) => o.kind === "funding-basis"), [opps]);
+  const pool = funding ? fundingOpps : gapOpps;
   const rows = useMemo(
-    () => (filter === "all" ? opps : opps.filter((o) => o.kind === filter)),
-    [opps, filter],
+    () => (funding || filter === "all" ? pool : pool.filter((o) => o.kind === filter)),
+    [pool, filter, funding],
   );
-  const positive = opps.filter((o) => o.netPct > 0).length;
-  const bestEdge = opps.length ? Math.max(...opps.map((o) => o.netPct)) : null;
+  const positive = pool.filter((o) => o.netPct > 0).length;
+  const bestEdge = pool.length ? Math.max(...pool.map((o) => o.netPct)) : null;
   const isMobile = useIsMobile();
   // Real-time overlay — client WebSockets recompute premium/net sub-second.
   const { overlay: liveOverlay, status: liveStatus, ages: liveAges } = useLivePrices(opps, true);
-  // Best live opportunity (for the sticky summary bar).
+  // Best live opportunity in the current pool (for the sticky summary bar).
   const best = useMemo(() => {
     let top: { o: Opportunity; net: number } | null = null;
-    for (const o of opps) {
+    for (const o of pool) {
       if (o.mock) continue;
       const net = liveOverlay[o.id]?.netPct ?? o.netPct;
       if (!top || net > top.net) top = { o, net };
     }
     return top;
-  }, [opps, liveOverlay]);
+  }, [pool, liveOverlay]);
 
   return (
     <main style={{ minHeight: "100dvh" }}>
@@ -136,13 +145,14 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
+            display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6,
             padding: 4, marginBottom: isMobile ? 10 : 14,
             background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
           }}
         >
           {([
-            { k: "monitor", label: "📈 갭 모니터", sub: "보기 전용" },
+            { k: "monitor", label: "📈 갭 모니터", sub: "원샷 차익" },
+            { k: "funding", label: "🔄 펀딩", sub: "보유 수익률" },
             { k: "execute", label: "⚡ 실행", sub: "주문 실행" },
           ] as const).map((m) => {
             const active = mode === m.k;
@@ -151,10 +161,10 @@ export default function Cockpit() {
                 key={m.k}
                 type="button"
                 onClick={() => {
-                  // Switching to monitor unmounts an open execute modal (and any
+                  // Leaving execute unmounts an open execute modal (and any
                   // in-flight runner) — confirm instead of silently killing it.
-                  if (m.k === "monitor" && selected) {
-                    if (!window.confirm("실행 창이 열려 있습니다. 닫고 모니터로 전환할까요?")) return;
+                  if (m.k !== "execute" && selected) {
+                    if (!window.confirm("실행 창이 열려 있습니다. 닫고 전환할까요?")) return;
                     setSelected(null);
                   }
                   setMode(m.k);
@@ -188,18 +198,30 @@ export default function Cockpit() {
             marginBottom: isMobile ? 10 : 14,
           }}
         >
-          <Tile label="기회" value={String(opps.length)} sub={`전략 ${KINDS.length}종`} compact={isMobile} />
-          <Tile label="수익 기회" value={String(positive)} sub="비용 넘김" tone="var(--pos)" compact={isMobile} />
           <Tile
-            label="최고 수익"
+            label={funding ? "펀딩 기회" : "기회"}
+            value={String(pool.length)}
+            sub={funding ? "스프레드 8%+" : `전략 ${GAP_KINDS.length}종`}
+            compact={isMobile}
+          />
+          <Tile
+            label={funding ? "수익 스프레드" : "수익 기회"}
+            value={String(positive)}
+            sub={funding ? "APR 양수" : "비용 넘김"}
+            tone="var(--pos)"
+            compact={isMobile}
+          />
+          <Tile
+            label={funding ? "최고 APR" : "최고 수익"}
             value={bestEdge == null ? "—" : pct(bestEdge)}
-            sub="수수료 반영"
+            sub={funding ? "연환산" : "수수료 반영"}
             tone={bestEdge && bestEdge > 0 ? "var(--pos)" : "var(--text)"}
             compact={isMobile}
           />
         </div>
 
-        {/* ── Segmented filter (scrolls horizontally on mobile) ── */}
+        {/* ── Segmented filter (gap modes only — funding is a single strategy) ── */}
+        {!funding && (
         <div style={{ overflowX: "auto", marginBottom: 16, maxWidth: "100%", WebkitOverflowScrolling: "touch" }}>
         <div
           style={{
@@ -208,10 +230,10 @@ export default function Cockpit() {
             borderRadius: 999,
           }}
         >
-          {(["all", ...KINDS] as const).map((k) => {
+          {(["all", ...GAP_KINDS] as const).map((k) => {
             const active = filter === k;
             const label = k === "all" ? "전체" : KIND_META[k].label;
-            const n = k === "all" ? opps.length : opps.filter((o) => o.kind === k).length;
+            const n = k === "all" ? pool.length : pool.filter((o) => o.kind === k).length;
             return (
               <button
                 key={k}
@@ -234,17 +256,21 @@ export default function Cockpit() {
           })}
         </div>
         </div>
+        )}
 
         {/* ── Board ────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>기회 테이블</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>
+            {funding ? "펀딩 스프레드 (숏 받는쪽 → 롱 내는쪽)" : "기회 테이블"}
+          </span>
           <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
         </div>
         <Board rows={rows} loading={loading} onExecute={setSelected} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} />
 
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
-          순수익 = 총차익 − 예상 왕복비용. 김프·크로스(거래소 갭)는 실데이터 연동,
-          펀딩/CEX-DEX는 목업 스텁입니다.
+          {funding
+            ? "APR = 8h 정규화 펀딩 스프레드의 연환산 (바낸·바이비트는 다음 주기 예측). 정산 시점에만 지급 — 카운트다운 참고. 실행 배선 전, 모니터링 전용."
+            : "순수익 = 총차익 − 예상 왕복비용. 김프·크로스(거래소 갭)는 실데이터 연동, CEX-DEX는 목업 스텁입니다."}
         </p>
       </div>
 
