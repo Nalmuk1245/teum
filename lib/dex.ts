@@ -50,6 +50,54 @@ export const OKX_CHAIN_ID: Record<string, string> = {
   bsc: "56", polygon: "137", avalanche: "43114", solana: "501",
 };
 
+// ── cex-dex universe per chain ────────────────────────────────────────────────
+// DEX-side token contracts for DETECTION quoting only — deliberately separate
+// from tokens.ts (which drives real wallet sends). Bases the CEX doesn't list
+// are skipped at runtime, so it's safe to include candidates.
+export type DexToken = { address: string; decimals: number };
+export type DexChainUniverse = {
+  chain: string; // chains.ts key
+  native: "ETH" | "BNB"; // gas is paid in this (priced via CEX ticker)
+  quote: { symbol: string; address: string; decimals: number }; // stable we quote against
+  bases: Record<string, DexToken>;
+};
+
+export const CEXDEX_CHAINS: DexChainUniverse[] = [
+  {
+    chain: "ethereum", native: "ETH",
+    quote: { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+    bases: {
+      UNI: { address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", decimals: 18 },
+      LINK: { address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", decimals: 18 },
+      AAVE: { address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", decimals: 18 },
+      PEPE: { address: "0x6982508145454Ce325dDbE47a25d4ec3d2311933", decimals: 18 },
+      SHIB: { address: "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", decimals: 18 },
+      CRV: { address: "0xD533a949740bb3306d119CC777fa900bA034cd52", decimals: 18 },
+      LDO: { address: "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32", decimals: 18 },
+      MKR: { address: "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2", decimals: 18 },
+      GRT: { address: "0xc944E90C64B2c07662A292be6244BDf05Cda44a7", decimals: 18 },
+    },
+  },
+  {
+    chain: "base", native: "ETH", // Base gas is ETH
+    quote: { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
+    bases: {
+      VIRTUAL: { address: "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b", decimals: 18 },
+      AERO: { address: "0x940181a94A35A4569E4529A3CDfB74e38FD98631", decimals: 18 },
+      DEGEN: { address: "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", decimals: 18 },
+    },
+  },
+  {
+    chain: "bsc", native: "BNB",
+    quote: { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 }, // BSC-USD is 18dp
+    bases: {
+      CAKE: { address: "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", decimals: 18 },
+      FLOKI: { address: "0xfb5B838b6cfEEdC2873aB27866079AC55363D37E", decimals: 9 }, // BSC FLOKI is 9dp
+      TWT: { address: "0x4B0F1812e5Df2A09796481Ff14017e6005508003", decimals: 18 },
+    },
+  },
+];
+
 export type DexQuote = {
   toAmount: number; // human units of the to-token
   gasUnits: number; // estimated gas of the swap tx

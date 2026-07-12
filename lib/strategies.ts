@@ -12,8 +12,7 @@ import {
   COIN_NETWORK, COIN_NETWORK_DEFAULT,
 } from "./config";
 import { walletStatus } from "./transfers";
-import { tokenFor } from "./tokens";
-import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured } from "./dex";
+import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS } from "./dex";
 
 export interface Strategy {
   kind: StrategyKind;
@@ -311,7 +310,6 @@ const fundingBasis: Strategy = {
 // why most naive cex-dex "opportunities" are fake). Monitoring-only until the
 // swap execution phase is wired. Dormant without OKX_WEB3_* keys.
 const DEXDEX_REF_USD = 2000; // quote size — gas% and depth are size-dependent
-const CEXDEX_UNIVERSE = ["UNI", "LINK", "AAVE", "PEPE", "SHIB", "CRV", "LDO", "MKR", "GRT"];
 const CEXDEX_TTL_MS = 60_000; // OKX web3 rate limits — refresh once a minute
 const CEXDEX_MEV_PCT = 0.1; // sandwich/re-quote buffer
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -320,72 +318,77 @@ type CexDexCache = { opps: Opportunity[]; ts: number; busy: boolean };
 const gcd = globalThis as unknown as { __arbCexDex?: CexDexCache };
 gcd.__arbCexDex ??= { opps: [], ts: 0, busy: false };
 
+// Multi-chain sweep: for every chain universe (Ethereum/Base/BSC), quote both
+// directions per coin against that chain's stable and compare with the CEX
+// top-of-book. Gas is priced in the chain's native coin (ETH or BNB).
 async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
   const bnb = ctx.tickers.binance;
-  const ethUsd = bnb?.get("ETH")?.price;
-  if (!bnb || !ethUsd) return [];
-  const usdc = tokenFor("USDC", "ethereum");
-  if (usdc.kind !== "token") return [];
-  const gasWei = await gasPriceWei("ethereum");
-  if (!gasWei) return [];
-
+  if (!bnb) return [];
   const out: Opportunity[] = [];
-  for (const base of CEXDEX_UNIVERSE) {
-    const t = tokenFor(base, "ethereum");
-    if (t.kind !== "token") continue;
-    const cex = bnb.get(base);
-    if (!cex?.bid || !cex?.ask) continue;
-    if (cex.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
-    const mid = (cex.bid + cex.ask) / 2;
-    const token = { address: t.address!, decimals: t.decimals! };
 
-    // Two quotes per coin, sequenced gently for the rate limit.
-    const buyQ = await quoteDex("ethereum", { address: usdc.address!, decimals: usdc.decimals! }, token, DEXDEX_REF_USD);
-    await sleepMs(250);
-    const qty = DEXDEX_REF_USD / mid;
-    const sellQ = await quoteDex("ethereum", token, { address: usdc.address!, decimals: usdc.decimals! }, qty);
-    await sleepMs(250);
+  for (const uni of CEXDEX_CHAINS) {
+    const nativeUsd = bnb.get(uni.native)?.price;
+    if (!nativeUsd) continue;
+    const gasWei = await gasPriceWei(uni.chain);
+    if (!gasWei) continue;
+    const quoteTok = { address: uni.quote.address, decimals: uni.quote.decimals };
 
-    const cexTaker = FEES.takerPct.binance ?? 0.1;
-    const mk = (dir: "buyDex" | "sellDex", grossPct: number, gasUnits: number, dexPrice: number) => {
-      const gasPct = (gasCostUsd(gasUnits, gasWei, ethUsd) / DEXDEX_REF_USD) * 100;
-      const cost = gasPct + cexTaker + CEXDEX_MEV_PCT;
-      const net = grossPct - cost;
-      const dexLeg = { venue: "dex" as const, symbol: `${base}/USDC`, price: dexPrice, quote: "USDT" };
-      const cexLeg = { venue: "binance" as const, symbol: `${base}USDT`, price: dir === "buyDex" ? cex.bid! : cex.ask!, quote: "USDT" };
-      out.push({
-        id: id("cex-dex", `${base}:${dir}`),
-        kind: "cex-dex",
-        base,
-        legs: dir === "buyDex"
-          ? [{ ...dexLeg, side: "buy" }, { ...cexLeg, side: "sell" }]
-          : [{ ...cexLeg, side: "buy" }, { ...dexLeg, side: "sell" }],
-        grossPct,
-        costPct: cost,
-        netPct: net,
-        notionalCapUsd: DEXDEX_REF_USD,
-        executable: false, // swap execution phase not wired yet
-        note: `OKX 라우팅 · 가스 $${gasCostUsd(gasUnits, gasWei, ethUsd).toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준`,
-        ts: now(),
-      });
-    };
+    for (const [base, token] of Object.entries(uni.bases)) {
+      const cex = bnb.get(base);
+      if (!cex?.bid || !cex?.ask) continue; // CEX doesn't list it (or no book) — skip
+      if (cex.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
+      const mid = (cex.bid + cex.ask) / 2;
 
-    if (buyQ && buyQ.toAmount > 0) {
-      const dexBuy = DEXDEX_REF_USD / buyQ.toAmount; // effective $/coin buying on DEX
-      mk("buyDex", ((cex.bid - dexBuy) / dexBuy) * 100, buyQ.gasUnits, dexBuy);
-    }
-    if (sellQ && sellQ.toAmount > 0) {
-      const dexSell = sellQ.toAmount / qty; // effective $/coin selling on DEX
-      mk("sellDex", ((dexSell - cex.ask) / cex.ask) * 100, sellQ.gasUnits, dexSell);
+      // Two quotes per coin, sequenced gently for the rate limit.
+      const buyQ = await quoteDex(uni.chain, quoteTok, token, DEXDEX_REF_USD);
+      await sleepMs(250);
+      const qty = DEXDEX_REF_USD / mid;
+      const sellQ = await quoteDex(uni.chain, token, quoteTok, qty);
+      await sleepMs(250);
+
+      const cexTaker = FEES.takerPct.binance ?? 0.1;
+      const mk = (dir: "buyDex" | "sellDex", grossPct: number, gasUnits: number, dexPrice: number) => {
+        const gasUsd = gasCostUsd(gasUnits, gasWei, nativeUsd);
+        const gasPct = (gasUsd / DEXDEX_REF_USD) * 100;
+        const cost = gasPct + cexTaker + CEXDEX_MEV_PCT;
+        const net = grossPct - cost;
+        const dexLeg = { venue: "dex" as const, symbol: `${base}/${uni.quote.symbol}@${uni.chain}`, price: dexPrice, quote: "USDT" };
+        const cexLeg = { venue: "binance" as const, symbol: `${base}USDT`, price: dir === "buyDex" ? cex.bid! : cex.ask!, quote: "USDT" };
+        out.push({
+          id: id("cex-dex", `${base}:${uni.chain}:${dir}`),
+          kind: "cex-dex",
+          base,
+          legs: dir === "buyDex"
+            ? [{ ...dexLeg, side: "buy" }, { ...cexLeg, side: "sell" }]
+            : [{ ...cexLeg, side: "buy" }, { ...dexLeg, side: "sell" }],
+          grossPct,
+          costPct: cost,
+          netPct: net,
+          notionalCapUsd: DEXDEX_REF_USD,
+          executable: false, // swap execution phase not wired yet
+          note: `${uni.chain} · OKX 라우팅 · 가스 $${gasUsd.toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준`,
+          ts: now(),
+        });
+      };
+
+      if (buyQ && buyQ.toAmount > 0) {
+        const dexBuy = DEXDEX_REF_USD / buyQ.toAmount; // effective $/coin buying on DEX
+        mk("buyDex", ((cex.bid - dexBuy) / dexBuy) * 100, buyQ.gasUnits, dexBuy);
+      }
+      if (sellQ && sellQ.toAmount > 0) {
+        const dexSell = sellQ.toAmount / qty; // effective $/coin selling on DEX
+        mk("sellDex", ((dexSell - cex.ask) / cex.ask) * 100, sellQ.gasUnits, dexSell);
+      }
     }
   }
-  // Keep the best direction per coin, top-N overall.
+  // Keep the best direction per coin×chain, top-N overall.
   const bestPer = new Map<string, Opportunity>();
   for (const o of out) {
-    const cur = bestPer.get(o.base);
-    if (!cur || o.netPct > cur.netPct) bestPer.set(o.base, o);
+    const key = o.id.replace(/:(buyDex|sellDex)$/, "");
+    const cur = bestPer.get(key);
+    if (!cur || o.netPct > cur.netPct) bestPer.set(key, o);
   }
-  return [...bestPer.values()].sort((a, b) => b.netPct - a.netPct).slice(0, 12);
+  return [...bestPer.values()].sort((a, b) => b.netPct - a.netPct).slice(0, 15);
 }
 
 const cexDex: Strategy = {
