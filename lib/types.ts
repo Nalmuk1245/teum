@@ -8,6 +8,7 @@ export type Venue =
   | "okx"
   | "hyperliquid" // perp DEX
   | "lighter" // perp DEX (zkLighter)
+  | "dex" // spot DEX leg (OKX aggregator routing)
   | "uniswap"
   | "wallet"; // personal self-custody wallet (in-transit / on-chain assets)
 

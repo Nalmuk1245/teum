@@ -35,7 +35,8 @@
 - [ ] cross-cex 실주문 배선 (bybit/okx 서명 주문·출금 — 지금 라이브 하드페일)
 - [x] **funding-basis** — 크로스벤유 펀딩 차익 (lighter/binance/bybit/hyperliquid, 8h 정규화·예측 레이트·정산 카운트다운·손익분기, 전용 탭) — 모니터링 전용
 - [ ] 펀딩 실행 배선 — HL/Lighter 서명 주문 (perp DEX SDK)
-- [ ] **cex-dex** — DEX 라우터 견적 + 온체인 실행
+- [x] **cex-dex 탐지 (OKX DEX API)** — OKX 어그리게이터 견적(멀티DEX 최적라우팅, 실행가 amountOut)을 CEX bid/ask와 양방향 비교, 실가스(eth_gasPrice×견적 gas×ETH가) + 테이커 + MEV버퍼 반영 net. 유니버스 9코인(tokens.ts∩바낸), 60s TTL(레이트리밋), 코인당 최적 방향만. OKX_WEB3_* 키 없으면 휴면 — 모니터링 전용
+- [ ] cex-dex 실행 — OKX /swap 캘리데이터 서명(라우터 화이트리스트·minOut 검증) + CEX 동시발사 (재고형)
 
 ## 🟢 P3 — 안전·리스크
 - [x] **리스크 한도** — 1회 규모/일일 손실(서버 authoritative, buy 게이트+settle 집계) + 총 in-flight(클라 startRun 차단). 관제 탭에서 UI로 편집 가능(/api/risk POST, globalThis). RISK_* env는 초기값

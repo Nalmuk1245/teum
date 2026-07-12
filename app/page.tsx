@@ -1627,7 +1627,7 @@ function LegRow({
 const VENUE_LABEL: Record<string, string> = {
   binance: "Binance", upbit: "Upbit", bithumb: "Bithumb",
   bybit: "Bybit", okx: "OKX", uniswap: "Uniswap",
-  hyperliquid: "Hyperliquid", lighter: "Lighter",
+  hyperliquid: "Hyperliquid", lighter: "Lighter", dex: "DEX",
 };
 const vlabel = (v?: string) => (v ? VENUE_LABEL[v] ?? v : "—");
 const WL_KEY = "ac.whitelist.v1";

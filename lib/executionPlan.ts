@@ -26,7 +26,7 @@ export type AutoLevel = "manual" | "beforeWithdraw" | "beforeSell" | "auto";
 
 const VENUE: Record<string, string> = {
   binance: "Binance", upbit: "Upbit", bithumb: "Bithumb",
-  bybit: "Bybit", okx: "OKX", uniswap: "Uniswap",
+  bybit: "Bybit", okx: "OKX", uniswap: "Uniswap", dex: "DEX",
 };
 const vlabel = (v?: string) => (v ? VENUE[v] ?? v : "?");
 
