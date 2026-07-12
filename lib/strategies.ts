@@ -22,6 +22,14 @@ export interface Strategy {
 const now = () => Date.now();
 const id = (kind: string, base: string) => `${kind}:${base}`;
 
+// Top-of-book spread as % of mid — a freshness/thinness signal. A wide spread
+// means the last price is unreliable (stale/illiquid). 0 when book is missing
+// (don't gate on absent data; liquid venues always have a book here).
+function spreadPct(t: { bid?: number; ask?: number }): number {
+  if (!t.bid || !t.ask || t.ask <= 0) return 0;
+  return ((t.ask - t.bid) / ((t.ask + t.bid) / 2)) * 100;
+}
+
 // KR venues evaluated for kimchi, best-net wins per coin.
 const KR_VENUES: Venue[] = ["upbit", "bithumb"];
 
@@ -60,9 +68,11 @@ const kimchi: Strategy = {
     for (const base of bases) {
       if (CONFIG.EXCLUDE.has(base)) continue;
 
-      // Evaluate every KR × global combo; keep the best net edge.
+      // Evaluate every KR × global combo; keep the best net edge. Prices are the
+      // EXECUTABLE top-of-book (buy at ask, sell at bid) — not the optimistic
+      // last trade — so the board net reflects what you'd actually capture.
       let best:
-        | { kv: Venue; gv: Venue; krPrice: number; gPrice: number; premiumPct: number; cost: number; net: number }
+        | { kv: Venue; gv: Venue; krPrice: number; gPrice: number; premiumPct: number; cost: number; net: number; execGross: number }
         | null = null;
       for (const kv of KR_VENUES) {
         const km = ctx.tickers[kv];
@@ -70,6 +80,7 @@ const kimchi: Strategy = {
         if (!kr) continue;
         // KR-leg liquidity gate — quoteVolumeUsd holds KRW for KR venues.
         if (kr.quoteVolumeUsd < CONFIG.MIN_KR_VOLUME_KRW) continue;
+        if (spreadPct(kr) > CONFIG.MAX_SPREAD_PCT) continue; // thin/stale KR book
         // Per-venue USDT/KRW; a live cross-venue rate is acceptable, but a bank
         // fallback rate fabricates 1-3% premiums — skip rather than mislead.
         const fx = km?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : null);
@@ -78,15 +89,23 @@ const kimchi: Strategy = {
           const g = ctx.tickers[gv]?.get(base);
           if (!g || !g.price) continue;
           if (g.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
-          const premiumPct = ((kr.price / fx - g.price) / g.price) * 100;
-          if (Math.abs(premiumPct) > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // bad data
+          if (spreadPct(g) > CONFIG.MAX_SPREAD_PCT) continue; // thin/stale global book
+          const midPremium = ((kr.price / fx - g.price) / g.price) * 100;
+          if (Math.abs(midPremium) > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // bad data
+          // Executable gross: cross both spreads in the profitable direction.
+          const gAsk = g.ask ?? g.price, gBid = g.bid ?? g.price;
+          const kAsk = kr.ask ?? kr.price, kBid = kr.bid ?? kr.price;
+          const execGross = midPremium >= 0
+            ? ((kBid / fx - gAsk) / gAsk) * 100      // buy global ask → sell KR bid
+            : ((gBid - kAsk / fx) / (kAsk / fx)) * 100; // buy KR ask → sell global bid
           const cost = kimchiCostPct(base, gv, kv);
-          const net = Math.abs(premiumPct) - cost;
+          const net = execGross - cost;
           if (!best || net > best.net)
-            best = { kv, gv, krPrice: kr.price, gPrice: g.price, premiumPct, cost, net };
+            best = { kv, gv, krPrice: kr.price, gPrice: g.price, premiumPct: midPremium, cost, net, execGross };
         }
       }
       if (!best) continue;
+      const execGross = best.execGross;
 
       const buyGlobal = best.premiumPct >= 0; // KR expensive → buy global, sell KR
 
@@ -115,7 +134,7 @@ const kimchi: Strategy = {
         legs: buyGlobal
           ? [{ ...gLeg, side: "buy" }, { ...kLeg, side: "sell" }]
           : [{ ...kLeg, side: "buy" }, { ...gLeg, side: "sell" }],
-        grossPct: Math.abs(best.premiumPct),
+        grossPct: execGross, // executable (spread-crossed), not mid-price
         costPct: best.cost,
         netPct: best.net,
         notionalCapUsd: null, // TODO: from order-book depth
@@ -147,27 +166,30 @@ const crossCex: Strategy = {
       .filter((x): x is { v: Venue; m: NonNullable<typeof x.m> } => !!x.m && x.m.size > 0);
     if (maps.length < 2) return out;
 
-    // Union of bases seen on at least two venues.
-    const bases = new Map<string, { v: Venue; price: number; vol: number }[]>();
+    // Union of bases seen on at least two venues, with executable bid/ask.
+    const bases = new Map<string, { v: Venue; ask: number; bid: number }[]>();
     for (const { v, m } of maps) {
       for (const [base, t] of m) {
         if (CONFIG.EXCLUDE.has(base)) continue;
         if (t.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue; // both legs must be liquid
         if (!t.price) continue;
+        if (spreadPct(t) > CONFIG.MAX_SPREAD_PCT) continue; // thin/stale book
         const arr = bases.get(base) ?? [];
-        arr.push({ v, price: t.price, vol: t.quoteVolumeUsd });
+        arr.push({ v, ask: t.ask ?? t.price, bid: t.bid ?? t.price });
         bases.set(base, arr);
       }
     }
 
     for (const [base, quotes] of bases) {
       if (quotes.length < 2) continue;
+      // Buy at the cheapest ASK, sell into the richest BID — the executable arb.
       let lo = quotes[0], hi = quotes[0];
       for (const q of quotes) {
-        if (q.price < lo.price) lo = q;
-        if (q.price > hi.price) hi = q;
+        if (q.ask < lo.ask) lo = q;
+        if (q.bid > hi.bid) hi = q;
       }
-      const gross = ((hi.price - lo.price) / lo.price) * 100;
+      if (lo.v === hi.v) continue;
+      const gross = ((hi.bid - lo.ask) / lo.ask) * 100;
       if (gross < CROSS_MIN_GROSS) continue;
       if (gross > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // stale/broken feed
 
@@ -192,8 +214,8 @@ const crossCex: Strategy = {
         kind: "cross-cex",
         base,
         legs: [
-          { venue: lo.v, side: "buy", symbol: crossSymbol(lo.v, base), price: lo.price, quote: "USDT" },
-          { venue: hi.v, side: "sell", symbol: crossSymbol(hi.v, base), price: hi.price, quote: "USDT" },
+          { venue: lo.v, side: "buy", symbol: crossSymbol(lo.v, base), price: lo.ask, quote: "USDT" },
+          { venue: hi.v, side: "sell", symbol: crossSymbol(hi.v, base), price: hi.bid, quote: "USDT" },
         ],
         grossPct: gross,
         costPct: cost,

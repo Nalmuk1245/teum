@@ -21,6 +21,9 @@ export const CONFIG = {
   MAX_ABS_PREMIUM_PCT: 40,
   /** Live market orders abort when the book-estimated slippage exceeds this. */
   MAX_SLIPPAGE_PCT: Number(process.env.MAX_SLIPPAGE_PCT ?? 0.5),
+  /** Freshness/thinness gate — a top-of-book spread wider than this on either
+   *  leg means the last price is unreliable (stale/illiquid). Skip the coin. */
+  MAX_SPREAD_PCT: Number(process.env.MAX_SPREAD_PCT ?? 1.5),
 } as const;
 
 /** Default round-trip cost model per strategy (% of notional). Tune later. */

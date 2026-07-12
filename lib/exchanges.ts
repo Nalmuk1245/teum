@@ -33,6 +33,7 @@ const binance: ExchangeAdapter = {
         symbol: string;
         lastPrice: string;
         quoteVolume: string;
+        bidPrice: string; askPrice: string; bidQty: string; askQty: string;
       }>;
       for (const r of rows) {
         if (!r.symbol.endsWith("USDT")) continue;
@@ -41,6 +42,8 @@ const binance: ExchangeAdapter = {
           price: Number(r.lastPrice),
           quote: "USDT",
           quoteVolumeUsd: Number(r.quoteVolume),
+          bid: Number(r.bidPrice) || undefined, ask: Number(r.askPrice) || undefined,
+          bidSize: Number(r.bidQty) || undefined, askSize: Number(r.askQty) || undefined,
         });
       }
     } catch {
@@ -102,6 +105,20 @@ const upbit: ExchangeAdapter = {
           });
         }
       }
+      // Merge best bid/ask from a bulk orderbook call (multi-market, chunked).
+      const codes = [...out.keys()].map((b) => `KRW-${b}`);
+      for (let i = 0; i < codes.length; i += 100) {
+        const chunk = codes.slice(i, i + 100).join(",");
+        const obRes = await fetch(`https://api.upbit.com/v1/orderbook?markets=${chunk}`, { cache: "no-store" });
+        const obs = (await obRes.json()) as Array<{ market: string; orderbook_units: Array<{ ask_price: number; bid_price: number; ask_size: number; bid_size: number }> }>;
+        if (!Array.isArray(obs)) continue;
+        for (const ob of obs) {
+          const base = ob.market.replace("KRW-", "");
+          const u = ob.orderbook_units?.[0];
+          const e = out.get(base);
+          if (u && e) { e.bid = u.bid_price; e.ask = u.ask_price; e.bidSize = u.bid_size; e.askSize = u.ask_size; }
+        }
+      }
     } catch {
       /* geo block / network */
     }
@@ -152,6 +169,19 @@ const bithumb: ExchangeAdapter = {
           quoteVolumeUsd: Number(v.acc_trade_value_24H), // KRW; approx
         });
       }
+      // Merge best bid/ask from the ALL-coins orderbook (one call).
+      const obRes = await fetch("https://api.bithumb.com/public/orderbook/ALL_KRW", { cache: "no-store" });
+      const ob = (await obRes.json()) as {
+        status: string;
+        data?: Record<string, { bids?: Array<{ price: string; quantity: string }>; asks?: Array<{ price: string; quantity: string }> }>;
+      };
+      if (ob.status === "0000" && ob.data) {
+        for (const [base, d] of Object.entries(ob.data)) {
+          const e = out.get(base);
+          const bid = d.bids?.[0], ask = d.asks?.[0];
+          if (e && bid && ask) { e.bid = Number(bid.price); e.ask = Number(ask.price); e.bidSize = Number(bid.quantity); e.askSize = Number(ask.quantity); }
+        }
+      }
     } catch {
       /* geo block / network */
     }
@@ -192,7 +222,7 @@ const bybit: ExchangeAdapter = {
       });
       const j = (await res.json()) as {
         retCode: number;
-        result?: { list?: Array<{ symbol: string; lastPrice: string; turnover24h: string }> };
+        result?: { list?: Array<{ symbol: string; lastPrice: string; turnover24h: string; bid1Price?: string; ask1Price?: string; bid1Size?: string; ask1Size?: string }> };
       };
       if (j.retCode !== 0) return out;
       for (const r of j.result?.list ?? []) {
@@ -201,6 +231,8 @@ const bybit: ExchangeAdapter = {
           price: Number(r.lastPrice),
           quote: "USDT",
           quoteVolumeUsd: Number(r.turnover24h),
+          bid: Number(r.bid1Price) || undefined, ask: Number(r.ask1Price) || undefined,
+          bidSize: Number(r.bid1Size) || undefined, askSize: Number(r.ask1Size) || undefined,
         });
       }
     } catch {
@@ -240,7 +272,7 @@ const okx: ExchangeAdapter = {
       });
       const j = (await res.json()) as {
         code: string;
-        data?: Array<{ instId: string; last: string; volCcy24h: string }>;
+        data?: Array<{ instId: string; last: string; volCcy24h: string; bidPx?: string; askPx?: string; bidSz?: string; askSz?: string }>;
       };
       if (j.code !== "0") return out;
       for (const r of j.data ?? []) {
@@ -249,6 +281,8 @@ const okx: ExchangeAdapter = {
           price: Number(r.last),
           quote: "USDT",
           quoteVolumeUsd: Number(r.volCcy24h),
+          bid: Number(r.bidPx) || undefined, ask: Number(r.askPx) || undefined,
+          bidSize: Number(r.bidSz) || undefined, askSize: Number(r.askSz) || undefined,
         });
       }
     } catch {

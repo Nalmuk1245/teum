@@ -70,10 +70,18 @@ export type Opportunity = {
   ts: number;
 };
 
-/** Snapshot of one venue's tickers, keyed by base symbol. */
+/** Snapshot of one venue's tickers, keyed by base symbol. Top-of-book (bid/ask)
+ *  is filled where the venue provides it cheaply — used for executable pricing
+ *  and a spread-based freshness/thinness gate. */
 export type TickerMap = Map<
   string,
-  { price: number; quote: string; quoteVolumeUsd: number }
+  {
+    price: number; // last trade (fallback)
+    quote: string;
+    quoteVolumeUsd: number;
+    bid?: number; ask?: number; // best bid/ask
+    bidSize?: number; askSize?: number; // size at best (base units)
+  }
 >;
 
 export type ScanContext = {
