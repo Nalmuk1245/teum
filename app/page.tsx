@@ -5,7 +5,7 @@ import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
 import { pct, usd, price } from "@/lib/format";
 import { useLivePrices, type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, useFlowRunner, type AutoLevel, type ExecStep, type StepPhase, type StepId, type StepResult } from "@/lib/executionPlan";
-import InventoryPanel from "./components/InventoryPanel";
+import AssetsPanel, { AssetSummary } from "./components/InventoryPanel";
 
 const KIND_META: Record<StrategyKind, { label: string; color: string }> = {
   kimchi: { label: "김프", color: "var(--brand-2)" },
@@ -38,7 +38,7 @@ export default function Cockpit() {
   // Three separated tools: "monitor" = one-shot gap viewing, "funding" =
   // ongoing funding-spread yields (APR — a different animal from gaps),
   // "execute" = trading.
-  const [mode, setMode] = useState<"monitor" | "funding" | "execute">("monitor");
+  const [mode, setMode] = useState<"monitor" | "funding" | "execute" | "assets">("monitor");
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -145,15 +145,16 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6,
+            display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4,
             padding: 4, marginBottom: isMobile ? 10 : 14,
             background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
           }}
         >
           {([
-            { k: "monitor", label: "📈 갭 모니터", sub: "원샷 차익" },
-            { k: "funding", label: "🔄 펀딩", sub: "보유 수익률" },
-            { k: "execute", label: "⚡ 실행", sub: "주문 실행" },
+            { k: "monitor", label: "갭 모니터", sub: "원샷 차익" },
+            { k: "funding", label: "펀딩", sub: "보유 수익률" },
+            { k: "execute", label: "실행", sub: "주문 실행" },
+            { k: "assets", label: "자산", sub: "잔고 상세" },
           ] as const).map((m) => {
             const active = mode === m.k;
             return (
@@ -186,9 +187,14 @@ export default function Cockpit() {
           })}
         </div>
 
-        {/* ── Balances / inventory (global vs KR capital skew) ── */}
-        <InventoryPanel isMobile={isMobile} />
+        {/* ── Assets: one-line summary on trading tabs; full panel on 자산 ── */}
+        {mode === "assets" ? (
+          <AssetsPanel isMobile={isMobile} />
+        ) : (
+          <AssetSummary isMobile={isMobile} onOpen={() => setMode("assets")} />
+        )}
 
+        {mode !== "assets" && (<>
         {/* ── KPI tiles ────────────────────────────────────────── */}
         <div
           style={{
@@ -272,10 +278,11 @@ export default function Cockpit() {
             ? "APR = 8h 정규화 펀딩 스프레드의 연환산 (바낸·바이비트는 다음 주기 예측). 정산 시점에만 지급 — 카운트다운 참고. 실행 배선 전, 모니터링 전용."
             : "순수익 = 총차익 − 예상 왕복비용. 김프·크로스(거래소 갭)는 실데이터 연동, CEX-DEX는 목업 스텁입니다."}
         </p>
+        </>)}
       </div>
 
       {/* ── Sticky summary bar (var1) — best live opportunity at a glance ── */}
-      {best && (
+      {mode !== "assets" && best && (
         <div
           style={{
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30,
@@ -475,7 +482,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
           )}
           {isApr && o.fundingMeta && <FundingCountdown meta={o.fundingMeta} />}
           {o.transfer?.blocked && (
-            <span style={{ color: "var(--neg)", fontSize: 11, fontWeight: 600 }}>⛔ 입출금 중단</span>
+            <span style={{ color: "var(--neg)", fontSize: 11, fontWeight: 600 }}>입출금 중단</span>
           )}
         </div>
         {showExecute && (
@@ -552,7 +559,7 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
             <span style={{ color: "var(--text-mute)", margin: "0 7px" }}>→</span>
             <b style={{ color: "var(--neg)", fontWeight: 600 }}>{isApr ? "숏" : "매도"}</b> {vlabel(sell.venue)}
             {o.transfer?.blocked && (
-              <span style={{ color: "var(--neg)", marginLeft: 8, fontSize: 11, fontWeight: 600 }}>⛔ 중단</span>
+              <span style={{ color: "var(--neg)", marginLeft: 8, fontSize: 11, fontWeight: 600 }}>중단</span>
             )}
           </>
         ) : "—"}
@@ -796,7 +803,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
           </div>
           {!opp.hasPerp && (
             <div style={{ marginTop: 6, color: "var(--amber)", fontSize: 11 }}>
-              ⚠ 선물 없음 — 무헷지(전송 중 가격 노출). 빠른 코인 소액만 권장.
+              선물 없음 — 무헷지(전송 중 가격 노출). 빠른 코인 소액만 권장.
             </div>
           )}
 
@@ -912,7 +919,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                     background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14, cursor: "pointer",
                   }}
                 >
-                  {plan[runner.pauseAt]?.id === "withdraw" ? "⚠ 출금 승인 →" : "다음 단계 →"}
+                  {plan[runner.pauseAt]?.id === "withdraw" ? "출금 승인 →" : "다음 단계 →"}
                 </button>
                 <button
                   type="button"
@@ -1198,7 +1205,7 @@ function Line({
 function Warn({ text }: { text: string }) {
   return (
     <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 8, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
-      ⚠ {text}
+      {text}
     </div>
   );
 }
@@ -1337,7 +1344,7 @@ function FundingCountdown({ meta }: { meta: NonNullable<Opportunity["fundingMeta
         color: soon ? "var(--amber)" : "var(--text-mute)",
       }}
     >
-      ⏱ 다음 정산 {h > 0 ? `${h}h ` : ""}{m}m{soon ? " · 임박" : ""}
+      다음 정산 {h > 0 ? `${h}h ` : ""}{m}m{soon ? " · 임박" : ""}
     </span>
   );
 }
