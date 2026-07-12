@@ -47,6 +47,10 @@ export function chainKeyFromLabel(label?: string): string {
 
 export const getChain = (key: string): ChainInfo | undefined => CHAINS[key];
 
+// Venue direction helpers — routing rules depend on KR vs overseas.
+export const isKr = (v?: string) => v === "upbit" || v === "bithumb";
+export const isGlobal = (v?: string) => v === "binance" || v === "bybit" || v === "okx";
+
 // Binance's network code per chain key (withdraw/deposit-address `network`
 // param and networkList[].network matching).
 export const BINANCE_NET: Record<string, string> = {

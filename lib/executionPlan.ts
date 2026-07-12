@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Opportunity } from "./types";
-import { chainKeyFromLabel, getChain } from "./chains";
+import { chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 
 export type StepId =
   | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle";
@@ -37,18 +37,24 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
   const sell = opp.legs.find((l) => l.side === "sell");
   const bv = vlabel(buy?.venue);
   const sv = vlabel(sell?.venue);
-  // EVM → personal-wallet hop (send is wired). Non-EVM (XRP/TRON/SOL) → direct
-  // exchange-to-exchange withdrawal for now (personal-wallet send not yet reliable).
-  const evmHop = getChain(chainKeyFromLabel(opp.transfer?.network?.chain))?.family === "evm";
+  // Personal-wallet hop is ONLY for overseas → KR deposits (direct Binance→Upbit
+  // stalls on travel-rule verification; wallet-origin deposits credit
+  // automatically). KR → overseas and global ↔ global send DIRECT. Non-EVM
+  // chains also go direct (wallet send not reliable there yet).
+  const evm = getChain(chainKeyFromLabel(opp.transfer?.network?.chain))?.family === "evm";
+  const hop = evm && isGlobal(buy?.venue) && isKr(sell?.venue);
 
   const steps: ExecStep[] = [];
   steps.push({ id: "buy", label: `${bv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
   if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "같은 수량 · 진입가에 가격 잠금" });
-  if (evmHop) {
+  if (hop) {
     steps.push({ id: "withdraw", label: `${bv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음" });
     steps.push({ id: "transfer", label: `개인지갑 → ${sv} 송금`, desc: "트래블룰 우회 · 자동 입금" });
   } else {
-    steps.push({ id: "withdraw", label: `${bv} → ${sv} 직접 출금`, desc: "거래소 간 직접 · 트래블룰 인증 필요할 수 있음" });
+    steps.push({
+      id: "withdraw", label: `${bv} → ${sv} 직접 출금`,
+      desc: isKr(buy?.venue) ? "국내 → 해외 직접 · 주소 등록(화이트리스트) 필요" : "거래소 간 직접",
+    });
   }
   steps.push({ id: "deposit", label: `${sv} 입금 확인`, desc: "컨펌 대기" });
   steps.push({ id: "sell", label: `${sv} 현물 매도`, desc: `${opp.base} → KRW` });

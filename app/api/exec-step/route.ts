@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Opportunity } from "@/lib/types";
 import { CONFIG, TAG_REQUIRED } from "@/lib/config";
 import { sendToken, walletAddress } from "@/lib/wallet";
-import { BINANCE_NET, chainKeyFromLabel, getChain } from "@/lib/chains";
+import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
 import { binanceSpot, binancePerp, binanceWithdraw, upbitOrder, upbitWithdraw, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
@@ -100,10 +100,14 @@ async function runStep(
       const net = NET_LABEL[chain] ?? chain;
       const evm = getChain(chain)?.family === "evm";
       const destVenue = sell?.venue ?? "upbit";
+      // Personal-wallet hop ONLY for overseas → KR (travel-rule bypass on the
+      // deposit side). KR → overseas and global ↔ global withdraw DIRECT to the
+      // destination exchange; non-EVM chains are direct in every direction.
+      const hop = evm && isGlobal(buy?.venue) && isKr(destVenue);
       let dest: string | null;
       let tag: string | null = null;
       let note = "";
-      if (evm) {
+      if (hop) {
         dest = destAddr(chain); // personal-wallet hop
       } else {
         // Direct exchange→exchange: use the destination's real deposit address+tag.
@@ -119,7 +123,7 @@ async function runStep(
       }
       // Tag/memo-required coins: sending WITHOUT the tag lands uncredited in the
       // exchange omnibus wallet. Hard requirement — never send tagless.
-      if (TAG_REQUIRED.has(opp.base) && !evm && !tag) {
+      if (TAG_REQUIRED.has(opp.base) && !hop && !tag) {
         return dry
           ? { ok: true, dryRun: true, message: `${buy?.venue} 출금${note} (모의) · ⚠ ${opp.base}는 태그 필수 — 태그 미확인, 라이브면 차단됨` }
           : fail(`${opp.base}는 데스티네이션 태그 필수 — 태그 미확인, 출금 차단`);
