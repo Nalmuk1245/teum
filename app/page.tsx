@@ -447,6 +447,7 @@ function OppCard({ o, onExecute, showExecute, live }: { o: Opportunity; onExecut
           {o.note && isApr && (
             <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{o.note}</span>
           )}
+          {isApr && o.fundingMeta && <FundingCountdown meta={o.fundingMeta} />}
           {o.transfer?.blocked && (
             <span style={{ color: "var(--neg)", fontSize: 11, fontWeight: 600 }}>⛔ 입출금 중단</span>
           )}
@@ -548,7 +549,9 @@ function Row({ o, onExecute, showExecute, live }: { o: Opportunity; onExecute: (
         {pct(net)}
       </span>
       <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-        {isApr ? "—" : usd(o.notionalCapUsd)}
+        {isApr
+          ? (o.fundingMeta ? <FundingCountdown meta={o.fundingMeta} /> : "—")
+          : usd(o.notionalCapUsd)}
       </span>
 
       {/* execute */}
@@ -1282,6 +1285,34 @@ function TransferPanel({ opp }: { opp: Opportunity }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Funding settlement countdown — funding pays only at the snapshot, so "how
+// long until the short leg settles" decides entry timing. Amber when imminent.
+function FundingCountdown({ meta }: { meta: NonNullable<Opportunity["fundingMeta"]> }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((v) => v + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!meta.nextTs) return null;
+  const left = meta.nextTs - Date.now();
+  if (left <= 0) return null;
+  const h = Math.floor(left / 3600_000);
+  const m = Math.floor((left % 3600_000) / 60_000);
+  const soon = left < 30 * 60_000; // <30m — entering now captures this window
+  return (
+    <span
+      className="tnum"
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 10.5, fontWeight: 600,
+        color: soon ? "var(--amber)" : "var(--text-mute)",
+      }}
+    >
+      ⏱ 다음 정산 {h > 0 ? `${h}h ` : ""}{m}m{soon ? " · 임박" : ""}
+    </span>
   );
 }
 

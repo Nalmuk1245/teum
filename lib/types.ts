@@ -63,6 +63,8 @@ export type Opportunity = {
   /** How grossPct/netPct should be read: "trade" = one-shot % (default), "apr"
    *  = annualized yield (funding arb, held ongoing). */
   rateBasis?: "trade" | "apr";
+  /** Funding-basis timing: when the SHORT leg next settles + both intervals. */
+  fundingMeta?: { nextTs: number | null; shortIntervalH: number | null; longIntervalH: number | null };
   note?: string;
   mock?: boolean; // sample data, not a live signal
   ts: number;
@@ -85,7 +87,14 @@ export type ScanContext = {
 };
 
 /** Per-coin funding across perp venues, normalized to an 8h rate (fraction). */
-export type FundingRate = { venue: Venue; rate8h: number; aprPct: number };
+export type FundingRate = {
+  venue: Venue;
+  rate8h: number; // normalized to 8h basis for cross-venue comparison
+  aprPct: number;
+  nextTs: number | null; // next settlement (ms epoch) — funding pays only at this snapshot
+  intervalH: number | null; // settlement interval in hours (8 = CEX, 1 = HL/Lighter)
+  predicted: boolean; // true = next-window predicted rate, false = last snapshot
+};
 export type FundingMap = Map<string, FundingRate[]>;
 
 export type BookLevel = { price: number; size: number }; // price in venue quote, size in base

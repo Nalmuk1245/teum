@@ -267,7 +267,10 @@ const fundingBasis: Strategy = {
         notionalCapUsd: null,
         executable: false, // perp-DEX / cross-venue order routing not wired yet
         rateBasis: "apr",
-        note: `숏 ${hi.venue} / 롱 ${lo.venue} · 진입비용 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"}`,
+        // Funding pays only at the settlement snapshot — surface the SHORT
+        // leg's next one + both intervals so entries can be timed.
+        fundingMeta: { nextTs: hi.nextTs, shortIntervalH: hi.intervalH, longIntervalH: lo.intervalH },
+        note: `숏 ${hi.venue}(${hi.intervalH ?? "?"}h${hi.predicted ? "·예측" : ""}) / 롱 ${lo.venue}(${lo.intervalH ?? "?"}h) · 진입 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"}`,
         ts: now(),
       });
     }
