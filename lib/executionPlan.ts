@@ -22,7 +22,7 @@ export type StepResult = {
    *  chain explorer link, null when there's nothing real to open (DRY_RUN). */
   tx?: { hash: string; url: string | null };
 };
-export type AutoLevel = "manual" | "beforeWithdraw" | "auto";
+export type AutoLevel = "manual" | "beforeWithdraw" | "beforeSell" | "auto";
 
 const VENUE: Record<string, string> = {
   binance: "Binance", upbit: "Upbit", bithumb: "Bithumb",
@@ -65,8 +65,9 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
 
 function needsConfirmBefore(id: StepId, level: AutoLevel): boolean {
   if (level === "auto") return false;
-  if (level === "manual") return true;
-  return id === "withdraw"; // beforeWithdraw: only the irreversible step
+  if (level === "manual") return true; // pause before every step
+  if (level === "beforeWithdraw") return id === "withdraw"; // stop at the irreversible step
+  return id === "sell"; // beforeSell: auto through deposit, stop before selling
 }
 
 export type Revalidation = { ok: boolean; reason?: string };

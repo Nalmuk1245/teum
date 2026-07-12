@@ -871,10 +871,11 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
           {/* Automation boundary — how far to auto-run before pausing */}
           <div style={{ marginTop: 14 }}>
             <div style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 500, marginBottom: 6 }}>자동 실행 범위</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 5 }}>
               {([
                 { k: "manual", label: "수동", sub: "단계마다" },
-                { k: "beforeWithdraw", label: "출금 전까지", sub: "권장" },
+                { k: "beforeWithdraw", label: "출금 전", sub: "권장" },
+                { k: "beforeSell", label: "매도 전", sub: "청산 직접" },
                 { k: "auto", label: "전자동", sub: "끝까지" },
               ] as const).map((a) => {
                 const on = autoLevel === a.k;
@@ -928,7 +929,9 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                     background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14, cursor: "pointer",
                   }}
                 >
-                  {plan[runner.pauseAt]?.id === "withdraw" ? "출금 승인 →" : "다음 단계 →"}
+                  {plan[runner.pauseAt]?.id === "withdraw" ? "출금 승인 →"
+                    : plan[runner.pauseAt]?.id === "sell" ? "매도 진행 →"
+                    : "다음 단계 →"}
                 </button>
                 <button
                   type="button"
@@ -983,9 +986,12 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             )}
           </div>
 
-          {/* Position / smart unwind — only once a position actually exists
-              (buy filled). Before that there is nothing to unwind. */}
-          {runner.statuses.buy === "done" && <PositionPanel opp={opp} sizeUsd={sizeUsd} />}
+          {/* Position / smart unwind — only once a position exists (buy filled)
+              AND the run isn't full-auto. In 전자동 the flow sells + closes
+              itself, so there's no leftover position to manually unwind. */}
+          {runner.statuses.buy === "done" && autoLevel !== "auto" && (
+            <PositionPanel opp={opp} sizeUsd={sizeUsd} />
+          )}
 
           <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
             DRY-RUN 상태머신입니다 — 각 단계는 시뮬레이션이며 실주문은 나가지 않습니다. API 키를
