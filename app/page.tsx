@@ -798,6 +798,9 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             )}
           </div>
 
+          {/* Position / smart unwind — partial exit on remaining qty */}
+          <PositionPanel opp={opp} sizeUsd={sizeUsd} />
+
           <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
             DRY-RUN 상태머신입니다 — 각 단계는 시뮬레이션이며 실주문은 나가지 않습니다. API 키를
             넣고 각 단계에 실제 주문/출금을 배선하면 그대로 작동합니다 (lib/executionPlan.ts).
@@ -847,6 +850,95 @@ function StepTimeline({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Position / smart unwind (남은 물량 기준 부분 청산) ──────────────────────────
+function PositionPanel({ opp, sizeUsd }: { opp: Opportunity; sizeUsd: number }) {
+  const price = opp.legs.find((l) => l.venue === "binance")?.price ?? 0;
+  const totalQty = price ? sizeUsd / price : 0;
+  const [remaining, setRemaining] = useState(totalQty);
+  const [pnl, setPnl] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  useEffect(() => {
+    setRemaining(totalQty);
+    setPnl(0);
+    setLog([]);
+  }, [opp, totalQty]);
+
+  const doUnwind = async (fraction: number) => {
+    if (remaining <= 0 || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/unwind", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ opportunity: opp, remainingQty: remaining, fraction }),
+      });
+      const j = await res.json();
+      const r = j.result as { remainingQty: number; pnlUsd: number; log: string[] } | undefined;
+      if (r) {
+        setRemaining(r.remainingQty);
+        setPnl((p) => p + r.pnlUsd);
+        setLog((l) => ["──", ...r.log, ...l].slice(0, 24));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pctLeft = totalQty > 0 ? (remaining / totalQty) * 100 : 0;
+  const done = remaining <= totalQty * 1e-6;
+
+  return (
+    <div style={{ marginTop: 12, padding: 14, borderRadius: "var(--radius-sm)", background: "var(--card-2)", border: "1px solid var(--border)" }}>
+      <div style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600, marginBottom: 10 }}>포지션 · 스마트 청산</div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 5 }}>
+        <span style={{ color: "var(--text-dim)" }}>보유 <span className="tnum" style={{ color: "var(--text)", fontWeight: 600 }}>{remaining.toFixed(4)} {opp.base}</span></span>
+        <span className="tnum" style={{ color: "var(--text-dim)" }}>{usd(remaining * price)}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 999, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
+        <div style={{ width: `${pctLeft}%`, height: "100%", background: "var(--brand)", transition: "width 200ms" }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--text-mute)", marginTop: 4 }}>
+        <span>{pctLeft.toFixed(0)}% 남음</span>
+        <span>헷지 잔량 {remaining.toFixed(4)} · 실현 {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}</span>
+      </div>
+
+      {/* 남은 물량 기준 부분 청산 */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginTop: 12 }}>
+        {[0.1, 0.25, 0.5, 1].map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => doUnwind(f)}
+            disabled={done || busy}
+            style={{
+              border: "1px solid var(--border-strong)", borderRadius: 8, padding: "8px 4px",
+              background: done ? "transparent" : "var(--brand-soft)",
+              color: done ? "var(--text-mute)" : "var(--brand-2)",
+              fontWeight: 700, fontSize: 13, cursor: done || busy ? "not-allowed" : "pointer",
+            }}
+          >
+            {f === 1 ? "전량" : `${f * 100}%`}
+          </button>
+        ))}
+      </div>
+
+      {done && <div style={{ marginTop: 8, color: "var(--pos)", fontSize: 11.5, fontWeight: 600 }}>✓ 전량 청산 완료 · 실현 {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}</div>}
+
+      {log.length > 0 && (
+        <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 2 }}>
+          {log.map((line, i) => (
+            <div key={i} style={{ fontSize: 10.5, color: line === "──" ? "var(--border-strong)" : "var(--text-mute)" }}>
+              {line === "──" ? "────────" : line}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
