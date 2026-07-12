@@ -6,6 +6,8 @@ import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/
 import { fetchDepositAddress } from "@/lib/deposits";
 import { binanceSpot, binancePerp, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
+import { isKilled } from "@/lib/killswitch";
+import { checkEntry, recordPnl } from "@/lib/risk";
 import { estimateLegSlippage } from "@/lib/quote";
 import { fetchUsdKrw } from "@/lib/exchanges";
 import type { StepId } from "@/lib/executionPlan";
@@ -69,6 +71,9 @@ async function runStep(
   switch (stepId) {
     case "buy": {
       if (!buy) return fail("매수 다리 없음");
+      if (isKilled()) return fail("킬 스위치 활성 — 신규 실행 차단");
+      const risk = checkEntry(sizeUsd);
+      if (risk) return fail(`리스크 한도 — ${risk}`);
       // Live slippage cap — a thin book can eat the whole edge in one market order.
       if (!dry) {
         const est = await estimateLegSlippage(buy.venue, buy.symbol, "buy", {
@@ -224,6 +229,7 @@ async function runStep(
         if (buyUsd > 0 && sellUsd > 0) {
           const pnl = sellUsd - buyUsd;
           const pct = (pnl / buyUsd) * 100;
+          if (!dry) recordPnl(pnl); // feeds the daily-loss limit
           return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 실체결 기반` };
         }
       }

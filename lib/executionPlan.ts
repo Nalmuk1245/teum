@@ -69,6 +69,9 @@ function needsConfirmBefore(id: StepId, level: AutoLevel): boolean {
   if (level === "beforeWithdraw") return id === "withdraw"; // stop at the irreversible step
   return id === "sell"; // beforeSell: auto through deposit, stop before selling
 }
+// Re-exported for the background run store (which owns its own loop).
+export const needsConfirmBeforePublic = needsConfirmBefore;
+export const REVALIDATE_STEPS: ReadonlySet<StepId> = new Set<StepId>(["buy", "withdraw", "sell"]);
 
 export type Revalidation = { ok: boolean; reason?: string };
 // Steps that must re-check the edge right before firing — the quote on screen

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
 import { pct, usd, price } from "@/lib/format";
 import { useLivePrices, type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
-import { buildPlan, useFlowRunner, type AutoLevel, type ExecStep, type StepPhase, type StepId, type StepResult } from "@/lib/executionPlan";
+import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/executionPlan";
+import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, type RunView } from "@/lib/runStore";
 import AssetsPanel, { AssetSummary } from "./components/InventoryPanel";
 
 const KIND_META: Record<StrategyKind, { label: string; color: string }> = {
@@ -94,6 +95,16 @@ export default function Cockpit() {
     return top;
   }, [pool, liveOverlay]);
 
+  // Background runs + kill switch (survive modal close; shown in the 실행 탭).
+  const runsStore = useRuns();
+  const runList = Object.values(runsStore.runs).sort((a, b) => b.startedAt - a.startedAt);
+  const activeRuns = runList.filter((r) => r.phase === "running" || r.phase === "paused").length;
+  const [openRunId, setOpenRunId] = useState<string | null>(null);
+  // On first client mount, sync the kill flag from the server.
+  useEffect(() => {
+    fetch("/api/kill").then((r) => r.json()).then((s) => { if (s.killed) void setKillSwitch(true); }).catch(() => {});
+  }, []);
+
   return (
     <main style={{ minHeight: "100dvh" }}>
       {/* ── Header ─────────────────────────────────────────────── */}
@@ -128,6 +139,22 @@ export default function Cockpit() {
           )}
         </div>
         <span style={{ flex: 1 }} />
+        {/* Kill switch — halt all runs + block new ones. Always reachable. */}
+        <button
+          type="button"
+          onClick={() => setKillSwitch(!runsStore.killed)}
+          title={runsStore.killed ? "킬 스위치 활성 — 눌러서 해제" : "전체 중단 (킬 스위치)"}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            border: `1px solid ${runsStore.killed ? "var(--neg)" : "var(--border-strong)"}`,
+            background: runsStore.killed ? "var(--neg-soft)" : "transparent",
+            color: runsStore.killed ? "var(--neg)" : "var(--text-dim)",
+            borderRadius: 6, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: 999, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
+          {runsStore.killed ? "중단됨" : "STOP"}
+        </button>
         <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
         {meta?.mock && !isMobile && <Pill text="목업" tone="var(--sky)" soft />}
         {/* Don't flash "실주문"(red) before meta loads — unknown ≠ live. */}
@@ -162,12 +189,9 @@ export default function Cockpit() {
                 key={m.k}
                 type="button"
                 onClick={() => {
-                  // Leaving execute unmounts an open execute modal (and any
-                  // in-flight runner) — confirm instead of silently killing it.
-                  if (m.k !== "execute" && selected) {
-                    if (!window.confirm("실행 창이 열려 있습니다. 닫고 전환할까요?")) return;
-                    setSelected(null);
-                  }
+                  // Runs persist in the background store now, so leaving the
+                  // execute view never kills anything — just close the modal.
+                  if (m.k !== "execute") setSelected(null);
                   setMode(m.k);
                 }}
                 style={{
@@ -176,8 +200,13 @@ export default function Cockpit() {
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
                 }}
               >
-                <span style={{ fontSize: 14, fontWeight: 700, color: active ? "var(--brand-2)" : "var(--text-dim)" }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: active ? "var(--brand-2)" : "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {m.label}
+                  {m.k === "execute" && activeRuns > 0 && (
+                    <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "#181a20", background: "var(--brand)", borderRadius: 999, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
+                      {activeRuns}
+                    </span>
+                  )}
                 </span>
                 <span style={{ fontSize: 11, color: active ? "var(--brand)" : "var(--text-mute)" }}>
                   {m.sub}
@@ -264,6 +293,15 @@ export default function Cockpit() {
         </div>
         )}
 
+        {/* ── Active runs dashboard (execute tab only) ── */}
+        {mode === "execute" && runList.length > 0 && (
+          <RunsDashboard
+            runs={runList}
+            onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }}
+            onClearDone={() => { /* handled inside */ }}
+          />
+        )}
+
         {/* ── Board ────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>
@@ -271,7 +309,7 @@ export default function Cockpit() {
           </span>
           <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
         </div>
-        <Board rows={rows} loading={loading} onExecute={setSelected} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} />
+        <Board rows={rows} loading={loading} onExecute={(o) => { setOpenRunId(null); setSelected(o); }} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} />
 
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
           {funding
@@ -323,7 +361,7 @@ export default function Cockpit() {
       )}
 
       {selected && mode === "execute" && (
-        <ExecuteModal opp={selected} onClose={() => setSelected(null)} isMobile={isMobile} />
+        <ExecuteModal opp={selected} initialRunId={openRunId} onClose={() => { setSelected(null); setOpenRunId(null); }} isMobile={isMobile} />
       )}
     </main>
   );
@@ -619,7 +657,7 @@ function Empty({ text }: { text: string }) {
 }
 
 // ── Execute modal ─────────────────────────────────────────────────────────────
-function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: () => void; isMobile?: boolean }) {
+function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportunity; onClose: () => void; isMobile?: boolean; initialRunId?: string | null }) {
   const km = KIND_META[opp.kind];
   // Size as a string (fixes the leading-0 bug on edit) + USD/coin unit toggle.
   const bnPrice = opp.legs.find((l) => l.venue === "binance")?.price ?? 0; // ≈ USD per coin
@@ -635,67 +673,20 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
   const [hedge, setHedge] = useState(true);
   const hedgeOn = hedge && !!opp.hasPerp; // no perp → can't hedge
   const [autoLevel, setAutoLevel] = useState<AutoLevel>("beforeWithdraw");
-  const plan = useMemo(() => buildPlan(opp, hedgeOn), [opp, hedgeOn]);
-  // Each step runs server-side (orders/withdraw stubs + real personal-wallet send),
-  // DRY-RUN by default. sizeUsd resolved below.
-  // Fill-adjusted quantity threading: the buy's actual executedQty (minus fees)
-  // becomes the qty every later step uses — never the nominal sizeUsd/price.
-  const qtyRef = useRef<number | undefined>(undefined);
-  const runStartTs = useRef<number>(0);
-  // Real fills from the buy/sell legs — the settle step turns these into
-  // realized (not estimated) P&L.
-  const fillsRef = useRef<{ buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string }>({});
-  const runStep = useCallback(
-    async (stepId: StepId, opts?: { rollback?: boolean }): Promise<StepResult> => {
-      if (stepId === "buy" && !opts?.rollback) {
-        qtyRef.current = undefined; // fresh entry — reset carried qty
-        fillsRef.current = {};
-        runStartTs.current = Date.now(); // deposit check: only credits after this
-      }
-      try {
-        const res = await fetch("/api/exec-step", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            stepId, opportunity: opp, sizeUsd, rollback: opts?.rollback,
-            qty: qtyRef.current, sinceTs: runStartTs.current || undefined,
-            fills: stepId === "settle" ? fillsRef.current : undefined,
-          }),
-        });
-        const j = await res.json();
-        if (typeof j.filledQty === "number" && j.filledQty > 0) qtyRef.current = j.filledQty;
-        if (j.fill?.quote && !opts?.rollback) {
-          if (stepId === "buy") { fillsRef.current.buyQuote = j.fill.quote; fillsRef.current.buyCcy = j.fill.ccy; }
-          if (stepId === "sell") { fillsRef.current.sellQuote = j.fill.quote; fillsRef.current.sellCcy = j.fill.ccy; }
-        }
-        return { ok: !!j.ok, message: j.message, tx: j.tx };
-      } catch (e) {
-        return { ok: false, message: e instanceof Error ? e.message : "요청 실패" };
-      }
-    },
-    [opp, sizeUsd],
-  );
-  // Stale-edge guard — re-quote right before buy/withdraw/sell; abort if the
-  // edge is gone. Mock opps can't be re-quoted (no live book) → pass in demo.
-  const revalidate = useCallback(async () => {
-    if (opp.mock) return { ok: true };
-    try {
-      const res = await fetch("/api/quote", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ opportunity: opp, sizeUsd }),
-      });
-      const j = await res.json();
-      const q = j.quote as Quote | null;
-      if (!q) return { ok: false, reason: "실호가 재조회 실패" };
-      if (q.execNetPct <= 0) return { ok: false, reason: `순수익 ${q.execNetPct.toFixed(2)}%로 하락` };
-      return { ok: true };
-    } catch {
-      return { ok: false, reason: "재견적 요청 실패" };
-    }
-  }, [opp, sizeUsd]);
-  const runner = useFlowRunner(plan, autoLevel, runStep, revalidate);
-  const running = runner.phase === "running" || runner.phase === "paused" || runner.phase === "error";
+  // The run lives in the background store, not this component — so closing the
+  // modal doesn't kill it. Bind to an existing run (reopened from the dashboard)
+  // or create one on 실행 시작.
+  const store = useRuns();
+  const [runId, setRunId] = useState<string | null>(initialRunId ?? null);
+  const run = runId ? store.runs[runId] : undefined;
+  const phase = run?.phase ?? "idle";
+  const running = phase === "running" || phase === "paused" || phase === "error";
+  const statuses = run?.statuses ?? {};
+  const messages = run?.messages ?? {};
+  const txs = run?.txs ?? {};
+  const pauseAt = run?.pauseAt ?? -1;
+  const error = run?.error ?? null;
+  const plan = run?.plan ?? buildPlan(opp, hedgeOn); // preview before start; run's frozen plan after
 
   // Live depth quote — refetch (debounced) whenever the size changes.
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -731,12 +722,9 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
 
   const overCap = quote != null && quote.maxSizeUsd > 0 && sizeUsd > quote.maxSizeUsd;
 
-  // Closing the modal unmounts the runner — never allow it silently mid-run
-  // (a live run would strand a hedged position with no UI).
-  const guardedClose = () => {
-    if (running && !window.confirm("실행이 진행 중입니다. 정말 닫을까요? (러너가 중단됩니다)")) return;
-    onClose();
-  };
+  // The run lives in the background store, so closing just hides the view — the
+  // run keeps going and stays visible in the 실행 탭. No confirm needed.
+  const guardedClose = () => onClose();
 
   return (
     <div
@@ -900,42 +888,47 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             </div>
           </div>
 
-          <StepTimeline steps={plan} statuses={runner.statuses} messages={runner.messages} txs={runner.txs} pauseAt={runner.pauseAt} />
+          <StepTimeline steps={plan} statuses={statuses} messages={messages} txs={txs} pauseAt={pauseAt} />
 
-          {runner.phase === "error" && runner.error && <Warn text={runner.error} />}
+          {phase === "error" && error && <Warn text={error} />}
 
           {/* Run controls */}
           <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-            {runner.phase === "idle" || runner.phase === "done" ? (
+            {phase === "idle" || phase === "done" ? (
               <button
                 type="button"
-                onClick={runner.start}
-                disabled={sizeUsd <= 0}
+                onClick={() => {
+                  if (run) { cancelRun(run.id); } // clear a finished run before a fresh one
+                  const id = startRun({ opp, sizeUsd, hedge: hedgeOn, autoLevel });
+                  setRunId(id);
+                }}
+                disabled={sizeUsd <= 0 || store.killed}
                 style={{
                   flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
-                  background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14,
-                  cursor: "pointer", 
+                  background: store.killed ? "var(--card-3)" : "var(--brand-grad)",
+                  color: store.killed ? "var(--text-mute)" : "#181a20", fontWeight: 700, fontSize: 14,
+                  cursor: store.killed ? "not-allowed" : "pointer",
                 }}
               >
-                {runner.phase === "done" ? "다시 실행" : "실행 시작 →"}
+                {store.killed ? "킬 스위치 활성" : phase === "done" ? "새 실행" : "실행 시작 →"}
               </button>
-            ) : runner.phase === "paused" ? (
+            ) : phase === "paused" ? (
               <>
                 <button
                   type="button"
-                  onClick={runner.confirmContinue}
+                  onClick={() => runId && confirmRun(runId)}
                   style={{
                     flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
                     background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14, cursor: "pointer",
                   }}
                 >
-                  {plan[runner.pauseAt]?.id === "withdraw" ? "출금 승인 →"
-                    : plan[runner.pauseAt]?.id === "sell" ? "매도 진행 →"
+                  {plan[pauseAt]?.id === "withdraw" ? "출금 승인 →"
+                    : plan[pauseAt]?.id === "sell" ? "매도 진행 →"
                     : "다음 단계 →"}
                 </button>
                 <button
                   type="button"
-                  onClick={runner.reset}
+                  onClick={() => { if (runId) { cancelRun(runId); setRunId(null); } }}
                   style={{
                     padding: "12px 16px", borderRadius: "var(--radius-sm)",
                     border: "1px solid var(--border-strong)", background: "transparent",
@@ -945,13 +938,11 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                   중단
                 </button>
               </>
-            ) : runner.phase === "error" ? (
+            ) : phase === "error" ? (
               <>
-                {/* retry = resume at the failed step (never re-runs completed
-                    entry legs → no double position). reset = full fresh run. */}
                 <button
                   type="button"
-                  onClick={runner.retry}
+                  onClick={() => runId && retryRun(runId)}
                   style={{
                     flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
                     background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 14, cursor: "pointer",
@@ -961,7 +952,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                 </button>
                 <button
                   type="button"
-                  onClick={runner.reset}
+                  onClick={() => { if (runId) { cancelRun(runId); setRunId(null); } }}
                   style={{
                     padding: "12px 14px", borderRadius: "var(--radius-sm)",
                     border: "1px solid var(--border-strong)", background: "transparent",
@@ -974,30 +965,95 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             ) : (
               <button
                 type="button"
-                disabled
+                onClick={onClose}
                 style={{
                   flex: 1, padding: 12, borderRadius: "var(--radius-sm)",
                   border: "1px solid var(--border-strong)", background: "transparent",
-                  color: "var(--text-dim)", fontWeight: 700, fontSize: 14,
+                  color: "var(--text-dim)", fontWeight: 700, fontSize: 14, cursor: "pointer",
                 }}
               >
-                실행 중…
+                백그라운드로 (닫아도 계속 실행)
               </button>
             )}
           </div>
 
-          {/* Position / smart unwind — only once a position exists (buy filled)
-              AND the run isn't full-auto. In 전자동 the flow sells + closes
-              itself, so there's no leftover position to manually unwind. */}
-          {runner.statuses.buy === "done" && autoLevel !== "auto" && (
-            <PositionPanel opp={opp} sizeUsd={sizeUsd} />
+          {/* Position / smart unwind — once a position exists (buy filled) and
+              the run isn't full-auto. Store-backed → survives modal close. */}
+          {run && statuses.buy === "done" && run.autoLevel !== "auto" && (
+            <PositionPanel run={run} />
           )}
 
           <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
-            DRY-RUN 상태머신입니다 — 각 단계는 시뮬레이션이며 실주문은 나가지 않습니다. API 키를
-            넣고 각 단계에 실제 주문/출금을 배선하면 그대로 작동합니다 (lib/executionPlan.ts).
+            {store.killed
+              ? "킬 스위치가 활성화되어 신규 실행이 차단됩니다. 해제하려면 상단 정지 버튼을 누르세요."
+              : "실행은 백그라운드에서 돌아갑니다 — 이 창을 닫아도 계속 진행되며 '실행' 탭에서 상태를 볼 수 있습니다. 현재 DRY-RUN(시뮬)."}
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Active runs dashboard — background runs, their live progress + controls ────
+function RunsDashboard({ runs, onOpen }: {
+  runs: RunView[];
+  onOpen: (r: RunView) => void;
+  onClearDone: () => void;
+}) {
+  const hasDone = runs.some((r) => r.phase === "done");
+  const phaseLabel: Record<string, { t: string; c: string }> = {
+    running: { t: "실행 중", c: "var(--amber)" },
+    paused: { t: "확인 대기", c: "var(--brand-2)" },
+    error: { t: "중단/오류", c: "var(--neg)" },
+    done: { t: "완료", c: "var(--pos)" },
+    idle: { t: "대기", c: "var(--text-mute)" },
+  };
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>실행 현황 · {runs.length}</span>
+        {hasDone && (
+          <button type="button" onClick={() => clearFinished()} style={{ background: "transparent", border: "none", color: "var(--text-mute)", fontSize: 11, cursor: "pointer" }}>
+            완료 정리
+          </button>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {runs.map((r) => {
+          const total = r.plan.length;
+          const doneCount = r.plan.filter((s) => r.statuses[s.id] === "done").length;
+          const cur = r.plan[r.pauseAt] ?? r.plan.find((s) => r.statuses[s.id] === "running") ?? r.plan[doneCount];
+          const ph = phaseLabel[r.phase] ?? phaseLabel.idle;
+          return (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => onOpen(r)}
+              style={{
+                display: "block", width: "100%", textAlign: "left", cursor: "pointer",
+                background: "var(--card)", border: `1px solid ${r.phase === "error" ? "var(--neg)" : r.phase === "paused" ? "var(--brand)" : "var(--border)"}`,
+                borderRadius: "var(--radius)", padding: "10px 12px", color: "var(--text)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
+                <span style={{ fontWeight: 700, fontSize: 13.5 }}>{r.base}</span>
+                <span style={{ fontSize: 11, color: "var(--text-mute)" }}>{r.route}</span>
+                <span style={{ flex: 1 }} />
+                <span className="tnum" style={{ fontSize: 11, color: "var(--text-dim)" }}>{usd(r.sizeUsd)}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: ph.c }}>{ph.t}</span>
+              </div>
+              {/* progress */}
+              <div style={{ display: "flex", height: 5, borderRadius: 999, overflow: "hidden", background: "var(--bg)", marginTop: 8 }}>
+                <div style={{ width: `${total ? (doneCount / total) * 100 : 0}%`, background: r.phase === "error" ? "var(--neg)" : "var(--brand)", transition: "width 200ms" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 10.5, color: "var(--text-mute)" }}>
+                <span>{doneCount}/{total} · {cur ? cur.label : "—"}</span>
+                {r.pnlUsd !== 0 && <span className="tnum" style={{ color: r.pnlUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>실현 {r.pnlUsd >= 0 ? "+" : "−"}${Math.abs(r.pnlUsd).toFixed(2)}</span>}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1071,43 +1127,18 @@ function StepTimeline({
   );
 }
 
-// ── Position / smart unwind (남은 물량 기준 부분 청산) ──────────────────────────
-function PositionPanel({ opp, sizeUsd }: { opp: Opportunity; sizeUsd: number }) {
-  const price = opp.legs.find((l) => l.venue === "binance")?.price ?? 0;
-  const totalQty = price ? sizeUsd / price : 0;
-  const [remaining, setRemaining] = useState(totalQty);
-  const [pnl, setPnl] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  useEffect(() => {
-    setRemaining(totalQty);
-    setPnl(0);
-    setLog([]);
-  }, [opp, totalQty]);
-
-  const doUnwind = async (fraction: number) => {
-    if (remaining <= 0 || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch("/api/unwind", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ opportunity: opp, remainingQty: remaining, fraction }),
-      });
-      const j = await res.json();
-      const r = j.result as { remainingQty: number; pnlUsd: number; log: string[] } | undefined;
-      if (r) {
-        setRemaining(r.remainingQty);
-        setPnl((p) => p + r.pnlUsd);
-        setLog((l) => ["──", ...r.log, ...l].slice(0, 24));
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
+// ── Position / smart unwind (남은 물량 기준 부분 청산) — store-backed ────────────
+function PositionPanel({ run }: { run: RunView }) {
+  const price = run.opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
+  const totalQty = run.totalQty;
+  const remaining = run.remaining;
+  const pnl = run.pnlUsd;
+  const busy = run.unwinding;
+  const log = run.unwindLog;
+  const doUnwind = (fraction: number) => { void unwindRun(run.id, fraction); };
   const pctLeft = totalQty > 0 ? (remaining / totalQty) * 100 : 0;
   const done = remaining <= totalQty * 1e-6;
+  const opp = run.opp;
 
   return (
     <div style={{ marginTop: 12, padding: 14, borderRadius: "var(--radius-sm)", background: "var(--card-2)", border: "1px solid var(--border)" }}>

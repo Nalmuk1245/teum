@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Opportunity } from "@/lib/types";
 import { unwind } from "@/lib/unwind";
 import { CONFIG } from "@/lib/config";
+import { isKilled } from "@/lib/killswitch";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,9 @@ export async function POST(req: Request) {
     const body = (await req.json()) as { opportunity?: Opportunity; remainingQty?: number; fraction?: number };
     if (!body.opportunity || body.remainingQty == null || body.fraction == null) {
       return NextResponse.json({ error: "opportunity + remainingQty + fraction 필요" }, { status: 400 });
+    }
+    if (isKilled()) {
+      return NextResponse.json({ error: "킬 스위치 활성 — 청산 차단" }, { status: 423 });
     }
     // Live unwind places REAL orders — same guards as exec-step.
     if (!CONFIG.DRY_RUN) {
