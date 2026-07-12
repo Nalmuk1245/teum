@@ -185,18 +185,19 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         const venue = kr.venue as "upbit" | "bithumb";
         // KR price and FX must be LIVE — mixing a stale scan-time KR price with a
         // live opposite leg fabricates a moving premium on exactly the thin coins
-        // where premia look biggest. Only the Binance side may fall back to the
-        // scan price (its WS can be region-blocked; price drift there is smaller).
-        const bnLeg = o.legs.find((l) => l.venue === "binance");
+        // where premia look biggest. The global (USDT) leg may be Binance, Bybit
+        // or OKX; use Binance WS as the live USDT mover (all three track within
+        // ~0.1%) and fall back to that leg's scan price.
+        const globalLeg = o.legs.find((l) => l.quote === "USDT");
         const krw = venue === "upbit" ? up.current.get(o.base) : bt.current.get(o.base);
         const rate = venue === "upbit" ? fx.current.upbit : fx.current.bithumb;
-        const usdt = bn.current.get(o.base) ?? bnLeg?.price;
+        const usdt = bn.current.get(o.base) ?? globalLeg?.price;
         if (!krw || !rate || !usdt) continue; // no live KR data → no overlay (board keeps scan values)
         const premiumPct = ((krw / rate - usdt) / usdt) * 100;
         // Sign the gross by the opp's LISTED route — taking |premium| would show
         // a direction flip (premium inverting) as still-profitable when executing
         // the listed route actually loses the spread.
-        const buyGlobal = o.legs.find((l) => l.side === "buy")?.venue === "binance";
+        const buyGlobal = o.legs.find((l) => l.side === "buy")?.quote === "USDT";
         const grossPct = buyGlobal ? premiumPct : -premiumPct;
         ov[o.id] = { premiumPct, grossPct, netPct: grossPct - o.costPct };
       }

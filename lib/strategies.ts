@@ -28,22 +28,27 @@ const KR_VENUES: Venue[] = ["upbit", "bithumb"];
 const krSymbol = (venue: Venue, base: string) =>
   venue === "upbit" ? `KRW-${base}` : `${base}_KRW`;
 
+// Global venues eligible as the kimchi USDT leg (best-net wins per coin).
+const GLOBAL_VENUES: Venue[] = ["binance", "bybit", "okx"];
+const globalSymbol = (venue: Venue, base: string) =>
+  venue === "okx" ? `${base}-USDT` : `${base}USDT`;
+
 // Structured, per-coin/per-venue round-trip cost — replaces the flat number.
-function kimchiCostPct(base: string, krVenue: Venue): number {
-  const globalFee = FEES.takerPct.binance ?? 0.1;
+function kimchiCostPct(base: string, globalVenue: Venue, krVenue: Venue): number {
+  const globalFee = FEES.takerPct[globalVenue] ?? 0.1;
   const krFee = FEES.takerPct[krVenue] ?? 0.05;
   const network = NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT;
   return globalFee + krFee + network + FEES.fxSpreadPct + FEES.slippagePct;
 }
 
-// ── KIMCHI — KR won premium vs global USDT (best of Upbit / Bithumb) ───────────
+// ── KIMCHI — KR won premium vs global USDT ─────────────────────────────────────
+// Best combo of (Upbit|Bithumb) × (Binance|Bybit|OKX) per coin. The hedge is
+// still the Binance USDT-M perp regardless of which global venue holds the spot
+// leg — it's a price hedge, not an inventory hedge.
 const kimchi: Strategy = {
   kind: "kimchi",
   label: "KIMCHI",
   async scan(ctx) {
-    const bnb = ctx.tickers.binance;
-    if (!bnb) return [];
-
     // Union of coins listed on any KR venue.
     const bases = new Set<string>();
     for (const v of KR_VENUES) {
@@ -54,31 +59,32 @@ const kimchi: Strategy = {
     const out: Opportunity[] = [];
     for (const base of bases) {
       if (CONFIG.EXCLUDE.has(base)) continue;
-      const g = bnb.get(base);
-      if (!g) continue;
-      if (g.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
 
-      // Evaluate each KR venue with its OWN USDT/KRW rate and its own fees;
-      // keep whichever gives the best net edge.
+      // Evaluate every KR × global combo; keep the best net edge.
       let best:
-        | { venue: Venue; krPrice: number; premiumPct: number; cost: number; net: number }
+        | { kv: Venue; gv: Venue; krPrice: number; gPrice: number; premiumPct: number; cost: number; net: number }
         | null = null;
-      for (const v of KR_VENUES) {
-        const m = ctx.tickers[v];
-        const kr = m?.get(base);
+      for (const kv of KR_VENUES) {
+        const km = ctx.tickers[kv];
+        const kr = km?.get(base);
         if (!kr) continue;
         // KR-leg liquidity gate — quoteVolumeUsd holds KRW for KR venues.
         if (kr.quoteVolumeUsd < CONFIG.MIN_KR_VOLUME_KRW) continue;
         // Per-venue USDT/KRW; a live cross-venue rate is acceptable, but a bank
         // fallback rate fabricates 1-3% premiums — skip rather than mislead.
-        const fx = m?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : null);
+        const fx = km?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : null);
         if (!fx) continue;
-        const premiumPct = ((kr.price / fx - g.price) / g.price) * 100;
-        if (Math.abs(premiumPct) > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // bad data
-        const cost = kimchiCostPct(base, v);
-        const net = Math.abs(premiumPct) - cost;
-        if (!best || net > best.net)
-          best = { venue: v, krPrice: kr.price, premiumPct, cost, net };
+        for (const gv of GLOBAL_VENUES) {
+          const g = ctx.tickers[gv]?.get(base);
+          if (!g || !g.price) continue;
+          if (g.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
+          const premiumPct = ((kr.price / fx - g.price) / g.price) * 100;
+          if (Math.abs(premiumPct) > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // bad data
+          const cost = kimchiCostPct(base, gv, kv);
+          const net = Math.abs(premiumPct) - cost;
+          if (!best || net > best.net)
+            best = { kv, gv, krPrice: kr.price, gPrice: g.price, premiumPct, cost, net };
+        }
       }
       if (!best) continue;
 
@@ -86,8 +92,8 @@ const kimchi: Strategy = {
 
       // Settlement gate: you WITHDRAW the coin from the buy venue and DEPOSIT it
       // to the sell venue. If either is disabled, the edge can't be captured.
-      const buyVenue: Venue = buyGlobal ? "binance" : best.venue;
-      const sellVenue: Venue = buyGlobal ? best.venue : "binance";
+      const buyVenue: Venue = buyGlobal ? best.gv : best.kv;
+      const sellVenue: Venue = buyGlobal ? best.kv : best.gv;
       const wStat = walletStatus(ctx.transfers, buyVenue, base);
       const dStat = walletStatus(ctx.transfers, sellVenue, base);
       const transfer: TransferGate = {
@@ -100,18 +106,15 @@ const kimchi: Strategy = {
       transfer.blocked =
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
 
+      const gLeg = { venue: best.gv, symbol: globalSymbol(best.gv, base), price: best.gPrice, quote: "USDT" as const };
+      const kLeg = { venue: best.kv, symbol: krSymbol(best.kv, base), price: best.krPrice, quote: "KRW" as const };
       out.push({
         id: id("kimchi", base),
         kind: "kimchi",
         base,
-        legs: [
-          buyGlobal
-            ? { venue: "binance", side: "buy", symbol: `${base}USDT`, price: g.price, quote: "USDT" }
-            : { venue: best.venue, side: "buy", symbol: krSymbol(best.venue, base), price: best.krPrice, quote: "KRW" },
-          buyGlobal
-            ? { venue: best.venue, side: "sell", symbol: krSymbol(best.venue, base), price: best.krPrice, quote: "KRW" }
-            : { venue: "binance", side: "sell", symbol: `${base}USDT`, price: g.price, quote: "USDT" },
-        ],
+        legs: buyGlobal
+          ? [{ ...gLeg, side: "buy" }, { ...kLeg, side: "sell" }]
+          : [{ ...kLeg, side: "buy" }, { ...gLeg, side: "sell" }],
         grossPct: Math.abs(best.premiumPct),
         costPct: best.cost,
         netPct: best.net,
