@@ -211,6 +211,34 @@ export async function upbitCancelOrder(uuid: string): Promise<boolean> {
   }
 }
 
+/** Poll an exchange withdrawal for its on-chain txId (broadcast can lag). */
+export async function binanceWithdrawTx(base: string, wdId: string): Promise<string | null> {
+  const { key } = bnKeys();
+  if (CONFIG.DRY_RUN || !key) return null;
+  try {
+    const j = await binanceSignedGet("/sapi/v1/capital/withdraw/history", { coin: base });
+    const rec = Array.isArray(j) ? j.find((w: { id?: string; txId?: string }) => w.id === wdId) : undefined;
+    return rec?.txId || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function upbitWithdrawTx(uuid: string): Promise<string | null> {
+  const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return null;
+  try {
+    const query = new URLSearchParams({ uuid }).toString();
+    const res = await fetch(`https://api.upbit.com/v1/withdraw?${query}`, {
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+    });
+    const j = await res.json();
+    return j?.txid || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function binanceWithdraw(base: string, network: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
   const { key } = bnKeys();
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 출금 → ${address.slice(0, 10)}…${tag ? ` (tag:${tag})` : ""}`, !!key);

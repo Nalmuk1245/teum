@@ -4,7 +4,7 @@ import { CONFIG, TAG_REQUIRED } from "@/lib/config";
 import { sendToken, walletAddress } from "@/lib/wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
-import { binanceSpot, binancePerp, binanceWithdraw, upbitOrder, upbitWithdraw, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
+import { binanceSpot, binancePerp, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
 import { estimateLegSlippage } from "@/lib/quote";
 import { fetchUsdKrw } from "@/lib/exchanges";
@@ -90,11 +90,13 @@ async function runStep(
       return await binancePerp(opp.base, "SHORT", qty);
     case "withdraw": {
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
+      // DRY: show a simulated withdraw tx chip (parity with transfer/deposit).
+      const simTx = dry ? { hash: `sim:${chain || "chain"}:withdraw:${opp.base}`, url: null } : undefined;
       // Live: an unresolvable chain must never fall through to a guessed
       // network/address — wrong-chain sends are permanent loss.
       if (!chain) {
         return dry
-          ? { ok: true, dryRun: true, message: `${buy?.venue} 출금 (모의) · 체인 미상 — 라이브면 차단됨` }
+          ? { ok: true, dryRun: true, message: `${buy?.venue} 출금 (모의) · 체인 미상 — 라이브면 차단됨`, tx: simTx }
           : fail(`체인 미상(${opp.transfer?.network?.chain ?? "?"}) — 출금 차단`);
       }
       const net = NET_LABEL[chain] ?? chain;
@@ -118,14 +120,14 @@ async function runStep(
       }
       if (!dest) {
         return dry
-          ? { ok: true, dryRun: true, message: `${buy?.venue} 출금${note} (모의) · 주소 미확인(키 필요) — 라이브면 차단됨` }
+          ? { ok: true, dryRun: true, message: `${buy?.venue} 출금${note} (모의) · 주소 미확인(키 필요) — 라이브면 차단됨`, tx: simTx }
           : fail(`출금 주소 미확인 — 차단`);
       }
       // Tag/memo-required coins: sending WITHOUT the tag lands uncredited in the
       // exchange omnibus wallet. Hard requirement — never send tagless.
       if (TAG_REQUIRED.has(opp.base) && !hop && !tag) {
         return dry
-          ? { ok: true, dryRun: true, message: `${buy?.venue} 출금${note} (모의) · ⚠ ${opp.base}는 태그 필수 — 태그 미확인, 라이브면 차단됨` }
+          ? { ok: true, dryRun: true, message: `${buy?.venue} 출금${note} (모의) · ${opp.base}는 태그 필수 — 태그 미확인, 라이브면 차단됨`, tx: simTx }
           : fail(`${opp.base}는 데스티네이션 태그 필수 — 태그 미확인, 출금 차단`);
       }
       const call =
@@ -135,7 +137,25 @@ async function runStep(
         : null;
       if (!call) return unwired(`${buy?.venue} 출금`);
       const r = await call;
-      return { ok: r.ok, dryRun: r.dryRun, message: `${r.message}${note}` };
+      // Attach the withdrawal's on-chain tx: DRY → a simulated hash chip so the
+      // step shows a tx like transfer/deposit; LIVE → the exchange withdrawal
+      // broadcasts on-chain after acceptance, so briefly poll history for the
+      // real txId (may still be pending — deposit step catches the arrival tx).
+      let wtx: { hash: string; url: string | null } | undefined;
+      if (r.dryRun) {
+        wtx = { hash: `sim:${chain}:withdraw:${opp.base}`, url: null };
+      } else if (r.ok && r.id) {
+        let txId: string | null = null;
+        for (let i = 0; i < 3 && !txId; i++) {
+          await new Promise((res) => setTimeout(res, 2000));
+          txId = buy?.venue === "binance" ? await binanceWithdrawTx(opp.base, r.id)
+            : buy?.venue === "upbit" ? await upbitWithdrawTx(r.id)
+            : null;
+        }
+        wtx = txId ? txInfo(opp.transfer?.network?.chain, txId, false) : undefined;
+        if (!wtx) note += " · 온체인 tx 대기";
+      }
+      return { ok: r.ok, dryRun: r.dryRun, message: `${r.message}${note}`, tx: wtx };
     }
     case "transfer": {
       // Personal wallet → destination exchange deposit address (EVM hop only).
