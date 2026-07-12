@@ -4,9 +4,19 @@ import { CONFIG } from "@/lib/config";
 import { sendToken, walletAddress } from "@/lib/wallet";
 import { chainKeyFromLabel } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
-import { binanceSpot, binancePerp, binanceWithdraw, upbitOrder } from "@/lib/orders";
+import { binanceSpot, binancePerp, binanceWithdraw, upbitOrder, upbitWithdraw, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
+import { getChain } from "@/lib/chains";
 import type { StepId } from "@/lib/executionPlan";
+
+// Our wallet's receive address on a chain family (for the withdraw destination).
+function destAddr(chainKey: string): string {
+  const fam = getChain(chainKey)?.family;
+  if (fam === "xrp") return process.env.WALLET_ADDR_XRP || "(XRP 주소 미설정)";
+  if (fam === "tron") return process.env.WALLET_ADDR_TRON || "(TRON 주소 미설정)";
+  if (fam === "solana") return process.env.WALLET_ADDR_SOL || "(SOL 주소 미설정)";
+  return walletAddress() ?? process.env.WALLET_ADDR_EVM ?? "(EVM 주소 미설정)";
+}
 
 export const dynamic = "force-dynamic";
 
@@ -21,17 +31,20 @@ type StepResult = { ok: boolean; dryRun: boolean; message: string; hash?: string
 // Execute ONE step server-side. Orders (Binance spot/perp, Upbit), withdrawal,
 // and the personal-wallet transfer are all wired to real signed APIs — dormant
 // & DRY-RUN-simulated until keys are set. (Bithumb orders/withdraw still TODO.)
-async function runStep(stepId: StepId, opp: Opportunity, sizeUsd: number): Promise<StepResult> {
+async function runStep(stepId: StepId, opp: Opportunity, sizeUsd: number, opts?: { rollback?: boolean }): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
   const buy = opp.legs.find((l) => l.side === "buy");
   const sell = opp.legs.find((l) => l.side === "sell");
   const bnPrice = opp.legs.find((l) => l.venue === "binance")?.price ?? 0;
   const qty = bnPrice ? sizeUsd / bnPrice : 0;
 
+  if (opts?.rollback) return undoStep(stepId, opp, qty);
+
   switch (stepId) {
     case "buy": {
       if (buy?.venue === "binance") return await binanceSpot(opp.base, "BUY", { quoteUsd: sizeUsd });
       if (buy?.venue === "upbit") return await upbitOrder(opp.base, "bid", { priceKrw: qty * (buy.price || 0) });
+      if (buy?.venue === "bithumb") return await bithumbOrder(opp.base, "bid", qty);
       return { ok: true, dryRun: dry, message: `${buy?.venue} ${opp.base} 매수 (모의) · 실주문 미배선` };
     }
     case "hedge":
@@ -39,9 +52,12 @@ async function runStep(stepId: StepId, opp: Opportunity, sizeUsd: number): Promi
     case "withdraw": {
       // Withdraw the bought coin from the buy venue to the tool wallet address.
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
-      const dest = walletAddress() ?? process.env.WALLET_ADDR_EVM ?? "(주소 미설정)";
-      if (buy?.venue === "binance") return await binanceWithdraw(opp.base, NET_LABEL[chain] ?? chain, dest, qty);
-      return { ok: true, dryRun: dry, message: `${buy?.venue} → 개인지갑(${dest.slice(0, 10)}…) 출금 (모의) · ${buy?.venue} 출금API 미배선` };
+      const net = NET_LABEL[chain] ?? chain;
+      const dest = destAddr(chain);
+      if (buy?.venue === "binance") return await binanceWithdraw(opp.base, net, dest, qty);
+      if (buy?.venue === "upbit") return await upbitWithdraw(opp.base, net, dest, qty);
+      if (buy?.venue === "bithumb") return await bithumbWithdraw(opp.base, dest, qty);
+      return { ok: true, dryRun: dry, message: `${buy?.venue} → 개인지갑 출금 (모의) · 미지원 거래소` };
     }
     case "transfer": {
       // Personal wallet → destination exchange deposit address (the real send).
@@ -63,11 +79,11 @@ async function runStep(stepId: StepId, opp: Opportunity, sizeUsd: number): Promi
       return { ok: res.ok, dryRun: res.dryRun, message: `개인지갑 → ${destVenue} 송금 · ${res.message}${noteAddr}${noteTok}`, hash: res.hash };
     }
     case "deposit":
-      // TODO: poll destination exchange deposit crediting (signed). Dry: assume ok.
-      return { ok: true, dryRun: dry, message: `${sell?.venue} 입금 확인 ${dry ? "(모의)" : ""}` };
+      return await checkDeposit(sell?.venue ?? "upbit", opp.base);
     case "sell": {
       if (sell?.venue === "binance") return await binanceSpot(opp.base, "SELL", { qty });
       if (sell?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });
+      if (sell?.venue === "bithumb") return await bithumbOrder(opp.base, "ask", qty);
       return { ok: true, dryRun: dry, message: `${sell?.venue} ${opp.base} 매도 (모의) · 실주문 미배선` };
     }
     case "close":
@@ -81,13 +97,25 @@ async function runStep(stepId: StepId, opp: Opportunity, sizeUsd: number): Promi
   }
 }
 
+// Compensating action to unwind an entry leg on partial-fill (buy/hedge only).
+async function undoStep(stepId: StepId, opp: Opportunity, qty: number): Promise<StepResult> {
+  const buy = opp.legs.find((l) => l.side === "buy");
+  if (stepId === "buy") {
+    if (buy?.venue === "binance") return await binanceSpot(opp.base, "SELL", { qty });
+    if (buy?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });
+    if (buy?.venue === "bithumb") return await bithumbOrder(opp.base, "ask", qty);
+  }
+  if (stepId === "hedge") return await binancePerp(opp.base, "CLOSE", qty);
+  return { ok: true, dryRun: CONFIG.DRY_RUN, message: `${stepId} 롤백 불필요` };
+}
+
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { stepId?: StepId; opportunity?: Opportunity; sizeUsd?: number };
+    const body = (await req.json()) as { stepId?: StepId; opportunity?: Opportunity; sizeUsd?: number; rollback?: boolean };
     if (!body.stepId || !body.opportunity) {
       return NextResponse.json({ ok: false, message: "stepId + opportunity 필요" }, { status: 400 });
     }
-    const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0);
+    const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0, { rollback: !!body.rollback });
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json(

@@ -23,6 +23,14 @@ const TOKENS: Record<string, Partial<Record<string, TokenInfo>>> = {
   PEPE: { ethereum: { address: "0x6982508145454Ce325dDbE47a25d4ec3d2311933", decimals: 18 } },
   SHIB: { ethereum: { address: "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", decimals: 18 } },
   ARB: { arbitrum: { address: "0x912CE59144191C1204E64559FE8253a0e49E6548", decimals: 18 } },
+  AAVE: { ethereum: { address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", decimals: 18 } },
+  MKR: { ethereum: { address: "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2", decimals: 18 } },
+  LDO: { ethereum: { address: "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32", decimals: 18 } },
+  CRV: { ethereum: { address: "0xD533a949740bb3306d119CC777fa900bA034cd52", decimals: 18 } },
+  GRT: { ethereum: { address: "0xc944E90C64B2c07662A292be6244BDf05Cda44a7", decimals: 18 } },
+  SAND: { ethereum: { address: "0x3845badAde8e6dFF049820680d1F14bD3903a5d0", decimals: 18 } },
+  MANA: { ethereum: { address: "0x0F5D2fB29fb7d3CFeE444a200298f468908cC942", decimals: 18 } },
+  APE: { ethereum: { address: "0x4d224452801ACEd8B2F0aebE155379bb5D594381", decimals: 18 } },
 };
 
 export type WalletAsset =

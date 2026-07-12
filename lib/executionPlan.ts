@@ -56,7 +56,7 @@ function needsConfirmBefore(id: StepId, level: AutoLevel): boolean {
 export function useFlowRunner(
   steps: ExecStep[],
   level: AutoLevel,
-  runStep?: (stepId: StepId) => Promise<StepResult>,
+  runStep?: (stepId: StepId, opts?: { rollback?: boolean }) => Promise<StepResult>,
 ) {
   const [statuses, setStatuses] = useState<Record<string, StepPhase>>({});
   const [messages, setMessages] = useState<Record<string, string>>({});
@@ -102,7 +102,22 @@ export function useFlowRunner(
       if (r.message) setMessages((m) => ({ ...m, [step.id]: r.message! }));
       if (!r.ok) {
         set(step.id, "error");
-        setError(r.message ?? "단계 실패");
+        // Partial-fill rollback — only BEFORE the irreversible withdraw. Unwind
+        // any completed entry legs (buy/hedge) in reverse.
+        const withdrawIdx = steps.findIndex((s) => s.id === "withdraw");
+        if (i < withdrawIdx && runStep) {
+          for (let j = i - 1; j >= 0; j--) {
+            if (steps[j].id === "buy" || steps[j].id === "hedge") {
+              try { await runStep(steps[j].id, { rollback: true }); } catch { /* */ }
+              if (!alive.current) { busy.current = false; return; }
+              set(steps[j].id, "error");
+              setMessages((m) => ({ ...m, [steps[j].id]: `${m[steps[j].id] ?? ""} · 롤백됨` }));
+            }
+          }
+          setError(`${r.message ?? "단계 실패"} — 진입 롤백 완료`);
+        } else {
+          setError(`${r.message ?? "단계 실패"}${i >= withdrawIdx ? " — 출금 이후: 헷지 유지, 수동 처리 필요" : ""}`);
+        }
         setPauseAt(i);
         setPhase("error");
         busy.current = false;

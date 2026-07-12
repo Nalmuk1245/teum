@@ -85,6 +85,11 @@ function upbitJwt(key: string, secret: string, query: string) {
   return `${header}.${payload}.${b64url(s)}`;
 }
 
+function upbitAuth(query: string) {
+  const key = process.env.UPBIT_KEY!, secret = process.env.UPBIT_SECRET!;
+  return `Bearer ${upbitJwt(key, secret, query)}`;
+}
+
 export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volume?: number; priceKrw?: number }): Promise<OrderResult> {
   const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} ${side === "ask" ? "매도" : "매수"}`, !!(key && secret));
@@ -105,4 +110,111 @@ export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volu
   } catch (e) {
     return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
   }
+}
+
+export async function upbitWithdraw(base: string, netType: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
+  const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} 출금 → ${address.slice(0, 10)}…`, !!(key && secret));
+  try {
+    const params: Record<string, string> = { currency: base, net_type: netType, amount: String(amount), address };
+    if (tag) params.secondary_address = tag;
+    const query = new URLSearchParams(params).toString();
+    const res = await fetch(`https://api.upbit.com/v1/withdraws/coin`, {
+      method: "POST",
+      headers: { Authorization: upbitAuth(query), "Content-Type": "application/x-www-form-urlencoded" },
+      body: query, cache: "no-store",
+    });
+    const j = await res.json();
+    const ok = !!j.uuid;
+    return { ok, dryRun: false, id: j.uuid ?? null, message: ok ? `Upbit ${base} 출금 요청` : (j.error?.message || "출금 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+  }
+}
+
+// ── Bithumb (v1 private, HMAC-SHA512) ─────────────────────────────────────────
+async function bithumbSigned(endpoint: string, params: Record<string, string>) {
+  const key = process.env.BITHUMB_KEY!, secret = process.env.BITHUMB_SECRET!;
+  const nonce = String(Date.now());
+  const body = new URLSearchParams({ endpoint, ...params }).toString();
+  const strData = `${endpoint}${String.fromCharCode(0)}${body}${String.fromCharCode(0)}${nonce}`;
+  const hmacHex = crypto.createHmac("sha512", secret).update(strData).digest("hex");
+  const sign = Buffer.from(hmacHex).toString("base64");
+  const res = await fetch(`https://api.bithumb.com${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Api-Key": key, "Api-Sign": sign, "Api-Nonce": nonce,
+      "Content-Type": "application/x-www-form-urlencoded", "api-client-type": "2",
+    },
+    body, cache: "no-store",
+  });
+  return res.json();
+}
+
+export async function bithumbOrder(base: string, side: "bid" | "ask", units: number): Promise<OrderResult> {
+  const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
+  const label = side === "ask" ? "매도" : "매수";
+  if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bithumb ${base} ${label}`, !!(key && secret));
+  try {
+    const endpoint = side === "ask" ? "/trade/market_sell" : "/trade/market_buy";
+    const j = await bithumbSigned(endpoint, { order_currency: base, payment_currency: "KRW", units: String(units) });
+    const ok = j.status === "0000";
+    return { ok, dryRun: false, id: j.order_id ?? null, message: ok ? `Bithumb ${base} ${label} 체결` : (j.message || "주문 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+  }
+}
+
+export async function bithumbWithdraw(base: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
+  const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bithumb ${base} 출금 → ${address.slice(0, 10)}…`, !!(key && secret));
+  try {
+    const params: Record<string, string> = { currency: base, address, units: String(amount) };
+    if (tag) params.destination = tag;
+    const j = await bithumbSigned("/trade/btc_withdrawal", params);
+    const ok = j.status === "0000";
+    return { ok, dryRun: false, id: null, message: ok ? `Bithumb ${base} 출금 요청` : (j.message || "출금 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+  }
+}
+
+// ── Deposit crediting check (poll) ────────────────────────────────────────────
+async function binanceSignedGet(path: string, params: Record<string, string | number>) {
+  const { key, secret } = bnKeys();
+  const q = new URLSearchParams({ ...params, recvWindow: "5000", timestamp: String(Date.now()) } as Record<string, string>).toString();
+  const sig = crypto.createHmac("sha256", secret!).update(q).digest("hex");
+  const res = await fetch(`https://api.binance.com${path}?${q}&signature=${sig}`, {
+    headers: { "X-MBX-APIKEY": key! }, cache: "no-store",
+  });
+  return res.json();
+}
+
+/** Has a recent deposit of `base` been credited at `venue`? DRY/no-key → assume yes. */
+export async function checkDeposit(venue: string, base: string): Promise<OrderResult> {
+  if (venue === "binance") {
+    const { key } = bnKeys();
+    if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 입금 확인`, !!key);
+    try {
+      const j = await binanceSignedGet("/sapi/v1/capital/deposit/hisrec", { coin: base });
+      const credited = Array.isArray(j) && j.some((d: { status?: number }) => d.status === 1);
+      return { ok: credited, dryRun: false, id: null, message: credited ? `Binance ${base} 입금 확인` : "입금 대기" };
+    } catch (e) {
+      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+    }
+  }
+  if (venue === "upbit") {
+    const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+    if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} 입금 확인`, !!(key && secret));
+    try {
+      const query = new URLSearchParams({ currency: base }).toString();
+      const res = await fetch(`https://api.upbit.com/v1/deposits?${query}`, { headers: { Authorization: upbitAuth(query) }, cache: "no-store" });
+      const j = await res.json();
+      const credited = Array.isArray(j) && j.some((d: { state?: string }) => d.state === "ACCEPTED");
+      return { ok: credited, dryRun: false, id: null, message: credited ? `Upbit ${base} 입금 확인` : "입금 대기" };
+    } catch (e) {
+      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+    }
+  }
+  return sim(`${venue} ${base} 입금 확인`, false); // bithumb TODO
 }

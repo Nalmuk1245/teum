@@ -519,12 +519,12 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
   // Each step runs server-side (orders/withdraw stubs + real personal-wallet send),
   // DRY-RUN by default. sizeUsd resolved below.
   const runStep = useCallback(
-    async (stepId: StepId): Promise<StepResult> => {
+    async (stepId: StepId, opts?: { rollback?: boolean }): Promise<StepResult> => {
       try {
         const res = await fetch("/api/exec-step", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ stepId, opportunity: opp, sizeUsd }),
+          body: JSON.stringify({ stepId, opportunity: opp, sizeUsd, rollback: opts?.rollback }),
         });
         const j = await res.json();
         return { ok: !!j.ok, message: j.message };

@@ -8,12 +8,14 @@
 - [x] **실출금** — 바낸 → 개인지갑 (Binance `/capital/withdraw`, 서명)
 - [x] **토큰 전송 맵** — 주요 ERC20/TRC20 컨트랙트·decimals (`lib/tokens.ts`), 미확인 코인은 플래그
 - [x] **정산** — 순수익% + USD PnL → `settle`
-- [ ] **빗썸 주문/출금** (v1 HMAC-SHA512 서명) — 지금 스텁
-- [ ] **업비트 출금** (withdraw JWT) — 매수 KR·매도 글로벌(역프) 경로용
-- [ ] **입금 확인 폴링** — 목적지 거래소 크레딧 실확인(서명) → `deposit` (지금 즉시 통과)
-- [ ] 미확인 토큰 컨트랙트 추가 (`lib/tokens.ts` 확장)
-- [ ] **부분체결 롤백** — 한 다리만 체결 시 자동 원복/헷지 유지, 체결 정합성 검증
-- [ ] 비EVM(XRP/TRON/SOL) + 실주문 로컬 실테스트 후 `DRY_RUN=false`
+- [x] **빗썸 주문/출금** (v1 HMAC-SHA512 서명) — `lib/orders.ts`
+- [x] **업비트 출금** (`/v1/withdraws/coin`, JWT) — 역프 경로용
+- [x] **입금 확인 폴링** — 바낸/업비트 크레딧 조회(서명) → `deposit` (빗썸은 아직 sim)
+- [x] **부분체결 롤백** — 출금 전 진입 실패 시 buy 되팔기/hedge 청산 자동, 출금 후엔 헷지 유지
+- [x] 토큰 컨트랙트 확장 (AAVE/MKR/LDO/CRV/GRT/SAND/MANA/APE…)
+- [ ] 빗썸 입금 크레딧 조회 (user_transactions)
+- [ ] 체결 정합성 검증(실 체결가 대조) + 슬리피지 재확인
+- [ ] **로컬에서 키 넣고 실테스트 → `DRY_RUN=false`** (본인 PC, 실자금)
 
 ## 🟠 P1 — 게이트·상태 서명 배선 (키 넣으면 대부분 자동)
 - [ ] **빗썸 잔고** — v1 HMAC-SHA512 private (`lib/balances.ts` `bithumb()` 스텁)
