@@ -9,7 +9,7 @@ import InventoryPanel from "./components/InventoryPanel";
 
 const KIND_META: Record<StrategyKind, { label: string; color: string }> = {
   kimchi: { label: "김프", color: "var(--brand-2)" },
-  "cross-cex": { label: "거래소간", color: "var(--sky)" },
+  "cross-cex": { label: "크로스", color: "var(--sky)" },
   "funding-basis": { label: "펀딩", color: "var(--amber)" },
   "cex-dex": { label: "CEX-DEX", color: "var(--teal)" },
 };
@@ -243,8 +243,8 @@ export default function Cockpit() {
         <Board rows={rows} loading={loading} onExecute={setSelected} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} />
 
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
-          순수익 = 총차익 − 예상 왕복비용. 김프는 실데이터 연동, 거래소간/펀딩/CEX-DEX는
-          목업 스텁입니다.
+          순수익 = 총차익 − 예상 왕복비용. 김프·크로스(거래소 갭)는 실데이터 연동,
+          펀딩/CEX-DEX는 목업 스텁입니다.
         </p>
       </div>
 
