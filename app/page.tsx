@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
 import { pct, usd, price } from "@/lib/format";
 import { useLivePrices, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
@@ -36,16 +36,21 @@ export default function Cockpit() {
   // Two separated tools: "monitor" = gap viewing only (no execute), "execute" = trading.
   const [mode, setMode] = useState<"monitor" | "execute">("monitor");
 
+  // Monotonic sequence — a slow, stale /api/scan response must never overwrite
+  // a newer one that already landed.
+  const scanSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++scanSeq.current;
     try {
       const res = await fetch("/api/scan", { cache: "no-store" });
       const j = await res.json();
+      if (seq !== scanSeq.current) return; // superseded
       setOpps(j.opportunities ?? []);
       setMeta(j.meta ?? null);
     } catch {
       /* keep stale */
     } finally {
-      setLoading(false);
+      if (seq === scanSeq.current) setLoading(false);
     }
   }, []);
 
@@ -129,8 +134,13 @@ export default function Cockpit() {
                 key={m.k}
                 type="button"
                 onClick={() => {
+                  // Switching to monitor unmounts an open execute modal (and any
+                  // in-flight runner) — confirm instead of silently killing it.
+                  if (m.k === "monitor" && selected) {
+                    if (!window.confirm("실행 창이 열려 있습니다. 닫고 모니터로 전환할까요?")) return;
+                    setSelected(null);
+                  }
                   setMode(m.k);
-                  if (m.k === "monitor") setSelected(null);
                 }}
                 style={{
                   border: "none", cursor: "pointer", borderRadius: 9, padding: "9px 8px",
@@ -518,15 +528,27 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
   const plan = useMemo(() => buildPlan(opp, hedgeOn), [opp, hedgeOn]);
   // Each step runs server-side (orders/withdraw stubs + real personal-wallet send),
   // DRY-RUN by default. sizeUsd resolved below.
+  // Fill-adjusted quantity threading: the buy's actual executedQty (minus fees)
+  // becomes the qty every later step uses — never the nominal sizeUsd/price.
+  const qtyRef = useRef<number | undefined>(undefined);
+  const runStartTs = useRef<number>(0);
   const runStep = useCallback(
     async (stepId: StepId, opts?: { rollback?: boolean }): Promise<StepResult> => {
+      if (stepId === "buy" && !opts?.rollback) {
+        qtyRef.current = undefined; // fresh entry — reset carried qty
+        runStartTs.current = Date.now(); // deposit check: only credits after this
+      }
       try {
         const res = await fetch("/api/exec-step", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ stepId, opportunity: opp, sizeUsd, rollback: opts?.rollback }),
+          body: JSON.stringify({
+            stepId, opportunity: opp, sizeUsd, rollback: opts?.rollback,
+            qty: qtyRef.current, sinceTs: runStartTs.current || undefined,
+          }),
         });
         const j = await res.json();
+        if (typeof j.filledQty === "number" && j.filledQty > 0) qtyRef.current = j.filledQty;
         return { ok: !!j.ok, message: j.message };
       } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : "요청 실패" };
@@ -534,7 +556,27 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
     },
     [opp, sizeUsd],
   );
-  const runner = useFlowRunner(plan, autoLevel, runStep);
+  // Stale-edge guard — re-quote right before buy/withdraw/sell; abort if the
+  // edge is gone. Mock opps can't be re-quoted (no live book) → pass in demo.
+  const revalidate = useCallback(async () => {
+    if (opp.mock) return { ok: true };
+    try {
+      const res = await fetch("/api/quote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ opportunity: opp, sizeUsd }),
+      });
+      const j = await res.json();
+      const q = j.quote as Quote | null;
+      if (!q) return { ok: false, reason: "실호가 재조회 실패" };
+      if (q.execNetPct <= 0) return { ok: false, reason: `순수익 ${q.execNetPct.toFixed(2)}%로 하락` };
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: "재견적 요청 실패" };
+    }
+  }, [opp, sizeUsd]);
+  const runner = useFlowRunner(plan, autoLevel, runStep, revalidate);
+  const running = runner.phase === "running" || runner.phase === "paused" || runner.phase === "error";
 
   // Live depth quote — refetch (debounced) whenever the size changes.
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -570,9 +612,16 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
 
   const overCap = quote != null && quote.maxSizeUsd > 0 && sizeUsd > quote.maxSizeUsd;
 
+  // Closing the modal unmounts the runner — never allow it silently mid-run
+  // (a live run would strand a hedged position with no UI).
+  const guardedClose = () => {
+    if (running && !window.confirm("실행이 진행 중입니다. 정말 닫을까요? (러너가 중단됩니다)")) return;
+    onClose();
+  };
+
   return (
     <div
-      onClick={onClose}
+      onClick={guardedClose}
       style={{
         position: "fixed", inset: 0, zIndex: 50,
         background: "rgba(6,8,13,0.66)", backdropFilter: "blur(4px)",
@@ -595,7 +644,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
           <span style={{ fontWeight: 700, fontSize: 15 }}>실행 · {opp.base}</span>
           <span style={{ color: "var(--text-mute)", fontSize: 12 }}>{km.label}</span>
           <span style={{ flex: 1 }} />
-          <button type="button" onClick={onClose} style={xBtn}>✕</button>
+          <button type="button" onClick={guardedClose} style={xBtn}>✕</button>
         </div>
 
         <div style={{ padding: 18 }}>
@@ -629,7 +678,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             </span>
             <button
               type="button"
-              disabled={!opp.hasPerp}
+              disabled={!opp.hasPerp || running}
               onClick={() => setHedge((v) => !v)}
               style={{
                 border: `1px solid ${hedgeOn ? "var(--brand)" : "var(--border-strong)"}`,
@@ -658,6 +707,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                 <button
                   key={u}
                   type="button"
+                  disabled={running}
                   onClick={() => switchUnit(u)}
                   style={{
                     border: "none", cursor: "pointer", borderRadius: 999, padding: "3px 11px",
@@ -676,6 +726,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             value={amtStr}
             min={0}
             inputMode="decimal"
+            disabled={running}
             onChange={(e) => setAmtStr(e.target.value)}
             className="tnum"
             style={{
@@ -713,7 +764,7 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                     key={a.k}
                     type="button"
                     onClick={() => setAutoLevel(a.k)}
-                    disabled={runner.phase === "running"}
+                    disabled={running}
                     style={{
                       border: `1px solid ${on ? "var(--brand)" : "var(--border)"}`,
                       background: on ? "var(--brand-soft)" : "transparent",
@@ -773,16 +824,31 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
                 </button>
               </>
             ) : runner.phase === "error" ? (
-              <button
-                type="button"
-                onClick={runner.reset}
-                style={{
-                  flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
-                  background: "var(--brand-grad)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
-                }}
-              >
-                다시 시작
-              </button>
+              <>
+                {/* retry = resume at the failed step (never re-runs completed
+                    entry legs → no double position). reset = full fresh run. */}
+                <button
+                  type="button"
+                  onClick={runner.retry}
+                  style={{
+                    flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
+                    background: "var(--brand-grad)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                  }}
+                >
+                  실패 지점부터 재시도
+                </button>
+                <button
+                  type="button"
+                  onClick={runner.reset}
+                  style={{
+                    padding: "12px 14px", borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border-strong)", background: "transparent",
+                    color: "var(--text-dim)", fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  초기화
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -798,8 +864,9 @@ function ExecuteModal({ opp, onClose, isMobile }: { opp: Opportunity; onClose: (
             )}
           </div>
 
-          {/* Position / smart unwind — partial exit on remaining qty */}
-          <PositionPanel opp={opp} sizeUsd={sizeUsd} />
+          {/* Position / smart unwind — only once a position actually exists
+              (buy filled). Before that there is nothing to unwind. */}
+          {runner.statuses.buy === "done" && <PositionPanel opp={opp} sizeUsd={sizeUsd} />}
 
           <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
             DRY-RUN 상태머신입니다 — 각 단계는 시뮬레이션이며 실주문은 나가지 않습니다. API 키를
@@ -828,6 +895,7 @@ function StepTimeline({
         const paused = i === pauseAt;
         const color =
           st === "error" ? "var(--neg)"
+          : st === "rolledback" ? "var(--amber)"
           : st === "done" ? "var(--pos)"
           : st === "running" ? "var(--amber)"
           : paused ? "var(--brand-2)" : "var(--text-mute)";
@@ -843,7 +911,7 @@ function StepTimeline({
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: st === "pending" && !paused ? "var(--text-dim)" : "var(--text)" }}>
                 {i + 1}. {s.label}
-                {st === "done" ? " ✓" : st === "running" ? " …" : st === "error" ? " ✕" : paused ? " · 확인 대기" : ""}
+                {st === "done" ? " ✓" : st === "running" ? " …" : st === "error" ? " ✕" : st === "rolledback" ? " ↩ 롤백" : paused ? " · 확인 대기" : ""}
               </div>
               <div style={{ fontSize: 11, color: st === "error" ? "var(--neg)" : "var(--text-mute)" }}>{sub}</div>
             </div>

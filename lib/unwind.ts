@@ -25,6 +25,12 @@ const REPEG_HAIRCUT = 0.15; // premium given up on the re-peg tranche (sim)
 
 export async function unwind(opp: Opportunity, remainingQty: number, fraction: number): Promise<UnwindResult> {
   const dry = CONFIG.DRY_RUN;
+  // Live unwind loop (limit order + fill polling + re-peg + proportional close)
+  // is NOT wired yet — returning simulated fills in live mode would leave a real
+  // naked position while the UI shows "청산 완료". Hard-block until wired.
+  if (!dry) {
+    throw new Error("라이브 청산 루프 미배선 — DRY_RUN에서만 사용 가능");
+  }
   const price = opp.legs.find((l) => l.venue === "binance")?.price ?? 0;
   const gross = opp.grossPct ?? 0; // target premium (live would re-quote)
   const cost = opp.costPct ?? 0.5;

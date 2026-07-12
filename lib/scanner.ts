@@ -22,11 +22,12 @@ async function buildContext(): Promise<ScanContext> {
   ]);
   const tickers: Partial<Record<Venue, TickerMap>> = {};
   for (const [venue, map] of entries) tickers[venue] = map;
-  // Prefer the live USDT/KRW rate from Upbit's own KRW-USDT market — that's the
-  // correct denominator for a kimchi premium (apples-to-apples vs the USDT price),
-  // and it removes the bias a stale bank USD/KRW fallback would add.
-  const usdKrw = tickers.upbit?.get("USDT")?.price ?? CONFIG.USD_KRW;
-  return { tickers, usdKrw, transfers, perps };
+  // Prefer a live USDT/KRW rate from a KR venue's own USDT market — that's the
+  // correct denominator for a kimchi premium. The env fallback is a stale bank
+  // rate that can inflate every premium by 1-3%, so flag it (fxLive=false) and
+  // let strategies refuse to fabricate premiums from it.
+  const liveFx = tickers.upbit?.get("USDT")?.price ?? tickers.bithumb?.get("USDT")?.price ?? null;
+  return { tickers, usdKrw: liveFx ?? CONFIG.USD_KRW, fxLive: liveFx != null, transfers, perps };
 }
 
 export async function scanAll(): Promise<Opportunity[]> {

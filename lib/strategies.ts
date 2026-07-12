@@ -69,7 +69,10 @@ const kimchi: Strategy = {
         if (!kr) continue;
         // KR-leg liquidity gate — quoteVolumeUsd holds KRW for KR venues.
         if (kr.quoteVolumeUsd < CONFIG.MIN_KR_VOLUME_KRW) continue;
-        const fx = m?.get("USDT")?.price ?? ctx.usdKrw; // per-venue USDT/KRW
+        // Per-venue USDT/KRW; a live cross-venue rate is acceptable, but a bank
+        // fallback rate fabricates 1-3% premiums — skip rather than mislead.
+        const fx = m?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : null);
+        if (!fx) continue;
         const premiumPct = ((kr.price / fx - g.price) / g.price) * 100;
         if (Math.abs(premiumPct) > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // bad data
         const cost = kimchiCostPct(base, v);

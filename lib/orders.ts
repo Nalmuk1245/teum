@@ -5,16 +5,49 @@
 import crypto from "crypto";
 import { CONFIG } from "./config";
 
-export type OrderResult = { ok: boolean; dryRun: boolean; id: string | null; message: string };
+export type OrderResult = { ok: boolean; dryRun: boolean; id: string | null; message: string; filledQty?: number };
 
-const sim = (msg: string, key: boolean): OrderResult => ({
-  ok: true, dryRun: true, id: null,
-  message: key ? `DRY_RUN — ${msg}` : `키 없음 — ${msg} (모의)`,
-});
+// DRY_RUN → simulate ok. LIVE without the venue key → HARD FAIL: a silent no-op
+// leg would let the state machine proceed into real orders on the other side
+// (e.g. a naked hedge). Never ok:true for an unexecuted step in live mode.
+const sim = (msg: string, hasKey: boolean): OrderResult =>
+  CONFIG.DRY_RUN
+    ? { ok: true, dryRun: true, id: null, message: hasKey ? `DRY_RUN — ${msg}` : `키 없음 — ${msg} (모의)` }
+    : { ok: false, dryRun: false, id: null, message: `실행 불가 — ${msg} (키 없음)` };
 
 // ── Binance (spot + futures + withdraw), HMAC-SHA256 ──────────────────────────
 function bnKeys() {
   return { key: process.env.BINANCE_KEY, secret: process.env.BINANCE_SECRET };
+}
+
+// LOT_SIZE stepSize cache — raw float quantities get rejected (-1013) on nearly
+// every symbol, so quantities must be floored to the symbol's step.
+const stepCache = new Map<string, number>(); // `spot:BTCUSDT` / `perp:BTCUSDT` → stepSize
+async function lotStep(kind: "spot" | "perp", symbol: string): Promise<number> {
+  const ck = `${kind}:${symbol}`;
+  const hit = stepCache.get(ck);
+  if (hit) return hit;
+  try {
+    const host = kind === "spot" ? "api.binance.com/api/v3" : "fapi.binance.com/fapi/v1";
+    const res = await fetch(`https://${host}/exchangeInfo?symbol=${symbol}`, {
+      cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    const j = (await res.json()) as { symbols?: Array<{ filters?: Array<{ filterType: string; stepSize?: string }> }> };
+    const f = j.symbols?.[0]?.filters?.find((x) => x.filterType === "LOT_SIZE" || x.filterType === "MARKET_LOT_SIZE");
+    const step = f?.stepSize ? Number(f.stepSize) : 0;
+    if (step > 0) stepCache.set(ck, step);
+    return step || 0;
+  } catch {
+    return 0;
+  }
+}
+/** Floor `qty` to the symbol's LOT_SIZE step (fixed decimals to avoid float tails). */
+export async function roundQty(kind: "spot" | "perp", symbol: string, qty: number): Promise<number> {
+  const step = await lotStep(kind, symbol);
+  if (!step) return qty;
+  const floored = Math.floor(qty / step) * step;
+  const decimals = Math.max(0, Math.round(-Math.log10(step)));
+  return Number(floored.toFixed(decimals));
 }
 async function binanceSigned(host: string, path: string, params: Record<string, string | number>) {
   const { key, secret } = bnKeys();
@@ -31,11 +64,13 @@ export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { qu
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} ${side} 현물`, !!key);
   try {
     const p: Record<string, string | number> = { symbol: `${base}USDT`, side, type: "MARKET" };
-    if (side === "BUY" && opts.quoteUsd) p.quoteOrderQty = opts.quoteUsd;
-    else if (opts.qty) p.quantity = opts.qty;
+    if (side === "BUY" && opts.quoteUsd) p.quoteOrderQty = +opts.quoteUsd.toFixed(2);
+    else if (opts.qty) p.quantity = await roundQty("spot", `${base}USDT`, opts.qty);
     const j = await binanceSigned("api.binance.com", "/api/v3/order", p);
     const ok = !!j.orderId;
-    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, message: ok ? `Binance ${base} ${side} 체결` : (j.msg || "주문 실패") };
+    // executedQty = actual base filled (post-fill; fees may further deduct base on BUY).
+    const filledQty = j.executedQty ? Number(j.executedQty) : undefined;
+    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, filledQty, message: ok ? `Binance ${base} ${side} 체결${filledQty ? ` ${filledQty}` : ""}` : (j.msg || "주문 실패") };
   } catch (e) {
     return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
   }
@@ -47,7 +82,8 @@ export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: 
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 선물 ${action}`, !!key);
   try {
     const p: Record<string, string | number> = {
-      symbol: `${base}USDT`, type: "MARKET", quantity: qty,
+      symbol: `${base}USDT`, type: "MARKET",
+      quantity: await roundQty("perp", `${base}USDT`, qty),
       side: action === "SHORT" ? "SELL" : "BUY",
       ...(action === "CLOSE" ? { reduceOnly: "true" } : {}),
     };
@@ -59,12 +95,13 @@ export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: 
   }
 }
 
-export async function binanceWithdraw(base: string, network: string, address: string, amount: number): Promise<OrderResult> {
+export async function binanceWithdraw(base: string, network: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
   const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 출금 → ${address.slice(0, 10)}…`, !!key);
+  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 출금 → ${address.slice(0, 10)}…${tag ? ` (tag:${tag})` : ""}`, !!key);
   try {
     const j = await binanceSigned("api.binance.com", "/sapi/v1/capital/withdraw/apply", {
       coin: base, network, address, amount,
+      ...(tag ? { addressTag: tag } : {}),
     });
     const ok = !!j.id;
     return { ok, dryRun: false, id: j.id ?? null, message: ok ? `Binance ${base} 출금 요청` : (j.msg || "출금 실패") };
@@ -190,14 +227,20 @@ async function binanceSignedGet(path: string, params: Record<string, string | nu
   return res.json();
 }
 
-/** Has a recent deposit of `base` been credited at `venue`? DRY/no-key → assume yes. */
-export async function checkDeposit(venue: string, base: string): Promise<OrderResult> {
+/**
+ * Has a deposit of `base` been credited at `venue` SINCE `sinceTs`? Matching any
+ * historical deposit would advance the flow while the coin is still in flight —
+ * so only records newer than the run's start count. DRY → simulate ok.
+ */
+export async function checkDeposit(venue: string, base: string, sinceTs: number): Promise<OrderResult> {
   if (venue === "binance") {
     const { key } = bnKeys();
     if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 입금 확인`, !!key);
     try {
-      const j = await binanceSignedGet("/sapi/v1/capital/deposit/hisrec", { coin: base });
-      const credited = Array.isArray(j) && j.some((d: { status?: number }) => d.status === 1);
+      const j = await binanceSignedGet("/sapi/v1/capital/deposit/hisrec", { coin: base, startTime: sinceTs });
+      const credited = Array.isArray(j) && j.some(
+        (d: { status?: number; insertTime?: number }) => d.status === 1 && (d.insertTime ?? 0) >= sinceTs,
+      );
       return { ok: credited, dryRun: false, id: null, message: credited ? `Binance ${base} 입금 확인` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
@@ -210,11 +253,14 @@ export async function checkDeposit(venue: string, base: string): Promise<OrderRe
       const query = new URLSearchParams({ currency: base }).toString();
       const res = await fetch(`https://api.upbit.com/v1/deposits?${query}`, { headers: { Authorization: upbitAuth(query) }, cache: "no-store" });
       const j = await res.json();
-      const credited = Array.isArray(j) && j.some((d: { state?: string }) => d.state === "ACCEPTED");
+      const credited = Array.isArray(j) && j.some(
+        (d: { state?: string; created_at?: string }) =>
+          d.state === "ACCEPTED" && new Date(d.created_at ?? 0).getTime() >= sinceTs,
+      );
       return { ok: credited, dryRun: false, id: null, message: credited ? `Upbit ${base} 입금 확인` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
   }
-  return sim(`${venue} ${base} 입금 확인`, false); // bithumb TODO
+  return sim(`${venue} ${base} 입금 확인 (미배선)`, false); // bithumb TODO — live → fail via sim
 }

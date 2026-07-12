@@ -98,6 +98,13 @@ export const COIN_NETWORK: Record<string, { chain: string; confirms: number }> =
 // real per-coin networkList is pulled from Binance (needs key).
 export const COIN_NETWORK_DEFAULT = { chain: "Ethereum (ERC20)", confirms: 12 };
 
+// Coins whose exchange deposits REQUIRE a destination tag/memo. Sending without
+// one lands in the exchange's omnibus wallet uncredited — treat as a hard gate:
+// any withdraw/transfer of these without a tag must FAIL, never fall through.
+export const TAG_REQUIRED = new Set([
+  "XRP", "XLM", "EOS", "ATOM", "TON", "HBAR", "XEM", "BNB", "KAVA", "INJ", "SEI", "OSMO", "CRO", "STX",
+]);
+
 // Real on-chain withdrawal fees in COIN units (cheapest common network). Used
 // by the depth quote to price the transfer leg exactly at execution size.
 // TODO: pull live from Binance /sapi/v1/capital/config/getall (needs key).

@@ -1,14 +1,8 @@
-// Exchange adapters. Each venue implements the same interface so strategies and
-// the execution engine stay venue-agnostic.
-//
-// Market-data reads use public REST (no keys). Order placement is stubbed — it
-// requires signed keys and is gated behind CONFIG.DRY_RUN. Fill these in per
-// venue when wiring real semi-auto execution.
+// Exchange adapters — public market data (tickers + L2 order books) per venue.
+// Signed calls (orders/withdrawals/deposits) live in lib/orders.ts & lib/deposits.ts.
 
 import type {
   OrderBook,
-  OrderRequest,
-  OrderResult,
   TickerMap,
   Venue,
   VenueKind,
@@ -21,8 +15,6 @@ export interface ExchangeAdapter {
   fetchTickers(): Promise<TickerMap>;
   /** Live L2 order book for one symbol (best-first). Undefined = not wired. */
   fetchOrderBook?(symbol: string): Promise<OrderBook>;
-  /** Place a single order. Throws unless keys are configured; DRY_RUN simulates upstream. */
-  placeOrder(req: OrderRequest): Promise<OrderResult>;
 }
 
 const EMPTY_BOOK: OrderBook = { bids: [], asks: [] };
@@ -70,10 +62,6 @@ const binance: ExchangeAdapter = {
     } catch {
       return EMPTY_BOOK;
     }
-  },
-  async placeOrder(req) {
-    // TODO: sign with BINANCE_KEY/SECRET and POST /api/v3/order.
-    throw new Error(`binance.placeOrder not wired (${req.side} ${req.symbol})`);
   },
 };
 
@@ -139,10 +127,6 @@ const upbit: ExchangeAdapter = {
       return EMPTY_BOOK;
     }
   },
-  async placeOrder(req) {
-    // TODO: sign with UPBIT_KEY/SECRET (JWT) and POST /v1/orders.
-    throw new Error(`upbit.placeOrder not wired (${req.side} ${req.symbol})`);
-  },
 };
 
 // ── Bithumb (KR CEX, KRW quote) ───────────────────────────────────────────────
@@ -193,10 +177,6 @@ const bithumb: ExchangeAdapter = {
     } catch {
       return EMPTY_BOOK;
     }
-  },
-  async placeOrder(req) {
-    // TODO: sign with BITHUMB_KEY/SECRET and POST /trade/place.
-    throw new Error(`bithumb.placeOrder not wired (${req.side} ${req.symbol})`);
   },
 };
 

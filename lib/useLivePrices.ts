@@ -78,6 +78,11 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       if (!upWs || upWs.readyState !== WebSocket.OPEN) return;
       const codes = new Set<string>(["KRW-USDT"]);
       for (const base of krCodes("upbit")) codes.add(`KRW-${base}`);
+      // Delta-only: re-sending the subscription frame every tick counts against
+      // Upbit's WS rate limit and gets the connection dropped. Only send when a
+      // genuinely new code appeared.
+      const hasNew = [...codes].some((c) => !upSubbed.has(c));
+      if (!hasNew && upSubbed.size > 0) return;
       for (const c of codes) upSubbed.add(c);
       upWs.send(JSON.stringify([{ ticket: "arb-cockpit" }, { type: "ticker", codes: [...upSubbed] }]));
     };
@@ -87,7 +92,10 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       ws.binaryType = "arraybuffer";
       upWs = ws;
       sockets.push(ws);
-      ws.onopen = () => subUpbit();
+      ws.onopen = () => {
+        upSubbed.clear(); // fresh socket knows nothing — force a full (re)subscribe
+        subUpbit();
+      };
       ws.onerror = () => ws.close();
       ws.onclose = () => {
         set("upbit", false);
@@ -116,6 +124,8 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       if (!btWs || btWs.readyState !== WebSocket.OPEN) return;
       const syms = new Set<string>(["USDT_KRW"]);
       for (const base of krCodes("bithumb")) syms.add(`${base}_KRW`);
+      const hasNew = [...syms].some((s) => !btSubbed.has(s)); // delta-only (rate limit)
+      if (!hasNew && btSubbed.size > 0) return;
       for (const s of syms) btSubbed.add(s);
       btWs.send(JSON.stringify({ type: "ticker", symbols: [...btSubbed], tickTypes: ["24H"] }));
     };
@@ -124,7 +134,10 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       const ws = new WebSocket("wss://pubwss.bithumb.com/pub/ws");
       btWs = ws;
       sockets.push(ws);
-      ws.onopen = () => subBithumb();
+      ws.onopen = () => {
+        btSubbed.clear(); // fresh socket — force full resubscribe
+        subBithumb();
+      };
       ws.onerror = () => ws.close();
       ws.onclose = () => {
         set("bithumb", false);
@@ -163,16 +176,21 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         const kr = o.legs.find((l) => l.quote === "KRW");
         if (!kr) continue;
         const venue = kr.venue as "upbit" | "bithumb";
-        // Live where available; fall back to the last /api/scan leg price so the
-        // overlay still updates on whichever side is streaming (e.g. if Binance
-        // WS is region-blocked, KR price + FX still move it live).
+        // KR price and FX must be LIVE — mixing a stale scan-time KR price with a
+        // live opposite leg fabricates a moving premium on exactly the thin coins
+        // where premia look biggest. Only the Binance side may fall back to the
+        // scan price (its WS can be region-blocked; price drift there is smaller).
         const bnLeg = o.legs.find((l) => l.venue === "binance");
-        const krw = (venue === "upbit" ? up.current.get(o.base) : bt.current.get(o.base)) ?? kr.price;
+        const krw = venue === "upbit" ? up.current.get(o.base) : bt.current.get(o.base);
         const rate = venue === "upbit" ? fx.current.upbit : fx.current.bithumb;
         const usdt = bn.current.get(o.base) ?? bnLeg?.price;
-        if (!krw || !rate || !usdt) continue;
+        if (!krw || !rate || !usdt) continue; // no live KR data → no overlay (board keeps scan values)
         const premiumPct = ((krw / rate - usdt) / usdt) * 100;
-        const grossPct = Math.abs(premiumPct);
+        // Sign the gross by the opp's LISTED route — taking |premium| would show
+        // a direction flip (premium inverting) as still-profitable when executing
+        // the listed route actually loses the spread.
+        const buyGlobal = o.legs.find((l) => l.side === "buy")?.venue === "binance";
+        const grossPct = buyGlobal ? premiumPct : -premiumPct;
         ov[o.id] = { premiumPct, grossPct, netPct: grossPct - o.costPct };
       }
       setOverlay(ov);

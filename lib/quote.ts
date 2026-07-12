@@ -102,9 +102,14 @@ export async function quoteOpportunity(
   const q = evalSize(sizeUsd);
   if (!q) return null;
 
-  // Depth cap — largest fillable size that still nets positive.
+  // Depth cap — largest fillable size that still nets positive. Seed the probe
+  // grid with small candidates AND the requested size itself, so a thin book
+  // doesn't report 0 when e.g. $300 is perfectly fillable.
   let maxSizeUsd = 0;
-  for (const c of [500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000]) {
+  const grid = [...new Set([100, 250, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, Math.round(sizeUsd)])]
+    .filter((c) => c > 0)
+    .sort((a, b) => a - b);
+  for (const c of grid) {
     const r = evalSize(c);
     if (r && r.filled && r.netPct > 0) maxSizeUsd = c;
   }

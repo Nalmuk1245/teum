@@ -73,6 +73,7 @@ export type ScanContext = {
   /** Pre-fetched tickers per venue (scanner fills this once, strategies read it). */
   tickers: Partial<Record<Venue, TickerMap>>;
   usdKrw: number;
+  fxLive: boolean; // usdKrw came from a live KR USDT market (false = env fallback)
   transfers?: TransferStatus; // per-coin deposit/withdraw availability
   perps?: Set<string>; // bases with a Binance USDT-M perp (hedgeable)
 };
@@ -120,30 +121,4 @@ export type Portfolio = {
   mock: boolean;
 };
 
-export type OrderRequest = {
-  venue: Venue;
-  side: Side;
-  symbol: string;
-  /** Notional in the quote currency of the symbol. */
-  quoteAmount: number;
-};
-
-export type OrderResult = {
-  venue: Venue;
-  side: Side;
-  symbol: string;
-  status: "filled" | "simulated" | "rejected";
-  filledPrice: number | null;
-  message?: string;
-};
-
-export type ExecReport = {
-  oppId: string;
-  base: string;
-  dryRun: boolean;
-  sizeUsd: number;
-  legs: OrderResult[];
-  realizedNetPct: number | null;
-  ok: boolean;
-  ts: number;
-};
+// (Exchange order/withdraw calls live in lib/orders.ts with their own result type.)
