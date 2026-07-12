@@ -52,16 +52,28 @@ type Engine = {
   opp: Opportunity;
 };
 
-type Store = { runs: Record<string, RunView>; killed: boolean };
+type Store = { runs: Record<string, RunView>; killed: boolean; maxInFlightUsd: number };
 const g = globalThis as unknown as {
   __arbRuns?: { store: Store; engines: Map<string, Engine>; listeners: Set<() => void>; seq: number };
 };
-g.__arbRuns ??= { store: { runs: {}, killed: false }, engines: new Map(), listeners: new Set(), seq: 0 };
+g.__arbRuns ??= { store: { runs: {}, killed: false, maxInFlightUsd: Infinity }, engines: new Map(), listeners: new Set(), seq: 0 };
 const R = g.__arbRuns;
 
 function emit() {
   R.store = { ...R.store, runs: { ...R.store.runs } };
   R.listeners.forEach((l) => l());
+}
+
+/** USD notional currently in-flight (runs started and not finished). */
+export function inFlightUsd(): number {
+  return Object.values(R.store.runs)
+    .filter((r) => r.phase === "running" || r.phase === "paused")
+    .reduce((s, r) => s + r.sizeUsd, 0);
+}
+/** UI mirrors the server's in-flight cap here so startRun can enforce it. */
+export function setInFlightLimit(usd: number) {
+  R.store.maxInFlightUsd = Number.isFinite(usd) && usd > 0 ? usd : Infinity;
+  emit();
 }
 function patch(id: string, p: Partial<RunView>) {
   const cur = R.store.runs[id];
@@ -197,7 +209,13 @@ async function loop(id: string) {
 }
 
 // ── Public actions ────────────────────────────────────────────────────────────
-export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }): string {
+export type StartResult = { id: string } | { error: string };
+export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }): StartResult {
+  if (R.store.killed) return { error: "킬 스위치 활성 — 신규 실행 차단" };
+  const cap = R.store.maxInFlightUsd;
+  if (Number.isFinite(cap) && inFlightUsd() + cfg.sizeUsd > cap) {
+    return { error: `총 노출 한도 초과 (진행 중 $${inFlightUsd().toFixed(0)} + $${cfg.sizeUsd.toFixed(0)} > $${cap.toFixed(0)})` };
+  }
   const id = `run_${++R.seq}_${cfg.opp.base}`;
   const plan = buildPlan(cfg.opp, cfg.hedge);
   const buy = cfg.opp.legs.find((l) => l.side === "buy");
@@ -215,7 +233,7 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   });
   emit();
   void loop(id);
-  return id;
+  return { id };
 }
 
 export function confirmRun(id: string) {
@@ -288,7 +306,7 @@ export async function setKillSwitch(v: boolean) {
 // ── Subscription ──────────────────────────────────────────────────────────────
 function subscribe(cb: () => void) { R.listeners.add(cb); return () => R.listeners.delete(cb); }
 function getSnapshot() { return R.store; }
-const server: Store = { runs: {}, killed: false };
+const server: Store = { runs: {}, killed: false, maxInFlightUsd: Infinity };
 
 export function useRuns() {
   return useSyncExternalStore(subscribe, getSnapshot, () => server);

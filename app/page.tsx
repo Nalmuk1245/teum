@@ -5,7 +5,7 @@ import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
 import { pct, usd, price } from "@/lib/format";
 import { useLivePrices, type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/executionPlan";
-import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, type RunView } from "@/lib/runStore";
+import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
 import AssetsPanel, { AssetSummary } from "./components/InventoryPanel";
 
 const KIND_META: Record<StrategyKind, { label: string; color: string }> = {
@@ -36,10 +36,9 @@ export default function Cockpit() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StrategyKind | "all">("all");
   const [selected, setSelected] = useState<Opportunity | null>(null);
-  // Three separated tools: "monitor" = one-shot gap viewing, "funding" =
-  // ongoing funding-spread yields (APR — a different animal from gaps),
-  // "execute" = trading.
-  const [mode, setMode] = useState<"monitor" | "funding" | "execute" | "assets">("monitor");
+  // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
+  // trades, control = ops (runs dashboard + risk + kill), assets = balances.
+  const [mode, setMode] = useState<"monitor" | "funding" | "execute" | "control" | "assets">("monitor");
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -172,16 +171,17 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4,
+            display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 3,
             padding: 4, marginBottom: isMobile ? 10 : 14,
             background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
           }}
         >
           {([
-            { k: "monitor", label: "갭 모니터", sub: "원샷 차익" },
-            { k: "funding", label: "펀딩", sub: "보유 수익률" },
-            { k: "execute", label: "실행", sub: "주문 실행" },
-            { k: "assets", label: "자산", sub: "잔고 상세" },
+            { k: "monitor", label: "갭", sub: "원샷 차익" },
+            { k: "funding", label: "펀딩", sub: "APR" },
+            { k: "execute", label: "실행", sub: "주문" },
+            { k: "control", label: "관제", sub: "실행·리스크" },
+            { k: "assets", label: "자산", sub: "잔고" },
           ] as const).map((m) => {
             const active = mode === m.k;
             return (
@@ -202,7 +202,7 @@ export default function Cockpit() {
               >
                 <span style={{ fontSize: 14, fontWeight: 700, color: active ? "var(--brand-2)" : "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {m.label}
-                  {m.k === "execute" && activeRuns > 0 && (
+                  {m.k === "control" && activeRuns > 0 && (
                     <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "#181a20", background: "var(--brand)", borderRadius: 999, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
                       {activeRuns}
                     </span>
@@ -219,11 +219,20 @@ export default function Cockpit() {
         {/* ── Assets: one-line summary on trading tabs; full panel on 자산 ── */}
         {mode === "assets" ? (
           <AssetsPanel isMobile={isMobile} />
-        ) : (
+        ) : mode === "control" ? null : (
           <AssetSummary isMobile={isMobile} onOpen={() => setMode("assets")} />
         )}
 
-        {mode !== "assets" && (<>
+        {/* ── Control tower: runs dashboard + risk limits + tools ── */}
+        {mode === "control" && (
+          <ControlPanel
+            runs={runList}
+            killed={runsStore.killed}
+            onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); setMode("execute"); }}
+          />
+        )}
+
+        {(mode === "monitor" || mode === "funding" || mode === "execute") && (<>
         {/* ── KPI tiles ────────────────────────────────────────── */}
         <div
           style={{
@@ -293,13 +302,20 @@ export default function Cockpit() {
         </div>
         )}
 
-        {/* ── Active runs dashboard (execute tab only) ── */}
-        {mode === "execute" && runList.length > 0 && (
-          <RunsDashboard
-            runs={runList}
-            onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }}
-            onClearDone={() => { /* handled inside */ }}
-          />
+        {/* Runs live on the 관제 tab now — nudge there when any are active. */}
+        {mode === "execute" && activeRuns > 0 && (
+          <button
+            type="button"
+            onClick={() => setMode("control")}
+            style={{
+              width: "100%", textAlign: "left", cursor: "pointer", marginBottom: 12,
+              background: "var(--brand-soft)", border: "1px solid var(--brand)",
+              borderRadius: "var(--radius)", padding: "9px 12px", color: "var(--brand-2)",
+              fontSize: 12.5, fontWeight: 600,
+            }}
+          >
+            실행 중 {activeRuns}건 — 관제 탭에서 현황 보기 →
+          </button>
         )}
 
         {/* ── Board ────────────────────────────────────────────── */}
@@ -678,6 +694,7 @@ function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportuni
   // or create one on 실행 시작.
   const store = useRuns();
   const [runId, setRunId] = useState<string | null>(initialRunId ?? null);
+  const [startErr, setStartErr] = useState<string | null>(null);
   const run = runId ? store.runs[runId] : undefined;
   const phase = run?.phase ?? "idle";
   const running = phase === "running" || phase === "paused" || phase === "error";
@@ -891,6 +908,7 @@ function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportuni
           <StepTimeline steps={plan} statuses={statuses} messages={messages} txs={txs} pauseAt={pauseAt} />
 
           {phase === "error" && error && <Warn text={error} />}
+          {startErr && <Warn text={startErr} />}
 
           {/* Run controls */}
           <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
@@ -899,8 +917,10 @@ function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportuni
                 type="button"
                 onClick={() => {
                   if (run) { cancelRun(run.id); } // clear a finished run before a fresh one
-                  const id = startRun({ opp, sizeUsd, hedge: hedgeOn, autoLevel });
-                  setRunId(id);
+                  const res = startRun({ opp, sizeUsd, hedge: hedgeOn, autoLevel });
+                  if ("error" in res) { setStartErr(res.error); return; }
+                  setStartErr(null);
+                  setRunId(res.id);
                 }}
                 disabled={sizeUsd <= 0 || store.killed}
                 style={{
@@ -989,6 +1009,165 @@ function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportuni
               : "실행은 백그라운드에서 돌아갑니다 — 이 창을 닫아도 계속 진행되며 '실행' 탭에서 상태를 볼 수 있습니다. 현재 DRY-RUN(시뮬)."}
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Control tower — runs dashboard + risk limits + kill + tool suggestions ────
+type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number };
+
+function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void }) {
+  const inFlight = inFlightUsd();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
+      <KillCard killed={killed} />
+      <RiskCard inFlight={inFlight} />
+      {runs.length > 0
+        ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
+        : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
+      <ToolsCard />
+    </div>
+  );
+}
+
+function KillCard({ killed }: { killed: boolean }) {
+  return (
+    <div style={{ background: killed ? "var(--neg-soft)" : "var(--card)", border: `1px solid ${killed ? "var(--neg)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: killed ? "var(--neg)" : "var(--text)" }}>{killed ? "전체 중단됨" : "킬 스위치"}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-mute)", marginTop: 2 }}>
+          {killed ? "모든 실행 중단 + 신규 차단 중" : "누르면 진행 중인 모든 실행을 멈추고 신규를 차단합니다"}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setKillSwitch(!killed)}
+        style={{
+          border: "none", borderRadius: "var(--radius-sm)", padding: "10px 18px", cursor: "pointer",
+          fontWeight: 800, fontSize: 13,
+          background: killed ? "var(--pos)" : "var(--neg)", color: "#0b0e11",
+        }}
+      >
+        {killed ? "해제" : "전체 중단"}
+      </button>
+    </div>
+  );
+}
+
+function RiskCard({ inFlight }: { inFlight: number }) {
+  const [rs, setRs] = useState<RiskState | null>(null);
+  const [draft, setDraft] = useState<{ perTrade: string; inFlight: string; dailyLoss: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const j = (await (await fetch("/api/risk", { cache: "no-store" })).json()) as RiskState;
+      setRs(j);
+      setInFlightLimit(j.maxInFlightUsd);
+      setDraft({ perTrade: String(j.maxPerTradeUsd), inFlight: String(j.maxInFlightUsd), dailyLoss: String(j.maxDailyLossUsd) });
+    } catch { /* keep */ }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    try {
+      const body = { maxPerTradeUsd: Number(draft.perTrade) || 0, maxInFlightUsd: Number(draft.inFlight) || 0, maxDailyLossUsd: Number(draft.dailyLoss) || 0 };
+      const j = (await (await fetch("/api/risk", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json()) as RiskState;
+      setRs(j);
+      setInFlightLimit(j.maxInFlightUsd);
+    } finally { setSaving(false); }
+  };
+
+  const loss = rs ? Math.max(0, -rs.realizedPnlUsd) : 0;
+  const lossPct = rs && rs.maxDailyLossUsd > 0 ? Math.min(100, (loss / rs.maxDailyLossUsd) * 100) : 0;
+  const flightPct = rs && rs.maxInFlightUsd > 0 ? Math.min(100, (inFlight / rs.maxInFlightUsd) * 100) : 0;
+  const field = (label: string, key: "perTrade" | "inFlight" | "dailyLoss") => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)" }}>
+        <span style={{ color: "var(--text-mute)", fontSize: 12 }}>$</span>
+        <input
+          className="tnum"
+          inputMode="numeric"
+          value={draft?.[key] ?? ""}
+          onChange={(e) => setDraft((d) => (d ? { ...d, [key]: e.target.value.replace(/[^\d]/g, "") } : d))}
+          style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: "var(--text)", fontSize: 13, outline: "none" }}
+        />
+      </div>
+    </label>
+  );
+
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>리스크 한도</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        {field("1회 최대", "perTrade")}
+        {field("총 노출", "inFlight")}
+        {field("일일 손실", "dailyLoss")}
+      </div>
+      <button
+        type="button"
+        onClick={save}
+        disabled={saving}
+        style={{ marginTop: 10, width: "100%", border: "none", borderRadius: "var(--radius-sm)", padding: 9, background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}
+      >
+        {saving ? "저장 중…" : "한도 저장"}
+      </button>
+
+      {rs && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)" }}>
+              <span>총 노출 (진행 중)</span>
+              <span className="tnum">{usd(inFlight)} / {usd(rs.maxInFlightUsd)}</span>
+            </div>
+            <div style={{ height: 5, borderRadius: 999, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+              <div style={{ width: `${flightPct}%`, height: "100%", background: flightPct > 90 ? "var(--neg)" : "var(--brand)" }} />
+            </div>
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)" }}>
+              <span>오늘 실현 손익</span>
+              <span className="tnum" style={{ color: rs.realizedPnlUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                {rs.realizedPnlUsd >= 0 ? "+" : "−"}${Math.abs(rs.realizedPnlUsd).toFixed(2)}
+              </span>
+            </div>
+            <div style={{ height: 5, borderRadius: 999, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+              <div style={{ width: `${lossPct}%`, height: "100%", background: lossPct > 80 ? "var(--neg)" : "var(--amber)" }} />
+            </div>
+            <div style={{ fontSize: 10, color: "var(--text-mute)", marginTop: 3 }}>손실 한도까지 {usd(Math.max(0, rs.maxDailyLossUsd - loss))} 남음</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolsCard() {
+  const tools = [
+    { t: "리밸런스 도우미", d: "글로벌↔KR 편중 해소에 얼마를 어느 코인으로 옮길지 계산" },
+    { t: "입출금 게이트 조회", d: "코인별 거래소 입금·출금 열림 여부를 한눈에 (실행 전 확인)" },
+    { t: "긴급 청산·헷지 정리", d: "열린 포지션을 즉시 시장가 청산 / 헷지만 정리" },
+    { t: "KRW 리패트리에이션", d: "원화 회수(오프램프) 한도·환전 비용 추적" },
+    { t: "알림(텔레그램)", d: "임계 순수익 돌파·입출금 중단·에러를 폰으로" },
+    { t: "거래·P&L 기록", d: "탐지 엣지 vs 실제 포착, 실수수료 대조, 히트율" },
+  ];
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>도구 (추천)</div>
+      <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 10 }}>여기에 붙이면 좋은 관제 도구들 — 원하는 걸 만들어 드립니다</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {tools.map((x) => (
+          <div key={x.t} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+            <span style={{ marginTop: 5, width: 5, height: 5, borderRadius: 999, background: "var(--brand)", flex: "0 0 auto" }} />
+            <div>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{x.t}</div>
+              <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{x.d}</div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
