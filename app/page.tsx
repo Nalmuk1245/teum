@@ -621,6 +621,11 @@ function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Opportunity
             <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{o.note}</span>
           )}
           {isApr && o.fundingMeta && <FundingCountdown meta={o.fundingMeta} />}
+          {o.transferRisk && o.transferRisk.hedgeAdvised && (
+            <span style={{ color: "var(--amber)", fontSize: 11, fontWeight: 600 }}>
+              전송 변동 ±{o.transferRisk.driftPct.toFixed(2)}% · 헷지 권장
+            </span>
+          )}
           {o.transfer?.blocked && (
             <span style={{ color: "var(--neg)", fontSize: 11, fontWeight: 600 }}>입출금 중단</span>
           )}
@@ -905,6 +910,23 @@ function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportuni
           {!opp.hasPerp && (
             <div style={{ marginTop: 6, color: "var(--amber)", fontSize: 11 }}>
               선물 없음 — 무헷지(전송 중 가격 노출). 빠른 코인 소액만 권장.
+            </div>
+          )}
+          {/* Transfer-window risk — expected premium drift over the in-flight ETA */}
+          {opp.transferRisk && opp.transferRisk.driftPct > 0.01 && (
+            <div
+              style={{
+                marginTop: 8, padding: "8px 10px", borderRadius: 8, fontSize: 11.5,
+                background: opp.transferRisk.hedgeAdvised && !hedgeOn ? "var(--neg-soft)" : "var(--card-2)",
+                color: opp.transferRisk.hedgeAdvised && !hedgeOn ? "var(--neg)" : "var(--text-dim)",
+              }}
+            >
+              전송창 리스크 — 약 {opp.transferRisk.etaMin}분 이동 중 프리미엄 <b className="tnum">±{opp.transferRisk.driftPct.toFixed(2)}%</b> 변동 예상 (순수익 {pct(opp.netPct)})
+              {opp.transferRisk.hedgeAdvised && (
+                <div style={{ marginTop: 3, fontWeight: 600 }}>
+                  {hedgeOn ? "✓ 헷지로 이 리스크를 상쇄합니다" : "⚠ 변동이 순수익보다 큼 — 헷지 ON 권장"}
+                </div>
+              )}
             </div>
           )}
 

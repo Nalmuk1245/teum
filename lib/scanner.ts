@@ -66,7 +66,20 @@ export async function scanAll(): Promise<Opportunity[]> {
   for (const o of opps) {
     if (o.mock) continue;
     seen.add(o.id);
-    o.persistence = recordGap(o.id, o.netPct, ts);
+    o.persistence = recordGap(o.id, o.netPct, o.grossPct, ts);
+    // Transfer-window risk: the premium you actually capture is at SELL time,
+    // ETA minutes after buy. Model the expected drift as σ_per_min × √ETA
+    // (random-walk). If that swamps the edge, a hedge (short perp during the
+    // transfer) is advised. Funding/cross legs settle instantly → no window.
+    if (o.transfer && o.kind === "kimchi") {
+      const etaMin = o.transfer.etaMin;
+      const drift = (o.persistence?.volPctPerMin ?? 0) * Math.sqrt(Math.max(1, etaMin));
+      o.transferRisk = {
+        etaMin,
+        driftPct: drift,
+        hedgeAdvised: !!o.hasPerp && drift > o.netPct, // risk exceeds the edge
+      };
+    }
   }
   pruneHistory(seen, ts);
   const score = (o: Opportunity) => (o.mock ? o.netPct : o.netPct * confidence(o.persistence));

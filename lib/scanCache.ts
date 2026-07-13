@@ -22,6 +22,9 @@ type Cache = {
 const g = globalThis as unknown as { __arbScanCache?: Cache };
 g.__arbScanCache ??= { opps: [], ts: 0, refreshing: false, loop: null };
 const C = g.__arbScanCache;
+// On (re)load, drop any prior interval so a hot-reload picks up new code — the
+// old setInterval would otherwise keep calling a stale scanAll closure forever.
+if (C.loop) { clearInterval(C.loop); C.loop = null; }
 
 async function refresh(): Promise<void> {
   if (C.refreshing) return; // dedupe concurrent refreshes
