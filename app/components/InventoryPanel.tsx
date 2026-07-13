@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Portfolio, VenueBalance } from "@/lib/types";
 import { usd } from "@/lib/format";
 
-const VLABEL: Record<string, string> = { binance: "Binance", upbit: "Upbit", bithumb: "Bithumb", wallet: "개인지갑" };
+const VLABEL: Record<string, string> = { binance: "Binance", upbit: "Upbit", bithumb: "Bithumb", bybit: "Bybit", okx: "OKX", wallet: "개인지갑" };
 const krw = (v: number) => `₩${Math.round(v).toLocaleString("en-US")}`;
 
 function usePortfolio(): Portfolio | null {

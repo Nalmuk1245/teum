@@ -4,7 +4,7 @@ import { CONFIG, TAG_REQUIRED } from "@/lib/config";
 import { sendToken, walletAddress } from "@/lib/wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
-import { binanceSpot, binancePerp, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, checkDeposit } from "@/lib/orders";
+import { binanceSpot, binancePerp, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry, recordPnl } from "@/lib/risk";
@@ -86,6 +86,8 @@ async function runStep(
       }
       const r =
         buy.venue === "binance" ? await binanceSpot(opp.base, "BUY", { quoteUsd: sizeUsd })
+        : buy.venue === "bybit" ? await bybitOrder(opp.base, "BUY", { quoteUsd: sizeUsd })
+        : buy.venue === "okx" ? await okxOrder(opp.base, "BUY", { quoteUsd: sizeUsd })
         : buy.venue === "upbit" ? await upbitOrder(opp.base, "bid", { priceKrw: qty * (buy.price || 0) })
         : buy.venue === "bithumb" ? await bithumbOrder(opp.base, "bid", qty)
         : null;
@@ -138,6 +140,8 @@ async function runStep(
       }
       const call =
         buy?.venue === "binance" ? binanceWithdraw(opp.base, net, dest, qty, tag ?? undefined)
+        : buy?.venue === "bybit" ? bybitWithdraw(opp.base, net, dest, qty, tag ?? undefined)
+        : buy?.venue === "okx" ? okxWithdraw(opp.base, net, dest, qty, tag ?? undefined)
         : buy?.venue === "upbit" ? upbitWithdraw(opp.base, net, dest, qty, tag ?? undefined)
         : buy?.venue === "bithumb" ? bithumbWithdraw(opp.base, dest, qty, tag ?? undefined)
         : null;
@@ -206,6 +210,8 @@ async function runStep(
       }
       const r =
         sell.venue === "binance" ? await binanceSpot(opp.base, "SELL", { qty })
+        : sell.venue === "bybit" ? await bybitOrder(opp.base, "SELL", { qty })
+        : sell.venue === "okx" ? await okxOrder(opp.base, "SELL", { qty })
         : sell.venue === "upbit" ? await upbitOrder(opp.base, "ask", { volume: qty })
         : sell.venue === "bithumb" ? await bithumbOrder(opp.base, "ask", qty)
         : null;

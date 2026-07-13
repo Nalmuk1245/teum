@@ -61,9 +61,49 @@ async function binanceDeposit(base: string, network: string): Promise<DepositAdd
   }
 }
 
+async function bybitDeposit(base: string, chain: string): Promise<DepositAddress | null> {
+  const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
+  if (!key || !secret) return null;
+  try {
+    const ts = String(Date.now()), recv = "5000";
+    const query = new URLSearchParams({ coin: base, chainType: chain }).toString();
+    const sig = crypto.createHmac("sha256", secret).update(ts + key + recv + query).digest("hex");
+    const res = await fetch(`https://api.bybit.com/v5/asset/deposit/query-address?${query}`, {
+      headers: { "X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sig },
+      cache: "no-store",
+    });
+    const j = (await res.json()) as { retCode: number; result?: { chains?: Array<{ addressDeposit?: string; tagDeposit?: string }> } };
+    const c = j.result?.chains?.[0];
+    if (j.retCode !== 0 || !c?.addressDeposit) return null;
+    return { address: c.addressDeposit, tag: c.tagDeposit || null };
+  } catch { return null; }
+}
+
+async function okxDeposit(base: string, chain: string): Promise<DepositAddress | null> {
+  const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
+  if (!key || !secret || !pass) return null;
+  try {
+    const path = `/api/v5/asset/deposit-address?ccy=${base}`;
+    const ts = new Date().toISOString();
+    const sig = crypto.createHmac("sha256", secret).update(ts + "GET" + path).digest("base64");
+    const res = await fetch(`https://www.okx.com${path}`, {
+      headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sig, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
+      cache: "no-store",
+    });
+    const j = (await res.json()) as { code: string; data?: Array<{ addr: string; chain: string; selected: boolean; tag?: string; memo?: string }> };
+    if (j.code !== "0") return null;
+    // Match the requested chain (OKX chain = "BASE-Network"), else first selected.
+    const d = j.data?.find((x) => x.chain?.toUpperCase().includes(chain.toUpperCase()) && x.selected) ?? j.data?.find((x) => x.selected) ?? j.data?.[0];
+    if (!d?.addr) return null;
+    return { address: d.addr, tag: d.tag || d.memo || null };
+  } catch { return null; }
+}
+
 /** Deposit address (+tag) at `venue` for `base` on network `net`. null = keys/unsupported. */
 export async function fetchDepositAddress(venue: Venue, base: string, net: string): Promise<DepositAddress | null> {
   if (venue === "upbit") return upbitDeposit(base, net);
   if (venue === "binance") return binanceDeposit(base, net);
+  if (venue === "bybit") return bybitDeposit(base, net);
+  if (venue === "okx") return okxDeposit(base, net);
   return null; // bithumb private API TODO
 }

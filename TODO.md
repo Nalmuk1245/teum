@@ -31,8 +31,8 @@
 ## 🟡 P2 — 전략 확장
 - [x] **cross-cex** — 바이비트/OKX 어댑터(티커+오더북) + 실전략 (거래소간 갭, 양다리 USDT, 유동성·새니티 필터, 송금 게이트, 실호가 견적까지 연동)
 - [x] **김프 멀티글로벌** — (업비트|빗썸) × (바낸|바이비트|OKX) 조합 중 best-net 선택. 헷지는 코인 기준 Binance perp 유지. 라이브 오버레이도 글로벌 다리 일반화(quote==USDT)
-- [ ] 바이비트/OKX 서명 주문·출금·잔고 (지금 글로벌 다리로 채택되면 라이브 하드페일)
-- [ ] cross-cex 실주문 배선 (bybit/okx 서명 주문·출금 — 지금 라이브 하드페일)
+- [x] **바이비트/OKX 서명** — v5 주문(현물 시장가)·출금·잔고·입금주소 배선. exec-step 매수/매도/출금 라우팅, balances 글로벌 다리로 편입, deposits 입금주소. 키(BYBIT_*/OKX_*) 없으면 휴면
+
 - [x] **funding-basis** — 크로스벤유 펀딩 차익 (lighter/binance/bybit/hyperliquid, 8h 정규화·예측 레이트·정산 카운트다운·손익분기, 전용 탭) — 모니터링 전용
 - [ ] 펀딩 실행 배선 — HL/Lighter 서명 주문 (perp DEX SDK)
 - [x] **cex-dex 탐지 (OKX DEX API)** — OKX 어그리게이터 견적(멀티DEX 최적라우팅, 실행가 amountOut)을 CEX bid/ask와 양방향 비교, 실가스(eth_gasPrice×견적 gas×ETH가) + 테이커 + MEV버퍼 반영 net. 유니버스 9코인(tokens.ts∩바낸), 60s TTL(레이트리밋), 코인당 최적 방향만. OKX_WEB3_* 키 없으면 휴면 — 모니터링 전용

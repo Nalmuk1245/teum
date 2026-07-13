@@ -448,3 +448,115 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
   }
   return sim(`${venue} ${base} 입금 확인 (미배선)`, false); // 그 외 venue — live → fail via sim
 }
+
+// ── Bybit (v5, HMAC-SHA256) ───────────────────────────────────────────────────
+// Sign: HMAC(timestamp + apiKey + recvWindow + payload). POST payload = JSON body,
+// GET payload = query string.
+async function bybitSigned(method: "GET" | "POST", path: string, params: Record<string, string | number>) {
+  const key = process.env.BYBIT_KEY!, secret = process.env.BYBIT_SECRET!;
+  const ts = String(Date.now());
+  const recv = "5000";
+  const payload = method === "GET"
+    ? new URLSearchParams(params as Record<string, string>).toString()
+    : JSON.stringify(params);
+  const sign = crypto.createHmac("sha256", secret).update(ts + key + recv + payload).digest("hex");
+  const headers: Record<string, string> = {
+    "X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sign,
+  };
+  let url = `https://api.bybit.com${path}`;
+  const init: RequestInit = { method, headers, cache: "no-store" };
+  if (method === "GET") url += `?${payload}`;
+  else { headers["Content-Type"] = "application/json"; init.body = payload; }
+  const res = await fetch(url, init);
+  return res.json();
+}
+
+export async function bybitOrder(base: string, side: "BUY" | "SELL", opts: { quoteUsd?: number; qty?: number }): Promise<OrderResult> {
+  const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
+  const label = side === "SELL" ? "매도" : "매수";
+  if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bybit ${base} ${label}`, !!(key && secret));
+  try {
+    // Spot market: BUY uses marketUnit=quoteCoin (spend USDT), SELL uses base qty.
+    const p: Record<string, string | number> = {
+      category: "spot", symbol: `${base}USDT`, side: side === "BUY" ? "Buy" : "Sell",
+      orderType: "Market", marketUnit: side === "BUY" ? "quoteCoin" : "baseCoin",
+      qty: String(side === "BUY" ? (opts.quoteUsd ?? 0) : (opts.qty ?? 0)),
+    };
+    const j = await bybitSigned("POST", "/v5/order/create", p);
+    const ok = j.retCode === 0 && j.result?.orderId;
+    return { ok: !!ok, dryRun: false, id: ok ? String(j.result.orderId) : null, message: ok ? `Bybit ${base} ${label} 체결` : (j.retMsg || "주문 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+  }
+}
+
+export async function bybitWithdraw(base: string, chain: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
+  const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bybit ${base} 출금 → ${address.slice(0, 10)}…`, !!(key && secret));
+  try {
+    const p: Record<string, string | number> = {
+      coin: base, chain, address, amount: String(amount), timestamp: Date.now(),
+      ...(tag ? { tag } : {}),
+    };
+    const j = await bybitSigned("POST", "/v5/asset/withdraw/create", p);
+    const ok = j.retCode === 0 && j.result?.id;
+    return { ok: !!ok, dryRun: false, id: ok ? String(j.result.id) : null, message: ok ? `Bybit ${base} 출금 요청` : (j.retMsg || "출금 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+  }
+}
+
+// ── OKX (v5, HMAC-SHA256 + passphrase) ────────────────────────────────────────
+async function okxSigned(method: "GET" | "POST", path: string, body?: Record<string, unknown>) {
+  const key = process.env.OKX_KEY!, secret = process.env.OKX_SECRET!, pass = process.env.OKX_PASSPHRASE!;
+  const ts = new Date().toISOString();
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const sign = crypto.createHmac("sha256", secret).update(ts + method + path + bodyStr).digest("base64");
+  const res = await fetch(`https://www.okx.com${path}`, {
+    method,
+    headers: {
+      "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sign, "OK-ACCESS-TIMESTAMP": ts,
+      "OK-ACCESS-PASSPHRASE": pass, "Content-Type": "application/json",
+    },
+    body: method === "POST" ? bodyStr : undefined,
+    cache: "no-store",
+  });
+  return res.json();
+}
+
+export async function okxOrder(base: string, side: "BUY" | "SELL", opts: { quoteUsd?: number; qty?: number }): Promise<OrderResult> {
+  const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
+  const label = side === "SELL" ? "매도" : "매수";
+  if (CONFIG.DRY_RUN || !key || !secret || !pass) return sim(`OKX ${base} ${label}`, !!(key && secret && pass));
+  try {
+    // Spot market: BUY tgtCcy=quote_ccy (spend USDT), SELL sz = base qty.
+    const body = {
+      instId: `${base}-USDT`, tdMode: "cash", side: side.toLowerCase(), ordType: "market",
+      tgtCcy: side === "BUY" ? "quote_ccy" : "base_ccy",
+      sz: String(side === "BUY" ? (opts.quoteUsd ?? 0) : (opts.qty ?? 0)),
+    };
+    const j = await okxSigned("POST", "/api/v5/trade/order", body);
+    const d = j.data?.[0];
+    const ok = j.code === "0" && d?.sCode === "0";
+    return { ok: !!ok, dryRun: false, id: ok ? String(d.ordId) : null, message: ok ? `OKX ${base} ${label} 체결` : (d?.sMsg || j.msg || "주문 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+  }
+}
+
+export async function okxWithdraw(base: string, chain: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
+  const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
+  if (CONFIG.DRY_RUN || !key || !secret || !pass) return sim(`OKX ${base} 출금 → ${address.slice(0, 10)}…`, !!(key && secret && pass));
+  try {
+    // OKX wants chain as "BASE-Network" and the fee explicitly; amt is net.
+    const body: Record<string, unknown> = {
+      ccy: base, amt: String(amount), dest: "4" /* on-chain */, toAddr: tag ? `${address}:${tag}` : address, chain,
+    };
+    const j = await okxSigned("POST", "/api/v5/asset/withdrawal", body);
+    const d = j.data?.[0];
+    const ok = j.code === "0" && d?.wdId;
+    return { ok: !!ok, dryRun: false, id: ok ? String(d.wdId) : null, message: ok ? `OKX ${base} 출금 요청` : (j.msg || "출금 실패") };
+  } catch (e) {
+    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+  }
+}

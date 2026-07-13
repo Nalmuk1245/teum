@@ -125,6 +125,58 @@ async function upbit(px: Map<string, number>, usdKrw: number): Promise<VenueBala
 }
 
 // Bithumb private balance = v1 HMAC-SHA512 signing. TODO: wire like transfers.
+// ── Bybit (unified account, HMAC-SHA256) ──────────────────────────────────────
+async function bybit(px: Map<string, number>): Promise<VenueBalance | null> {
+  const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
+  if (!key || !secret) return null;
+  try {
+    const ts = String(Date.now()), recv = "5000";
+    const query = "accountType=UNIFIED";
+    const sig = crypto.createHmac("sha256", secret).update(ts + key + recv + query).digest("hex");
+    const r = await fetch(`https://api.bybit.com/v5/account/wallet-balance?${query}`, {
+      headers: { "X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sig },
+      cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    const j = (await r.json()) as { retCode: number; result?: { list?: Array<{ coin: Array<{ coin: string; walletBalance: string }> }> } };
+    if (j.retCode !== 0) return null;
+    let cash = 0; const coins: CoinBal[] = [];
+    for (const c of j.result?.list?.[0]?.coin ?? []) {
+      const amt = Number(c.walletBalance);
+      if (amt <= 0) continue;
+      if (STABLE.has(c.coin)) cash += amt;
+      else coins.push({ asset: c.coin, amount: amt, usdValue: usdOf(c.coin, amt, px) });
+    }
+    coins.sort((a, b) => b.usdValue - a.usdValue);
+    return { venue: "bybit", connected: true, cashLabel: "USDT", cashRaw: cash, cashUsd: cash, coins, totalUsd: cash + coins.reduce((s, c) => s + c.usdValue, 0) };
+  } catch { return null; }
+}
+
+// ── OKX (funding + trading, HMAC-SHA256 + passphrase) ─────────────────────────
+async function okx(px: Map<string, number>): Promise<VenueBalance | null> {
+  const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
+  if (!key || !secret || !pass) return null;
+  try {
+    const path = "/api/v5/account/balance";
+    const ts = new Date().toISOString();
+    const sig = crypto.createHmac("sha256", secret).update(ts + "GET" + path).digest("base64");
+    const r = await fetch(`https://www.okx.com${path}`, {
+      headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sig, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
+      cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    const j = (await r.json()) as { code: string; data?: Array<{ details?: Array<{ ccy: string; eq: string }> }> };
+    if (j.code !== "0") return null;
+    let cash = 0; const coins: CoinBal[] = [];
+    for (const d of j.data?.[0]?.details ?? []) {
+      const amt = Number(d.eq);
+      if (amt <= 0) continue;
+      if (STABLE.has(d.ccy)) cash += amt;
+      else coins.push({ asset: d.ccy, amount: amt, usdValue: usdOf(d.ccy, amt, px) });
+    }
+    coins.sort((a, b) => b.usdValue - a.usdValue);
+    return { venue: "okx", connected: true, cashLabel: "USDT", cashRaw: cash, cashUsd: cash, coins, totalUsd: cash + coins.reduce((s, c) => s + c.usdValue, 0) };
+  } catch { return null; }
+}
+
 async function bithumb(): Promise<VenueBalance | null> {
   return null;
 }
@@ -148,20 +200,24 @@ async function liveUsdKrw(): Promise<number> {
 export async function fetchPortfolio(): Promise<Portfolio> {
   const usdKrw = await liveUsdKrw();
   const px = await priceMap();
-  const [bn, up, bt, wallet] = await Promise.all([
-    binance(px), upbit(px, usdKrw), bithumb(), fetchWalletBalance(px),
+  const [bn, up, bt, by, ok, wallet] = await Promise.all([
+    binance(px), upbit(px, usdKrw), bithumb(), bybit(px), okx(px), fetchWalletBalance(px),
   ]);
 
-  const anyLive = !!(bn || up || bt || wallet);
+  const anyLive = !!(bn || up || bt || by || ok || wallet);
   if (!anyLive && CONFIG.USE_MOCK) return mockPortfolio(usdKrw);
 
+  // Global (USDT-side) venues first, then KR. Only include bybit/okx when connected.
   const venues: VenueBalance[] = [
     bn ?? disconnected("binance", "USDT"),
+    ...(by ? [by] : []),
+    ...(ok ? [ok] : []),
     up ?? disconnected("upbit", "KRW"),
     bt ?? disconnected("bithumb", "KRW"),
   ];
-  const globalUsd = venues.filter((v) => v.venue === "binance").reduce((s, v) => s + v.totalUsd, 0);
-  const krUsd = venues.filter((v) => v.venue !== "binance").reduce((s, v) => s + v.totalUsd, 0);
+  const KR = new Set(["upbit", "bithumb"]);
+  const globalUsd = venues.filter((v) => !KR.has(v.venue)).reduce((s, v) => s + v.totalUsd, 0);
+  const krUsd = venues.filter((v) => KR.has(v.venue)).reduce((s, v) => s + v.totalUsd, 0);
   const walletUsd = wallet?.totalUsd ?? 0;
   const exch = globalUsd + krUsd;
   return {
