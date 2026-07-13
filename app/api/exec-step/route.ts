@@ -8,6 +8,7 @@ import { binanceSpot, binancePerp, binanceWithdraw, binanceWithdrawTx, upbitOrde
 import { tokenFor } from "@/lib/tokens";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry, recordPnl } from "@/lib/risk";
+import { notifyNow } from "@/lib/telegram";
 import { estimateLegSlippage } from "@/lib/quote";
 import { fetchUsdKrw } from "@/lib/exchanges";
 import type { StepId } from "@/lib/executionPlan";
@@ -279,6 +280,11 @@ export async function POST(req: Request) {
     const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0, {
       rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills,
     });
+    // Live failure on a money step → phone alert (LIVE only; DRY sims fail loudly
+    // in the UI already and would be noise).
+    if (!result.ok && !CONFIG.DRY_RUN && !body.rollback) {
+      void notifyNow(`⚠️ <b>${body.opportunity.base}</b> ${body.stepId} 실패\n${result.message ?? ""}`);
+    }
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json(

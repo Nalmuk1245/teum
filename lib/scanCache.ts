@@ -8,8 +8,10 @@
 
 import { scanAll } from "./scanner";
 import type { Opportunity } from "./types";
+import { notify, telegramConfigured } from "./telegram";
 
 const REFRESH_MS = 8000;
+const ALERT_NET_PCT = 0.5; // matches the client board threshold
 
 type Cache = {
   opps: Opportunity[];
@@ -25,12 +27,33 @@ async function refresh(): Promise<void> {
   if (C.refreshing) return; // dedupe concurrent refreshes
   C.refreshing = true;
   try {
-    C.opps = await scanAll();
+    const next = await scanAll();
+    if (telegramConfigured()) void alertOnScan(next);
+    C.opps = next;
     C.ts = Date.now();
   } catch {
     /* keep the previous snapshot on failure */
   } finally {
     C.refreshing = false;
+  }
+}
+
+// Phone alerts from the server loop — fires whether or not the site is open.
+async function alertOnScan(opps: Opportunity[]): Promise<void> {
+  for (const o of opps) {
+    if (o.mock || o.kind === "funding-basis") continue;
+    // Threshold crossing — cooldown keeps a hovering coin from spamming.
+    if (o.netPct >= ALERT_NET_PCT) {
+      const [buy, sell] = o.legs;
+      void notify(
+        `net:${o.id}`,
+        `🔔 <b>${o.base}</b> 갭 <b>+${o.netPct.toFixed(2)}%</b>\n${buy?.venue} → ${sell?.venue} · ${o.kind}${o.persistence?.heldSec ? ` · 지속 ${o.persistence.heldSec}s` : ""}`,
+      );
+    }
+    // Settlement gate went down while an edge exists.
+    if (o.transfer?.blocked && o.netPct > 0) {
+      void notify(`gate:${o.id}`, `⛔ <b>${o.base}</b> 입출금 중단 — 실행 불가 (net +${o.netPct.toFixed(2)}%)`);
+    }
   }
 }
 

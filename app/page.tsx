@@ -1113,6 +1113,7 @@ function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed: boole
       {runs.length > 0
         ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
+      <TelegramCard />
       <GatesCard />
       <ToolsCard />
     </div>
@@ -1285,11 +1286,46 @@ function GatesCard() {
   );
 }
 
+function TelegramCard() {
+  const [state, setState] = useState<{ configured: boolean } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { fetch("/api/telegram-test").then((r) => r.json()).then(setState).catch(() => {}); }, []);
+  const test = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const j = await (await fetch("/api/telegram-test", { method: "POST" })).json();
+      setMsg(j.ok ? "전송됨 — 텔레그램 확인" : j.error ?? "실패");
+    } finally { setBusy(false); }
+  };
+  const on = state?.configured;
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>텔레그램 알림</span>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: on ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ fontSize: 11, color: on ? "var(--pos)" : "var(--text-mute)" }}>{on ? "연결됨" : "키 필요"}</span>
+        <span style={{ flex: 1 }} />
+        {on && (
+          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+            {busy ? "…" : "테스트 발송"}
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-mute)", marginTop: 6 }}>
+        {on
+          ? "임계 순수익 돌파·입출금 중단·실행 에러를 폰으로 — 사이트를 안 켜둬도 서버가 감시합니다."
+          : ".env.local에 TELEGRAM_BOT_TOKEN·TELEGRAM_CHAT_ID를 넣으면 켜집니다 (@BotFather로 봇 생성)."}
+      </div>
+      {msg && <div style={{ fontSize: 11, color: "var(--brand-2)", marginTop: 6 }}>{msg}</div>}
+    </div>
+  );
+}
+
 function ToolsCard() {
   const tools = [
     { t: "긴급 청산·헷지 정리", d: "열린 포지션을 즉시 시장가 청산 / 헷지만 정리" },
     { t: "KRW 리패트리에이션", d: "원화 회수(오프램프) 한도·환전 비용 추적" },
-    { t: "알림(텔레그램)", d: "임계 순수익 돌파·입출금 중단·에러를 폰으로" },
     { t: "거래·P&L 기록", d: "탐지 엣지 vs 실제 포착, 실수수료 대조, 히트율" },
   ];
   return (
