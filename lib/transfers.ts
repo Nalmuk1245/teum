@@ -17,6 +17,7 @@ import crypto from "crypto";
 import type { TransferStatus, Venue, WalletStatus } from "./types";
 import { BINANCE_NET, chainKeyFromLabel } from "./chains";
 import { COIN_NETWORK, COIN_NETWORK_DEFAULT } from "./config";
+import { setLiveNetwork } from "./networks";
 
 // ── Bithumb (public) ──────────────────────────────────────────────────────────
 async function fetchBithumb(): Promise<Map<string, WalletStatus>> {
@@ -101,7 +102,7 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       coin: string;
       depositAllEnable: boolean;
       withdrawAllEnable: boolean;
-      networkList?: Array<{ network: string; depositEnable: boolean; withdrawEnable: boolean }>;
+      networkList?: Array<{ network: string; name?: string; isDefault?: boolean; depositEnable: boolean; withdrawEnable: boolean; withdrawFee?: string; minConfirm?: number }>;
     }>;
     if (!Array.isArray(arr)) return null;
     const m = new Map<string, WalletStatus>();
@@ -112,10 +113,20 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       // strands at the withdraw step. Match our chain's networkList entry.
       const chainKey = chainKeyFromLabel((COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).chain);
       const wanted = BINANCE_NET[chainKey];
-      const net = wanted ? c.networkList?.find((n) => n.network === wanted) : undefined;
+      const net = (wanted ? c.networkList?.find((n) => n.network === wanted) : undefined)
+        ?? c.networkList?.find((n) => n.isDefault);
       m.set(c.coin, net
         ? { deposit: !!net.depositEnable, withdraw: !!net.withdrawEnable }
         : { deposit: !!c.depositAllEnable, withdraw: !!c.withdrawAllEnable });
+      // Feed the LIVE network facts (chain label, confirms, fee) so strategies +
+      // the depth quote use real values instead of the curated tables.
+      if (net) {
+        setLiveNetwork(c.coin, {
+          chain: net.name || (COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).chain,
+          confirms: net.minConfirm ?? (COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).confirms,
+          withdrawFee: net.withdrawFee ? Number(net.withdrawFee) : 0,
+        });
+      }
     }
     return m;
   } catch {

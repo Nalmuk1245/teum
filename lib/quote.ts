@@ -9,8 +9,8 @@ import {
   FEES,
   NETWORK_PCT,
   NETWORK_PCT_DEFAULT,
-  WITHDRAW_FEE_COIN,
 } from "./config";
+import { withdrawFeeCoin } from "./networks";
 import { getAdapter, fetchUsdKrw } from "./exchanges";
 
 type LevelUsd = { priceUsd: number; size: number };
@@ -111,7 +111,7 @@ export async function quoteOpportunity(
 
   const takerPct = (FEES.takerPct[buyLeg.venue] ?? 0.1) + (FEES.takerPct[sellLeg.venue] ?? 0.1);
   const fxSpreadPct = krVenue ? FEES.fxSpreadPct : 0;
-  const wFeeCoin = WITHDRAW_FEE_COIN[opp.base];
+  const wFeeCoin = withdrawFeeCoin(opp.base);
 
   // Net edge for a candidate size using the already-fetched books.
   function evalSize(sz: number) {

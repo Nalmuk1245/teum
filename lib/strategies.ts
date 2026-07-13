@@ -12,6 +12,7 @@ import {
   COIN_NETWORK, COIN_NETWORK_DEFAULT,
 } from "./config";
 import { walletStatus } from "./transfers";
+import { coinNetwork } from "./networks";
 import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS } from "./dex";
 
 export interface Strategy {
@@ -121,7 +122,7 @@ const kimchi: Strategy = {
         deposit: { venue: sellVenue, enabled: dStat ? dStat.deposit : null },
         etaMin: TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN,
         blocked: false,
-        network: COIN_NETWORK[base] ?? COIN_NETWORK_DEFAULT,
+        network: coinNetwork(base),
       };
       transfer.blocked =
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
@@ -205,7 +206,7 @@ const crossCex: Strategy = {
         deposit: { venue: hi.v, enabled: walletStatus(ctx.transfers, hi.v, base)?.deposit ?? null },
         etaMin: TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN,
         blocked: false,
-        network: COIN_NETWORK[base] ?? COIN_NETWORK_DEFAULT,
+        network: coinNetwork(base),
       };
       transfer.blocked =
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;

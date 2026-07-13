@@ -177,8 +177,37 @@ async function okx(px: Map<string, number>): Promise<VenueBalance | null> {
   } catch { return null; }
 }
 
-async function bithumb(): Promise<VenueBalance | null> {
-  return null;
+// Bithumb v1 private (HMAC-SHA512). /info/balance returns total_<coin> +
+// total_krw; coins valued in USD via the Binance price map.
+async function bithumb(px: Map<string, number>, usdKrw: number): Promise<VenueBalance | null> {
+  const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
+  if (!key || !secret) return null;
+  try {
+    const endpoint = "/info/balance";
+    const nonce = String(Date.now());
+    const body = new URLSearchParams({ endpoint, currency: "ALL" }).toString();
+    const strData = `${endpoint}${String.fromCharCode(0)}${body}${String.fromCharCode(0)}${nonce}`;
+    const sign = Buffer.from(crypto.createHmac("sha512", secret).update(strData).digest("hex")).toString("base64");
+    const res = await fetch(`https://api.bithumb.com${endpoint}`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Api-Sign": sign, "Api-Nonce": nonce, "Content-Type": "application/x-www-form-urlencoded", "api-client-type": "2" },
+      body, cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    const j = (await res.json()) as { status: string; data?: Record<string, string> };
+    if (j.status !== "0000" || !j.data) return null;
+    let cashKrw = 0; const coins: CoinBal[] = [];
+    for (const [k, v] of Object.entries(j.data)) {
+      if (!k.startsWith("total_")) continue;
+      const asset = k.slice(6).toUpperCase();
+      const amt = Number(v);
+      if (amt <= 0) continue;
+      if (asset === "KRW") cashKrw = amt;
+      else if (STABLE.has(asset)) cashKrw += amt * usdKrw; // fold stables into cash
+      else coins.push({ asset, amount: amt, usdValue: usdOf(asset, amt, px) });
+    }
+    coins.sort((a, b) => b.usdValue - a.usdValue);
+    return { venue: "bithumb", connected: true, cashLabel: "KRW", cashRaw: cashKrw, cashUsd: cashKrw / usdKrw, coins, totalUsd: cashKrw / usdKrw + coins.reduce((s, c) => s + c.usdValue, 0) };
+  } catch { return null; }
 }
 
 function disconnected(venue: VenueBalance["venue"], cashLabel: string): VenueBalance {
@@ -201,7 +230,7 @@ export async function fetchPortfolio(): Promise<Portfolio> {
   const usdKrw = await liveUsdKrw();
   const px = await priceMap();
   const [bn, up, bt, by, ok, wallet] = await Promise.all([
-    binance(px), upbit(px, usdKrw), bithumb(), bybit(px), okx(px), fetchWalletBalance(px),
+    binance(px), upbit(px, usdKrw), bithumb(px, usdKrw), bybit(px), okx(px), fetchWalletBalance(px),
   ]);
 
   const anyLive = !!(bn || up || bt || by || ok || wallet);

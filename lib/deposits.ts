@@ -105,5 +105,30 @@ export async function fetchDepositAddress(venue: Venue, base: string, net: strin
   if (venue === "binance") return binanceDeposit(base, net);
   if (venue === "bybit") return bybitDeposit(base, net);
   if (venue === "okx") return okxDeposit(base, net);
-  return null; // bithumb private API TODO
+  if (venue === "bithumb") return bithumbDeposit(base, net);
+  return null;
+}
+
+// Bithumb v1 /info/wallet_address — returns "address" (with "&tag" appended for
+// tag coins, or a separate destination_tag field depending on the coin).
+async function bithumbDeposit(base: string, net: string): Promise<DepositAddress | null> {
+  const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
+  if (!key || !secret) return null;
+  try {
+    const endpoint = "/info/wallet_address";
+    const nonce = String(Date.now());
+    const body = new URLSearchParams({ endpoint, currency: base, net_type: net }).toString();
+    const strData = `${endpoint}${String.fromCharCode(0)}${body}${String.fromCharCode(0)}${nonce}`;
+    const sign = Buffer.from(crypto.createHmac("sha512", secret).update(strData).digest("hex")).toString("base64");
+    const res = await fetch(`https://api.bithumb.com${endpoint}`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Api-Sign": sign, "Api-Nonce": nonce, "Content-Type": "application/x-www-form-urlencoded", "api-client-type": "2" },
+      body, cache: "no-store",
+    });
+    const j = (await res.json()) as { status: string; data?: { wallet_address?: string } };
+    if (j.status !== "0000" || !j.data?.wallet_address) return null;
+    // Tag coins come as "address&tag"; split on the separator.
+    const [address, tag] = j.data.wallet_address.split(/[&]/);
+    return { address, tag: tag || null };
+  } catch { return null; }
 }

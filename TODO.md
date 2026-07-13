@@ -18,14 +18,14 @@
 - [x] **스마트 청산 라이브 배선** — 지정가(바낸/업비트)+체결폴링+취소/리페그(3라운드)+프리미엄 바닥/타임아웃 시장가+라운드별 비례 숏청산. 빗썸 다리는 명시적 실패. /api/unwind에 EXEC_TOKEN·mock 가드
 - [x] 빗썸 입금 크레딧 조회 (user_transactions, searchGb=4, 시간필터)
 - [x] 실 체결가 기반 정산 (바낸 cummulativeQuoteQty·업비트 주문상세 trades → settle 실현 PnL, KRW는 라이브 환율 환산) + 라이브 시장가 슬리피지 상한(MAX_SLIPPAGE_PCT, 기본 0.5%)
-- [ ] page.tsx 컴포넌트 분리(1300줄), KIND_META/VENUE_LABEL 중복 정리
+- [ ] page.tsx 컴포넌트 분리(1900줄), KIND_META/VENUE_LABEL 중복 정리
 - [x] 바이낸스 networkList per-network 게이트 (COIN_NETWORK 체인 매칭 엔트리의 withdrawEnable/depositEnable, 미매칭시 코인 단위 폴백)
 - [ ] **로컬에서 키 넣고 실테스트 → `DRY_RUN=false`** (본인 PC, 실자금, EXEC_TOKEN 설정)
 
 ## 🟠 P1 — 게이트·상태 서명 배선 (키 넣으면 대부분 자동)
-- [ ] **빗썸 잔고** — v1 HMAC-SHA512 private (`lib/balances.ts` `bithumb()` 스텁)
-- [ ] **빗썸 입금주소** — `lib/deposits.ts` (업비트/바이낸스는 배선됨)
-- [ ] **바이낸스 networkList** — 코인별 실제 네트워크·`minConfirm`·출금비로 큐레이션 테이블 대체 (`lib/config.ts` `COIN_NETWORK`)
+- [x] **빗썸 잔고** — /info/balance (HMAC-SHA512), 자산 탭 편입
+- [x] **빗썸 입금주소** — /info/wallet_address (태그 분리)
+- [x] **바이낸스 networkList 실데이터화** — getall에서 체인명·minConfirm·withdrawFee 추출 → lib/networks.ts 게터(라이브 우선, 큐레이션 폴백), 전략·견적이 참조
 - [ ] **개인지갑 토큰 보유** — ERC20/SPL 잔고 조회 (`lib/walletBalances.ts`, 지금 네이티브만)
 
 ## 🟡 P2 — 전략 확장
