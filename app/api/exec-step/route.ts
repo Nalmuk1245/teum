@@ -9,6 +9,7 @@ import { tokenFor } from "@/lib/tokens";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry, recordPnl } from "@/lib/risk";
 import { notifyNow } from "@/lib/telegram";
+import { recordTrade } from "@/lib/trades";
 import { estimateLegSlippage } from "@/lib/quote";
 import { fetchUsdKrw } from "@/lib/exchanges";
 import type { StepId } from "@/lib/executionPlan";
@@ -221,6 +222,13 @@ async function runStep(
     case "close":
       return await binancePerp(opp.base, "CLOSE", qty);
     case "settle": {
+      const logTrade = (realizedNetPct: number | null, realizedPnlUsd: number | null) =>
+        void recordTrade({
+          ts: Date.now(), base: opp.base, kind: opp.kind,
+          route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
+          sizeUsd, detectedNetPct: opp.netPct, realizedNetPct, realizedPnlUsd,
+          hedged: !!opp.hasPerp, dryRun: dry, status: "done",
+        });
       // Prefer REAL fills threaded from the buy/sell steps; KRW legs convert at
       // the venue's live USDT/KRW. Falls back to the scan-time estimate.
       const f = opts.fills;
@@ -237,10 +245,12 @@ async function runStep(
           const pnl = sellUsd - buyUsd;
           const pct = (pnl / buyUsd) * 100;
           if (!dry) recordPnl(pnl); // feeds the daily-loss limit
+          logTrade(pct, pnl);
           return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 실체결 기반` };
         }
       }
       const pnl = (opp.netPct / 100) * sizeUsd;
+      logTrade(null, null); // no real fills → estimate only, don't pollute realized stats
       return { ok: true, dryRun: dry, message: `정산 · 순수익 ${opp.netPct >= 0 ? "+" : ""}${opp.netPct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 추정치` };
     }
     default:

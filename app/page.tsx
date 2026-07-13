@@ -1135,6 +1135,7 @@ function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed: boole
       {runs.length > 0
         ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
+      <PnlCard />
       <TelegramCard />
       <GatesCard />
       <ToolsCard />
@@ -1308,6 +1309,61 @@ function GatesCard() {
   );
 }
 
+type TradeRec = { ts: number; base: string; route: string; sizeUsd: number; detectedNetPct: number; realizedNetPct: number | null; realizedPnlUsd: number | null; dryRun: boolean; kind: string };
+type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
+function PnlCard() {
+  const [data, setData] = useState<{ trades: TradeRec[]; stats: TradeStats } | null>(null);
+  useEffect(() => {
+    const load = () => fetch("/api/trades", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
+    void load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, []);
+  const st = data?.stats;
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>거래 · 손익</span>
+        {st && st.dryCount > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>모의 {st.dryCount}건 포함</span>}
+      </div>
+      {!st || st.count === 0 ? (
+        <div style={{ color: "var(--text-mute)", fontSize: 12 }}>기록된 거래 없음 — 실행이 정산되면 여기에 쌓입니다</div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+            <Metric label="실현 손익" value={`${st.realizedPnlUsd >= 0 ? "+" : "−"}$${Math.abs(st.realizedPnlUsd).toFixed(2)}`} tone={st.realizedPnlUsd >= 0 ? "var(--pos)" : "var(--neg)"} />
+            <Metric label="히트율" value={`${st.hitRatePct}%`} sub={`${st.wins}/${st.count - st.dryCount || st.count}`} />
+            <Metric label="탐지 vs 실현" value={`−${st.avgSlipPct.toFixed(2)}%`} sub="평균 누수" tone={st.avgSlipPct > 0.3 ? "var(--amber)" : "var(--text)"} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {data.trades.slice(0, 8).map((t, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", padding: "4px 0", borderTop: "1px solid var(--border)", fontSize: 11.5 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <b>{t.base}</b> <span style={{ color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>
+                </span>
+                <span className="tnum" style={{ color: "var(--text-mute)" }}>{usd(t.sizeUsd)}</span>
+                <span className="tnum" style={{ minWidth: 60, textAlign: "right", color: (t.realizedNetPct ?? t.detectedNetPct) >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                  {t.realizedNetPct != null ? `${t.realizedNetPct >= 0 ? "+" : ""}${t.realizedNetPct.toFixed(2)}%` : `~${t.detectedNetPct.toFixed(2)}%`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+  return (
+    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}>
+      <div style={{ fontSize: 10, color: "var(--text-mute)" }}>{label}</div>
+      <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: tone ?? "var(--text)" }}>{value}</div>
+      {sub && <div style={{ fontSize: 9.5, color: "var(--text-mute)" }}>{sub}</div>}
+    </div>
+  );
+}
+
 function TelegramCard() {
   const [state, setState] = useState<{ configured: boolean } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -1348,7 +1404,6 @@ function ToolsCard() {
   const tools = [
     { t: "긴급 청산·헷지 정리", d: "열린 포지션을 즉시 시장가 청산 / 헷지만 정리" },
     { t: "KRW 리패트리에이션", d: "원화 회수(오프램프) 한도·환전 비용 추적" },
-    { t: "거래·P&L 기록", d: "탐지 엣지 vs 실제 포착, 실수수료 대조, 히트율" },
   ];
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
