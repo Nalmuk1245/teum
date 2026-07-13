@@ -63,9 +63,12 @@ async function runStep(
   const dry = CONFIG.DRY_RUN;
   const buy = opp.legs.find((l) => l.side === "buy");
   const sell = opp.legs.find((l) => l.side === "sell");
-  const bnPrice = opp.legs.find((l) => l.venue === "binance")?.price ?? 0;
+  // USD price of the coin from any USDT-quoted leg — works for kimchi (global
+  // leg), cross-cex (both USDT, no binance leg), and cex-dex alike. NOT tied to
+  // Binance, so a bybit↔okx cross derives size correctly.
+  const usdPrice = opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
   // Prefer the fill-adjusted qty threaded from prior steps; fall back to nominal.
-  const qty = opts.qty ?? (bnPrice ? sizeUsd / bnPrice : 0);
+  const qty = opts.qty ?? (usdPrice ? sizeUsd / usdPrice : 0);
   if (qty <= 0) return fail("수량 0 — 이전 단계 체결량 없음");
 
   if (opts.rollback) return undoStep(stepId, opp, qty);
@@ -73,6 +76,7 @@ async function runStep(
   switch (stepId) {
     case "buy": {
       if (!buy) return fail("매수 다리 없음");
+      if (!(sizeUsd > 0)) return fail("주문 규모가 0 이하");
       if (isKilled()) return fail("킬 스위치 활성 — 신규 실행 차단");
       const risk = checkEntry(sizeUsd);
       if (risk) return fail(`리스크 한도 — ${risk}`);

@@ -34,8 +34,9 @@ const POLLS_PER_ROUND = 6; // ~12s per round
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function unwind(opp: Opportunity, remainingQty: number, fraction: number): Promise<UnwindResult> {
+export async function unwind(opp: Opportunity, remainingQty: number, fractionIn: number): Promise<UnwindResult> {
   const dry = CONFIG.DRY_RUN;
+  const fraction = Math.min(1, Math.max(0, fractionIn)); // (0,1] — never over-sell or negative
   if (!dry) return liveUnwind(opp, remainingQty, fraction);
 
   const price = opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
@@ -74,7 +75,8 @@ export async function unwind(opp: Opportunity, remainingQty: number, fraction: n
 // → poll fills, closing the short in proportion after each round → if still open
 // at round timeout, cancel and re-peg at the fresh best ask. After ROUNDS (or if
 // the live premium decays under PREMIUM_FLOOR) the remainder goes market.
-async function liveUnwind(opp: Opportunity, remainingQty: number, fraction: number): Promise<UnwindResult> {
+async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: number): Promise<UnwindResult> {
+  const fraction = Math.min(1, Math.max(0, fractionIn));
   const sellLeg = opp.legs.find((l) => l.side === "sell");
   const usdtLeg = opp.legs.find((l) => l.quote === "USDT");
   if (!sellLeg) throw new Error("매도 다리 없음");
