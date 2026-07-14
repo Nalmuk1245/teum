@@ -306,8 +306,16 @@ const fundingBasis: Strategy = {
 
       // One-time round trip: taker to open + close on BOTH legs (4 fills).
       const pf = FEES.perpTakerPct;
+      // Entry basis: you SHORT hi and LONG lo. If lo's mark > hi's mark you enter
+      // at an adverse spread that converges against you — a one-time realized
+      // cost often bigger than the funding captured. Add the unfavorable side.
+      const marks = ctx.marks?.get(base);
+      const hiMark = marks?.[hi.venue], loMark = marks?.[lo.venue];
+      const entryBasisPct = (hiMark && loMark && hiMark > 0)
+        ? Math.max(0, (loMark - hiMark) / ((hiMark + loMark) / 2)) * 100
+        : 0;
       const roundTripPct =
-        2 * ((pf[hi.venue] ?? 0.05) + (pf[lo.venue] ?? 0.05));
+        2 * ((pf[hi.venue] ?? 0.05) + (pf[lo.venue] ?? 0.05)) + entryBasisPct;
       const dailyPct = grossApr / 365;
       const breakEvenDays = dailyPct > 0 ? roundTripPct / dailyPct : Infinity;
 
@@ -340,7 +348,7 @@ const fundingBasis: Strategy = {
         // Funding pays only at the settlement snapshot — surface the SHORT
         // leg's next one + both intervals so entries can be timed.
         fundingMeta: { nextTs: hi.nextTs, shortIntervalH: hi.intervalH, longIntervalH: lo.intervalH },
-        note: `숏 ${hi.venue}(${hi.intervalH ?? "?"}h${hi.predicted ? "·예측" : ""}) / 롱 ${lo.venue}(${lo.intervalH ?? "?"}h) · 진입 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"} · 감쇠반영(반감 ${FUNDING_HALF_DAYS}일) · 진입 베이시스 별도 확인`,
+        note: `숏 ${hi.venue}(${hi.intervalH ?? "?"}h${hi.predicted ? "·예측" : ""}) / 롱 ${lo.venue}(${lo.intervalH ?? "?"}h) · 진입 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"} · 감쇠반영(반감 ${FUNDING_HALF_DAYS}일)${entryBasisPct > 0.01 ? ` · 진입베이시스 ${entryBasisPct.toFixed(2)}%` : (hiMark && loMark ? " · 베이시스 유리" : " · 베이시스 미확인")}`,
         ts: now(),
       });
     }
@@ -413,7 +421,10 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
           netPct: net,
           notionalCapUsd: DEXDEX_REF_USD,
           executable: false, // swap execution phase not wired yet
-          note: `${uni.chain} · OKX 라우팅 · 가스 $${gasUsd.toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준`,
+          // Stale-quote warning: OKX DEX quote is up to CEXDEX_TTL_MS + sweep old
+          // vs ~12s blocks — real dislocations close within 1-2 blocks, so the
+          // board edge is indicative only. Age shown so it's never mistaken live.
+          note: `${uni.chain} · OKX 라우팅 · 가스 $${gasUsd.toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준 · 견적 최대 ${Math.round(CEXDEX_TTL_MS / 1000)}s 지연(블록당 소멸, 참고용)`,
           ts: now(),
         });
       };

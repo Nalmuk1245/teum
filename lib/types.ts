@@ -100,6 +100,7 @@ export type ScanContext = {
   transfers?: TransferStatus; // per-coin deposit/withdraw availability
   perps?: Set<string>; // bases with a Binance USDT-M perp (hedgeable)
   funding?: FundingMap; // per-coin funding rates across perp venues
+  marks?: Map<string, Partial<Record<Venue, number>>>; // perp mark px per venue (entry basis)
 };
 
 /** Per-coin funding across perp venues, normalized to an 8h rate (fraction). */

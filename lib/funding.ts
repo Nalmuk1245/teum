@@ -12,6 +12,7 @@
 //   capture by entering now.
 
 import type { FundingMap, FundingRate, Venue } from "./types";
+export type MarkMap = Map<string, Partial<Record<Venue, number>>>;
 
 const LIGHTER_FUNDING = "https://mainnet.zklighter.elliot.ai/api/v1/funding-rates";
 const HL_INFO = "https://api.hyperliquid.xyz/info";
@@ -143,4 +144,48 @@ export async function fetchFundingRates(): Promise<FundingMap> {
     if (rates.length) map.set(base, rates);
   }
   return map;
+}
+
+// ── Perp mark prices per venue (for entry-basis) ──────────────────────────────
+// Bulk sources: HL metaAndAssetCtxs, Lighter orderBookDetails, Binance
+// premiumIndex, Bybit linear tickers — one call each. The entry basis (mark
+// spread between the two perp legs) is routinely bigger than the funding spread
+// captured, so the funding strategy must price it.
+export async function fetchMarks(): Promise<MarkMap> {
+  const m: MarkMap = new Map();
+  const put = (base: string, venue: Venue, px: number) => {
+    if (!(px > 0)) return;
+    const e = m.get(base) ?? {};
+    e[venue] = px;
+    m.set(base, e);
+  };
+  const timeout = { cache: "no-store" as const, signal: AbortSignal.timeout(6000) };
+
+  const [hl, lighter, binance, bybit] = await Promise.allSettled([
+    fetch(HL_INFO, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "metaAndAssetCtxs" }), ...timeout }).then((r) => r.json()),
+    fetch("https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails", timeout).then((r) => r.json()),
+    fetch("https://fapi.binance.com/fapi/v1/premiumIndex", timeout).then((r) => r.json()),
+    fetch("https://api.bybit.com/v5/market/tickers?category=linear", timeout).then((r) => r.json()),
+  ]);
+
+  if (hl.status === "fulfilled" && Array.isArray(hl.value)) {
+    const [meta, ctxs] = hl.value as [{ universe?: { name: string }[] }, { markPx?: string }[]];
+    meta?.universe?.forEach((u, i) => put(normBase(u.name), "hyperliquid", Number(ctxs?.[i]?.markPx)));
+  }
+  if (lighter.status === "fulfilled") {
+    for (const o of (lighter.value?.order_book_details ?? []) as { symbol: string; mark_price?: string }[]) {
+      put(normBase(o.symbol), "lighter", Number(o.mark_price));
+    }
+  }
+  if (binance.status === "fulfilled" && Array.isArray(binance.value)) {
+    for (const r of binance.value as { symbol: string; markPrice?: string }[]) {
+      if (r.symbol.endsWith("USDT")) put(r.symbol.slice(0, -4), "binance", Number(r.markPrice));
+    }
+  }
+  if (bybit.status === "fulfilled") {
+    for (const r of (bybit.value?.result?.list ?? []) as { symbol: string; markPrice?: string }[]) {
+      if (r.symbol.endsWith("USDT")) put(r.symbol.slice(0, -4), "bybit", Number(r.markPrice));
+    }
+  }
+  return m;
 }

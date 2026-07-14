@@ -181,25 +181,24 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       for (const o of oppsRef.current) {
         if (o.mock || o.kind !== "kimchi") continue;
         const kr = o.legs.find((l) => l.quote === "KRW");
-        if (!kr) continue;
-        const venue = kr.venue as "upbit" | "bithumb";
-        // KR price and FX must be LIVE — mixing a stale scan-time KR price with a
-        // live opposite leg fabricates a moving premium on exactly the thin coins
-        // where premia look biggest. The global (USDT) leg may be Binance, Bybit
-        // or OKX; use Binance WS as the live USDT mover (all three track within
-        // ~0.1%) and fall back to that leg's scan price.
         const globalLeg = o.legs.find((l) => l.quote === "USDT");
-        const krw = venue === "upbit" ? up.current.get(o.base) : bt.current.get(o.base);
-        const rate = venue === "upbit" ? fx.current.upbit : fx.current.bithumb;
-        const usdt = bn.current.get(o.base) ?? globalLeg?.price;
-        if (!krw || !rate || !usdt) continue; // no live KR data → no overlay (board keeps scan values)
-        const premiumPct = ((krw / rate - usdt) / usdt) * 100;
-        // Sign the gross by the opp's LISTED route — taking |premium| would show
-        // a direction flip (premium inverting) as still-profitable when executing
-        // the listed route actually loses the spread.
+        if (!kr || !globalLeg) continue;
+        const venue = kr.venue as "upbit" | "bithumb";
+        // Anchor to the scan's EXECUTABLE gross (spread-crossed) and apply only
+        // the live PRICE-MOVEMENT delta since scan — never recompute gross from
+        // last prices, which drops both spreads and reads systematically too
+        // optimistic. delta ≈ how much the KR/global price ratio moved vs scan.
+        const liveKr = venue === "upbit" ? up.current.get(o.base) : bt.current.get(o.base);
+        const liveGlobal = bn.current.get(o.base); // Binance WS last (proxy for the USDT mover)
+        const scanKr = kr.price, scanGlobal = globalLeg.price;
+        if (!liveKr || !liveGlobal || !scanKr || !scanGlobal) continue; // no live pair → keep scan value
+        const ratioNow = (liveKr / scanKr) / (liveGlobal / scanGlobal);
+        const premiumDeltaPct = (ratioNow - 1) * 100;
         const buyGlobal = o.legs.find((l) => l.side === "buy")?.quote === "USDT";
-        const grossPct = buyGlobal ? premiumPct : -premiumPct;
-        ov[o.id] = { premiumPct, grossPct, netPct: grossPct - o.costPct };
+        // buyGlobal (sell KR): profit rises as KR outpaces global (+delta).
+        // reverse (sell global): profit rises as global outpaces KR (−delta).
+        const grossPct = o.grossPct + (buyGlobal ? premiumDeltaPct : -premiumDeltaPct);
+        ov[o.id] = { premiumPct: premiumDeltaPct, grossPct, netPct: grossPct - o.costPct };
       }
       setOverlay(ov);
       const now = Date.now();

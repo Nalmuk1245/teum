@@ -8,7 +8,7 @@ import { EXCHANGES } from "./exchanges";
 import { STRATEGIES } from "./strategies";
 import { fetchTransferStatus } from "./transfers";
 import { fetchPerpBases } from "./perps";
-import { fetchFundingRates } from "./funding";
+import { fetchFundingRates, fetchMarks } from "./funding";
 import { recordGap, pruneHistory, confidence } from "./history";
 
 // Slow-moving inputs don't need a fresh fetch every scan tick — gates/funding
@@ -27,7 +27,7 @@ async function ttl<T>(key: string, ms: number, fn: () => Promise<T>): Promise<T>
 
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");
-  const [entries, transfers, perps, funding] = await Promise.all([
+  const [entries, transfers, perps, funding, marks] = await Promise.all([
     Promise.all(
       cexAdapters.map(
         async (a) => [a.venue, await a.fetchTickers()] as [Venue, TickerMap],
@@ -40,6 +40,7 @@ async function buildContext(): Promise<ScanContext> {
     // Funding settles every 1–8h; the countdown is computed from nextTs
     // client-side, so a 2min rate refresh loses nothing visible.
     ttl("funding", 2 * 60_000, fetchFundingRates),
+    ttl("marks", 2 * 60_000, fetchMarks),
   ]);
   const tickers: Partial<Record<Venue, TickerMap>> = {};
   for (const [venue, map] of entries) tickers[venue] = map;
@@ -48,7 +49,7 @@ async function buildContext(): Promise<ScanContext> {
   // rate that can inflate every premium by 1-3%, so flag it (fxLive=false) and
   // let strategies refuse to fabricate premiums from it.
   const liveFx = tickers.upbit?.get("USDT")?.price ?? tickers.bithumb?.get("USDT")?.price ?? null;
-  return { tickers, usdKrw: liveFx ?? CONFIG.USD_KRW, fxLive: liveFx != null, transfers, perps, funding };
+  return { tickers, usdKrw: liveFx ?? CONFIG.USD_KRW, fxLive: liveFx != null, transfers, perps, funding, marks };
 }
 
 export async function scanAll(): Promise<Opportunity[]> {
