@@ -3,7 +3,7 @@
 // the board is meaningful without live/KR data.
 
 import type { Opportunity, ScanContext, TickerMap, Venue } from "./types";
-import { CONFIG } from "./config";
+import { CONFIG, FEES } from "./config";
 import { EXCHANGES } from "./exchanges";
 import { STRATEGIES } from "./strategies";
 import { fetchTransferStatus } from "./transfers";
@@ -57,6 +57,18 @@ export async function scanAll(): Promise<Opportunity[]> {
   const opps = batches.flat();
   if (CONFIG.USE_MOCK) opps.push(...MOCK_OPPS());
   if (ctx.perps) for (const o of opps) o.hasPerp = ctx.perps.has(o.base);
+
+  // Hedge round-trip cost (perp taker open+close) — charged once hasPerp is
+  // known. The recommended kimchi flow hedges whenever possible, so the board
+  // net assumes it; unhedged coins skip the fee but carry the (bigger) price
+  // risk shown by transferRisk instead.
+  const hedgeRt = (FEES.perpTakerPct.binance ?? 0.045) * 2;
+  for (const o of opps) {
+    if (o.mock || o.kind !== "kimchi" || !o.hasPerp) continue;
+    o.costPct += hedgeRt;
+    o.netPct -= hedgeRt;
+    if (o.netPct <= 0) o.executable = false;
+  }
 
   // Persistence: record each live opp's net into rolling history and attach the
   // held-duration / hit-rate. Rank by a confidence-weighted score so fresh

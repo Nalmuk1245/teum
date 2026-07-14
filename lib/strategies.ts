@@ -12,7 +12,7 @@ import {
   COIN_NETWORK, COIN_NETWORK_DEFAULT,
 } from "./config";
 import { walletStatus } from "./transfers";
-import { coinNetwork } from "./networks";
+import { coinNetwork, withdrawFeeCoin } from "./networks";
 import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS } from "./dex";
 
 export interface Strategy {
@@ -43,12 +43,24 @@ const GLOBAL_VENUES: Venue[] = ["binance", "bybit", "okx"];
 const globalSymbol = (venue: Venue, base: string) =>
   venue === "okx" ? `${base}-USDT` : `${base}USDT`;
 
-// Structured, per-coin/per-venue round-trip cost — replaces the flat number.
-function kimchiCostPct(base: string, globalVenue: Venue, krVenue: Venue): number {
+// Real, size-aware round-trip cost. Prices the transfer as a FLAT coin fee at a
+// reference size (not a fake percent), charges slippage per LEG (×2), and adds
+// the hedge round-trip + the eventual KRW→USDT repatriation. `usdPrice` = the
+// coin's USD price so the flat withdraw fee can be converted to a % of ref size.
+function kimchiCostPct(base: string, globalVenue: Venue, krVenue: Venue, usdPrice: number): number {
   const globalFee = FEES.takerPct[globalVenue] ?? 0.1;
   const krFee = FEES.takerPct[krVenue] ?? 0.05;
-  const network = NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT;
-  return globalFee + krFee + network + FEES.fxSpreadPct + FEES.slippagePct;
+
+  // Transfer: flat coin withdrawal fee → % of the board reference notional.
+  const feeCoin = withdrawFeeCoin(base);
+  const transferPct = feeCoin != null && usdPrice > 0
+    ? (feeCoin * usdPrice / CONFIG.BOARD_REF_USD) * 100
+    : (NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT); // fallback to the rough tier
+
+  const slippage = FEES.slippagePct * 2; // one impact per leg
+  // Hedge round-trip (perp taker ×2) is added in the scanner where hasPerp is
+  // known; repatriation is charged here since every kimchi cycle recycles KRW.
+  return globalFee + krFee + transferPct + FEES.fxSpreadPct + slippage + CONFIG.REPATRIATION_PCT;
 }
 
 // ── KIMCHI — KR won premium vs global USDT ─────────────────────────────────────
@@ -100,7 +112,7 @@ const kimchi: Strategy = {
           const execGross = midPremium >= 0
             ? ((kBid / fx - gAsk) / gAsk) * 100      // buy global ask → sell KR bid
             : ((gBid - kAsk / fx) / (kAsk / fx)) * 100; // buy KR ask → sell global bid
-          const cost = kimchiCostPct(base, gv, kv);
+          const cost = kimchiCostPct(base, gv, kv, g.price);
           const net = execGross - cost;
           if (!best || net > best.net)
             best = { kv, gv, krPrice: kr.price, gPrice: g.price, premiumPct: midPremium, cost, net, execGross };
@@ -124,8 +136,14 @@ const kimchi: Strategy = {
         blocked: false,
         network: coinNetwork(base),
       };
+      // FAIL-CLOSED: a persistent kimchi premium usually exists BECAUSE deposits
+      // are suspended on the KR side — so unknown (null) status must NOT pass as
+      // executable. Only an explicitly-confirmed-open pair on BOTH legs is
+      // settleable. (`blocked` distinguishes "known off" for the red badge;
+      // executable additionally requires both legs known-open.)
       transfer.blocked =
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
+      const settleable = transfer.withdraw.enabled === true && transfer.deposit.enabled === true;
 
       const gLeg = { venue: best.gv, symbol: globalSymbol(best.gv, base), price: best.gPrice, quote: "USDT" as const };
       const kLeg = { venue: best.kv, symbol: krSymbol(best.kv, base), price: best.krPrice, quote: "KRW" as const };
@@ -140,7 +158,9 @@ const kimchi: Strategy = {
         costPct: best.cost,
         netPct: best.net,
         notionalCapUsd: null, // TODO: from order-book depth
-        executable: best.net > 0 && !transfer.blocked,
+        // Live: fail-closed (both gates must be CONFIRMED open). DRY keeps the
+        // demo usable without keys — the gate panel still shows "키 필요".
+        executable: best.net > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
         transfer,
         ts: now(),
       });
@@ -195,9 +215,16 @@ const crossCex: Strategy = {
       if (gross < CROSS_MIN_GROSS) continue;
       if (gross > CONFIG.MAX_ABS_PREMIUM_PCT) continue; // stale/broken feed
 
+      // Flat withdrawal fee at the board reference size (percent tiers lie at
+      // small size), slippage per LEG. A persistent cross gap usually means the
+      // transfer route is down — unknown gate status must not read as tradeable.
+      const feeCoin = withdrawFeeCoin(base);
+      const transferPct = feeCoin != null && lo.ask > 0
+        ? (feeCoin * lo.ask / CONFIG.BOARD_REF_USD) * 100
+        : (NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT);
       const cost =
         (FEES.takerPct[lo.v] ?? 0.1) + (FEES.takerPct[hi.v] ?? 0.1) +
-        (NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT) + FEES.slippagePct;
+        transferPct + FEES.slippagePct * 2;
       const net = gross - cost;
 
       const transfer: TransferGate = {
@@ -210,6 +237,7 @@ const crossCex: Strategy = {
       };
       transfer.blocked =
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
+      const settleable = transfer.withdraw.enabled === true && transfer.deposit.enabled === true;
 
       out.push({
         id: id("cross-cex", base),
@@ -223,7 +251,7 @@ const crossCex: Strategy = {
         costPct: cost,
         netPct: net,
         notionalCapUsd: null,
-        executable: net > 0 && !transfer.blocked,
+        executable: net > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
         transfer,
         ts: now(),
       });
@@ -241,6 +269,7 @@ const crossCex: Strategy = {
 // every 8h. Hyperliquid & Lighter often diverge sharply from the CEX cluster,
 // which is where the real edge lives. Headline is APR (held ongoing).
 const FUNDING_MIN_APR = 8; // % — below this the spread doesn't clear fees/risk
+const FUNDING_HALF_DAYS = 1.5; // assumed spread half-life (mean-reverting) for the decay model
 const perpSymbol = (venue: Venue, base: string) =>
   venue === "okx" ? `${base}-USDT-SWAP`
   : venue === "hyperliquid" || venue === "lighter" ? base
@@ -265,16 +294,26 @@ const fundingBasis: Strategy = {
       }
       if (hi.venue === lo.venue) continue;
 
-      const grossApr = hi.aprPct - lo.aprPct; // annualized funding spread captured
+      const grossApr = hi.aprPct - lo.aprPct; // annualized funding spread (today's snapshot)
       if (grossApr < FUNDING_MIN_APR) continue;
 
       // One-time round trip: taker to open + close on BOTH legs (4 fills).
       const pf = FEES.perpTakerPct;
       const roundTripPct =
         2 * ((pf[hi.venue] ?? 0.05) + (pf[lo.venue] ?? 0.05));
-      // Break-even: spread must out-earn the entry cost. Days to break even.
       const dailyPct = grossApr / 365;
       const breakEvenDays = dailyPct > 0 ? roundTripPct / dailyPct : Infinity;
+
+      // HONEST headline: cross-venue funding spreads are strongly mean-reverting
+      // (the fat ones usually collapse within a few settlement windows). Model a
+      // linear decay to zero over FUNDING_HALF_DAYS×2 and cap the hold there:
+      // expected capture ≈ grossApr × halfDays/365 (triangle area) − round trip,
+      // re-annualized over that hold so the board number is comparable.
+      const expectedCapturePct = grossApr * (FUNDING_HALF_DAYS / 365) - roundTripPct;
+      const netApr = expectedCapturePct > 0
+        ? (expectedCapturePct / (FUNDING_HALF_DAYS * 2)) * 365
+        : expectedCapturePct * (365 / (FUNDING_HALF_DAYS * 2)); // negative → show as negative APR
+      if (netApr < 0 && grossApr < FUNDING_MIN_APR * 2) continue; // decayed to noise
 
       out.push({
         id: id("funding-basis", base),
@@ -287,14 +326,14 @@ const fundingBasis: Strategy = {
         ],
         grossPct: grossApr,
         costPct: roundTripPct,
-        netPct: grossApr, // ongoing yield; round trip is a one-time drag (see note)
+        netPct: netApr, // decay-adjusted expected APR, round trip subtracted
         notionalCapUsd: null,
         executable: false, // perp-DEX / cross-venue order routing not wired yet
         rateBasis: "apr",
         // Funding pays only at the settlement snapshot — surface the SHORT
         // leg's next one + both intervals so entries can be timed.
         fundingMeta: { nextTs: hi.nextTs, shortIntervalH: hi.intervalH, longIntervalH: lo.intervalH },
-        note: `숏 ${hi.venue}(${hi.intervalH ?? "?"}h${hi.predicted ? "·예측" : ""}) / 롱 ${lo.venue}(${lo.intervalH ?? "?"}h) · 진입 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"}`,
+        note: `숏 ${hi.venue}(${hi.intervalH ?? "?"}h${hi.predicted ? "·예측" : ""}) / 롱 ${lo.venue}(${lo.intervalH ?? "?"}h) · 진입 ${roundTripPct.toFixed(2)}% · 손익분기 ${breakEvenDays < 99 ? breakEvenDays.toFixed(1) + "일" : "—"} · 감쇠반영(반감 ${FUNDING_HALF_DAYS}일) · 진입 베이시스 별도 확인`,
         ts: now(),
       });
     }

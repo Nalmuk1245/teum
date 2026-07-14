@@ -19,6 +19,14 @@ export const CONFIG = {
   MIN_KR_VOLUME_KRW: 500_000_000,
   /** Sanity cap — a |premium| above this is stale/broken data, not an edge. */
   MAX_ABS_PREMIUM_PCT: 40,
+  /** Reference size (USD) the BOARD prices costs at — flat withdrawal fees and
+   *  slippage are size-dependent, so the board must assume a size to be honest
+   *  (the modal re-prices at the actual size). */
+  BOARD_REF_USD: Number(process.env.BOARD_REF_USD ?? 5000),
+  /** Repatriation drag (%) — recycling KRW proceeds back to global USDT costs a
+   *  KR USDT-market taker + book spread + a TRC20 withdrawal. Charged once per
+   *  kimchi cycle since capital must eventually return to redeploy. */
+  REPATRIATION_PCT: Number(process.env.REPATRIATION_PCT ?? 0.2),
   /** Live market orders abort when the book-estimated slippage exceeds this. */
   MAX_SLIPPAGE_PCT: Number(process.env.MAX_SLIPPAGE_PCT ?? 0.5),
   /** Freshness/thinness gate — a top-of-book spread wider than this on either
@@ -38,13 +46,16 @@ export const COST_MODEL: Record<string, number> = {
 // Per-venue taker fees + a per-coin transfer cost make `net` realistic and
 // coin-specific instead of a single flat number.
 export const FEES = {
-  /** Taker fee (%) per venue. */
+  /** Taker fee (%) per venue. Bithumb's DEFAULT KRW-market taker is 0.25% — the
+   *  0.04% coupon rate only applies if a fee coupon is active. Env-overridable:
+   *  set BITHUMB_TAKER_PCT=0.04 when a coupon is on. Same for others if you hold
+   *  a VIP/BNB tier. */
   takerPct: {
-    binance: 0.1,
-    upbit: 0.05,
-    bithumb: 0.04,
-    bybit: 0.1,
-    okx: 0.1,
+    binance: Number(process.env.BINANCE_TAKER_PCT ?? 0.1),
+    upbit: Number(process.env.UPBIT_TAKER_PCT ?? 0.05),
+    bithumb: Number(process.env.BITHUMB_TAKER_PCT ?? 0.25),
+    bybit: Number(process.env.BYBIT_TAKER_PCT ?? 0.1),
+    okx: Number(process.env.OKX_TAKER_PCT ?? 0.1),
   } as Record<string, number>,
   /** USDT/KRW conversion + rate variance across the trade window. */
   fxSpreadPct: 0.15,

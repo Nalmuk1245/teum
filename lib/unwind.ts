@@ -26,7 +26,11 @@ export type UnwindResult = {
   log: string[];
 };
 
-const PREMIUM_FLOOR = 0.2; // below this, stop chasing — take the market
+// Floor must sit ABOVE the round-trip cost — market-dumping below cost
+// crystallizes a guaranteed loss and books it as an "orderly" exit. Below the
+// floor the right move is usually to HOLD hedged (delta-neutral) instead.
+const FLOOR_BUFFER_PCT = 0.1;
+const premiumFloor = (costPct: number) => costPct + FLOOR_BUFFER_PCT;
 const REPEG_HAIRCUT = 0.15; // premium given up on the re-peg tranche (sim)
 const ROUNDS = 3; // limit → re-peg → re-peg, then market fallback
 const POLL_MS = 2000;
@@ -50,7 +54,7 @@ export async function unwind(opp: Opportunity, remainingQty: number, fractionIn:
   const q1 = targetQty * 0.6;
   const q2 = targetQty - q1;
   const p1 = gross;
-  const p2 = Math.max(gross - REPEG_HAIRCUT, PREMIUM_FLOOR);
+  const p2 = Math.max(gross - REPEG_HAIRCUT, premiumFloor(cost));
   const achievedGross = targetQty > 0 ? (p1 * q1 + p2 * q2) / targetQty : 0;
   const achievedNet = achievedGross - cost;
   const pnlUsd = (achievedNet / 100) * (targetQty * price);
@@ -74,7 +78,7 @@ export async function unwind(opp: Opportunity, remainingQty: number, fractionIn:
 // Round: read the book → post a limit at the best ask (maker, top of queue side)
 // → poll fills, closing the short in proportion after each round → if still open
 // at round timeout, cancel and re-peg at the fresh best ask. After ROUNDS (or if
-// the live premium decays under PREMIUM_FLOOR) the remainder goes market.
+// the live premium decays under the cost floor) the loop stops and advises holding hedged.
 async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: number): Promise<UnwindResult> {
   const fraction = Math.min(1, Math.max(0, fractionIn));
   const sellLeg = opp.legs.find((l) => l.side === "sell");
@@ -118,9 +122,15 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
   for (let round = 1; round <= ROUNDS && left > 0; round++) {
     // Premium floor — stop chasing a decaying edge, dump at market instead.
     const prem = await livePremium();
-    if (prem !== null && prem < PREMIUM_FLOOR) {
-      log.push(`프리미엄 ${prem.toFixed(2)}% < 바닥 ${PREMIUM_FLOOR}% — 시장가 전환`);
-      break;
+    const floor = premiumFloor(opp.costPct ?? 0.5);
+    if (prem !== null && prem < floor) {
+      // Below cost: dumping locks in a loss. Stop the loop and tell the
+      // operator to hold hedged instead of crystallizing negative net.
+      log.push(`프리미엄 ${prem.toFixed(2)}% < 손익분기 ${floor.toFixed(2)}% — 청산 중단, 헷지 유지 권장 (지금 팔면 확정 손실)`);
+      return {
+        soldQty: sold, hedgeClosedQty: hedgeClosed, achievedNetPct: 0, pnlUsd: 0,
+        remainingQty: remainingQty - sold, dryRun: false, log,
+      };
     }
 
     const book = await ad.fetchOrderBook(sellLeg.symbol);
