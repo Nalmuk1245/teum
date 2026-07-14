@@ -10,6 +10,7 @@ import { fetchTransferStatus } from "./transfers";
 import { fetchPerpBases } from "./perps";
 import { fetchFundingRates, fetchMarks } from "./funding";
 import { recordGap, pruneHistory, confidence } from "./history";
+import { listingInfo } from "./listings";
 
 // Slow-moving inputs don't need a fresh fetch every scan tick — gates/funding
 // change on the minutes scale, the perp list on the days scale. TTL-cache them
@@ -86,6 +87,9 @@ export async function scanAll(): Promise<Opportunity[]> {
   for (const o of opps) {
     if (o.mock) continue;
     seen.add(o.id);
+    // 상장따리: flag a fresh KR listing (fastest kimchi spike).
+    const listing = listingInfo(o.base);
+    if (listing) o.newListing = listing;
     const gPrice = o.legs.find((l) => l.quote === "USDT")?.price ?? 0;
     o.persistence = recordGap(o.id, o.netPct, o.grossPct, gPrice, ts);
     // Transfer-window risk: proceeds are captured at SELL time, ETA minutes
@@ -105,7 +109,10 @@ export async function scanAll(): Promise<Opportunity[]> {
     }
   }
   pruneHistory(seen, ts);
-  const score = (o: Opportunity) => (o.mock ? o.netPct : o.netPct * confidence(o.persistence));
+  // Fresh listings float to the very top (+1000) — a spike you want to see NOW,
+  // ranked above any steady edge regardless of current net.
+  const score = (o: Opportunity) =>
+    (o.newListing ? 1000 : 0) + (o.mock ? o.netPct : o.netPct * confidence(o.persistence));
   opps.sort((a, b) => score(b) - score(a));
   return opps;
 }

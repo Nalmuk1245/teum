@@ -20,6 +20,7 @@ export function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed
       {runs.length > 0
         ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
+      <ListingsCard />
       <PnlCard />
       <TelegramCard />
       <GatesCard />
@@ -275,6 +276,44 @@ export function TelegramCard() {
           : ".env.local에 TELEGRAM_BOT_TOKEN·TELEGRAM_CHAT_ID를 넣으면 켜집니다 (@BotFather로 봇 생성)."}
       </div>
       {msg && <div style={{ fontSize: 11, color: "var(--brand-2)", marginTop: 6 }}>{msg}</div>}
+    </div>
+  );
+}
+
+type Listing = { base: string; venue: string; ts: number; overseas: boolean };
+function ListingsCard() {
+  const [rows, setRows] = useState<Listing[]>([]);
+  useEffect(() => {
+    const load = () => fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => setRows(j.listings ?? [])).catch(() => {});
+    void load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div style={{ background: "var(--card)", border: `1px solid ${rows.length ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: rows.length ? 8 : 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>상장따리 — 최근 신규 상장</span>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: rows.length ? "var(--amber)" : "var(--text-mute)" }} />
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: "var(--text-mute)" }}>감시 중 — 업비트/빗썸 신규 상장을 3초마다 폴링, 뜨면 텔레그램·보드 최상단</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          {rows.map((l) => {
+            const age = Math.round((Date.now() - l.ts) / 1000);
+            return (
+              <div key={l.base + l.venue} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span style={{ fontWeight: 800 }}>{l.base}</span>
+                <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`} 전</span>
+                <span style={{ flex: 1 }} />
+                <span style={{ fontSize: 10.5, fontWeight: 600, color: l.overseas ? "var(--pos)" : "var(--text-mute)" }}>
+                  {l.overseas ? "해외 상장 · 김프 가능" : "해외 미상장"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
