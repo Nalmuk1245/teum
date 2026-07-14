@@ -18,7 +18,7 @@
 - [x] **스마트 청산 라이브 배선** — 지정가(바낸/업비트)+체결폴링+취소/리페그(3라운드)+프리미엄 바닥/타임아웃 시장가+라운드별 비례 숏청산. 빗썸 다리는 명시적 실패. /api/unwind에 EXEC_TOKEN·mock 가드
 - [x] 빗썸 입금 크레딧 조회 (user_transactions, searchGb=4, 시간필터)
 - [x] 실 체결가 기반 정산 (바낸 cummulativeQuoteQty·업비트 주문상세 trades → settle 실현 PnL, KRW는 라이브 환율 환산) + 라이브 시장가 슬리피지 상한(MAX_SLIPPAGE_PCT, 기본 0.5%)
-- [ ] page.tsx 컴포넌트 분리(1900줄), KIND_META/VENUE_LABEL 중복 정리
+- [x] **page.tsx 컴포넌트 분리** — 1959→444줄. cockpit-ui(공용 프리미티브·상수)·CockpitBoard·ExecuteModal·ControlPanel 4파일로 순수 이동(로직 0변경), tsc·런타임 검증
 - [x] 바이낸스 networkList per-network 게이트 (COIN_NETWORK 체인 매칭 엔트리의 withdrawEnable/depositEnable, 미매칭시 코인 단위 폴백)
 - [ ] **로컬에서 키 넣고 실테스트 → `DRY_RUN=false`** (본인 PC, 실자금, EXEC_TOKEN 설정)
 
