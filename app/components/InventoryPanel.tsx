@@ -28,12 +28,17 @@ function usePortfolio(): Portfolio | null {
 
 function derive(pf: Portfolio) {
   const g = Math.max(0, Math.min(100, pf.skewPct)); // global share %
-  const skewed = g < 35 || g > 65;
+  // 정프(KR premium) flow is one-directional: USDT depletes globally, KRW piles
+  // up in KR, and repatriating back is the expensive/regulated leg. So the ideal
+  // is NOT 50:50 — a 정프-dominant regime should sit deliberately global-heavy
+  // and repatriate in batches. Target ~65% global; only warn outside a wide band.
+  const TARGET_GLOBAL = 65;
+  const skewed = g < 40 || g > 85;
   // 가용률 — 거래소 자본 중 즉시 주문 가능한 현금(USDT/KRW) 비중.
   const exchTotal = pf.venues.reduce((s, v) => s + v.totalUsd, 0);
   const cashTotal = pf.venues.reduce((s, v) => s + v.cashUsd, 0);
   const availPct = exchTotal > 0 ? (cashTotal / exchTotal) * 100 : 0;
-  return { g, skewed, availPct };
+  return { g, skewed, availPct, target: TARGET_GLOBAL };
 }
 
 /**
@@ -43,7 +48,7 @@ function derive(pf: Portfolio) {
 export function AssetSummary({ isMobile, onOpen }: { isMobile?: boolean; onOpen?: () => void }) {
   const pf = usePortfolio();
   if (!pf) return null;
-  const { g, skewed, availPct } = derive(pf);
+  const { g, skewed, availPct, target } = derive(pf);
   return (
     <button
       type="button"
@@ -82,7 +87,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
   if (!pf) {
     return <div style={{ color: "var(--text-mute)", padding: 32, textAlign: "center" }}>잔고 조회 중…</div>;
   }
-  const { g, skewed, availPct } = derive(pf);
+  const { g, skewed, availPct, target } = derive(pf);
   const allVenues = [...pf.venues, ...(pf.wallet ? [pf.wallet] : [])];
 
   // Aggregate holdings across every venue + the wallet (cash included).
@@ -138,14 +143,13 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
 
         {skewed ? (
           <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 8, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
-            편중 —{" "}
-            {g > 65
-              ? "글로벌에 자본 쏠림. KR 쪽 재고 보충(전송) 필요"
-              : "KR에 자본 쏠림. USD 회수(리패트리에이션) 필요"}
+            {g > 85
+              ? "글로벌 과다 — USDT 놀고 있음. KR 재고 보충하거나 규모 확대"
+              : `KR 과다 — 원화가 묶임. USD 회수(리패트리에이션)를 원/USDT 유리할 때 배치로 (목표 글로벌 ${target}%)`}
           </div>
         ) : (
           <div style={{ marginTop: 10, color: "var(--text-mute)", fontSize: 11 }}>
-            균형 양호 — 양쪽 재고로 전송 없이 즉시 체결 가능
+            정프 장세 적정 — 글로벌 {target}% 목표 근처 (50:50 아님: 회수가 비싼 다리)
           </div>
         )}
       </div>

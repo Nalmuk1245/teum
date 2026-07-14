@@ -921,12 +921,17 @@ function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportuni
                 color: opp.transferRisk.hedgeAdvised && !hedgeOn ? "var(--neg)" : "var(--text-dim)",
               }}
             >
-              전송창 리스크 — 약 {opp.transferRisk.etaMin}분 이동 중 프리미엄 <b className="tnum">±{opp.transferRisk.driftPct.toFixed(2)}%</b> 변동 예상 (순수익 {pct(opp.netPct)})
+              전송창 리스크 — 약 {opp.transferRisk.etaMin}분 이동 중 가격 <b className="tnum">±{opp.transferRisk.driftPct.toFixed(2)}%</b> 변동 예상 (순수익 {pct(opp.netPct)})
+              <div style={{ marginTop: 2, fontSize: 10.5, color: "var(--text-mute)" }}>
+                최근 최대 점프 {opp.transferRisk.jumpPct.toFixed(2)}%
+                {opp.transferRisk.fxDriftPct > 0.01 && ` · 원/USDT ±${opp.transferRisk.fxDriftPct.toFixed(2)}%(헷지 미적용)`}
+              </div>
               {opp.transferRisk.hedgeAdvised && (
                 <div style={{ marginTop: 3, fontWeight: 600 }}>
-                  {hedgeOn ? "✓ 헷지로 이 리스크를 상쇄합니다" : "⚠ 변동이 순수익보다 큼 — 헷지 ON 권장"}
+                  {hedgeOn ? "✓ 헷지로 코인 가격 리스크를 상쇄합니다 (원/USDT는 별도)" : "⚠ 가격 변동·점프 리스크 큼 — 헷지 ON 권장"}
                 </div>
               )}
+              {opp.note && <div style={{ marginTop: 3, color: "var(--amber)", fontWeight: 600 }}>{opp.note}</div>}
             </div>
           )}
 

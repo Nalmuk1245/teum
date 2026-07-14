@@ -129,10 +129,16 @@ const kimchi: Strategy = {
       const sellVenue: Venue = buyGlobal ? best.kv : best.gv;
       const wStat = walletStatus(ctx.transfers, buyVenue, base);
       const dStat = walletStatus(ctx.transfers, sellVenue, base);
+      // 역프 (buy on KR, withdraw KR→overseas): Korean exchanges freeze crypto
+      // withdrawals for ~24-72h after a KRW deposit and enforce whitelist/limits,
+      // so a KR-buy leg is NOT a 1-minute settlement — reflect a realistic ETA
+      // and flag it so the operator doesn't treat it as a fast arb.
+      const isReverse = !buyGlobal; // buying on the KR venue
+      const baseEta = TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN;
       const transfer: TransferGate = {
         withdraw: { venue: buyVenue, enabled: wStat ? wStat.withdraw : null },
         deposit: { venue: sellVenue, enabled: dStat ? dStat.deposit : null },
-        etaMin: TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN,
+        etaMin: isReverse ? Math.max(baseEta, 60) : baseEta, // KR withdrawal freeze
         blocked: false,
         network: coinNetwork(base),
       };
@@ -162,6 +168,7 @@ const kimchi: Strategy = {
         // demo usable without keys — the gate panel still shows "키 필요".
         executable: best.net > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
         transfer,
+        ...(isReverse ? { note: "역프 — KR 출금 정지(원화입금 후 24-72h)·화이트리스트·한도 확인 필요" } : {}),
         ts: now(),
       });
     }

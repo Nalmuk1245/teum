@@ -73,23 +73,33 @@ export async function scanAll(): Promise<Opportunity[]> {
   // Persistence: record each live opp's net into rolling history and attach the
   // held-duration / hit-rate. Rank by a confidence-weighted score so fresh
   // one-scan spikes sink below sustained edges of similar size (not hidden).
+  // USDT/KRW (tether premium) volatility — the coin hedge does NOT cover this,
+  // yet proceeds land in KRW and repatriate at a later USDT/KRW. Track it under
+  // a synthetic id so transferRisk can add its ETA-scaled drift.
+  const usdtKr = ctx.tickers.upbit?.get("USDT")?.price ?? ctx.tickers.bithumb?.get("USDT")?.price ?? 0;
   const ts = Date.now();
-  const seen = new Set<string>();
+  const fxP = usdtKr > 0 ? recordGap("_fx:USDTKRW", 1, 0, usdtKr, ts) : null;
+  const fxVolPerMin = fxP?.volPctPerMin ?? 0;
+
+  const seen = new Set<string>(["_fx:USDTKRW"]);
   for (const o of opps) {
     if (o.mock) continue;
     seen.add(o.id);
-    o.persistence = recordGap(o.id, o.netPct, o.grossPct, ts);
-    // Transfer-window risk: the premium you actually capture is at SELL time,
-    // ETA minutes after buy. Model the expected drift as σ_per_min × √ETA
-    // (random-walk). If that swamps the edge, a hedge (short perp during the
-    // transfer) is advised. Funding/cross legs settle instantly → no window.
+    const gPrice = o.legs.find((l) => l.quote === "USDT")?.price ?? 0;
+    o.persistence = recordGap(o.id, o.netPct, o.grossPct, gPrice, ts);
+    // Transfer-window risk: proceeds are captured at SELL time, ETA minutes
+    // later. The unhedged exposure is the coin's PRICE vol (σ×√ETA) plus a
+    // one-sided jump tail; even hedged, the USDT/KRW drift is uncovered. Hedge
+    // is advised whenever price risk approaches the edge OR the transfer is
+    // slow (ETA > 5min) — a coin can gap on a headline regardless of quiet vol.
     if (o.transfer && o.kind === "kimchi") {
       const etaMin = o.transfer.etaMin;
       const drift = (o.persistence?.volPctPerMin ?? 0) * Math.sqrt(Math.max(1, etaMin));
+      const jump = o.persistence?.jumpPct ?? 0;
+      const fxDrift = fxVolPerMin * Math.sqrt(Math.max(1, etaMin));
       o.transferRisk = {
-        etaMin,
-        driftPct: drift,
-        hedgeAdvised: !!o.hasPerp && drift > o.netPct, // risk exceeds the edge
+        etaMin, driftPct: drift, jumpPct: jump, fxDriftPct: fxDrift,
+        hedgeAdvised: !!o.hasPerp && (drift > o.netPct || jump > o.netPct || etaMin > 5),
       };
     }
   }

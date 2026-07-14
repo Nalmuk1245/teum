@@ -65,10 +65,12 @@ export type Opportunity = {
    *  = annualized yield (funding arb, held ongoing). */
   rateBasis?: "trade" | "apr";
   /** Gap persistence — how long/steadily this edge has held (flicker vs real). */
-  persistence?: { heldSec: number; hitRatePct: number; samples: number; volPctPerMin: number };
-  /** Transfer-window risk: expected premium drift over the in-flight ETA. The
-   *  captured premium is at SELL time (minutes later), not now. */
-  transferRisk?: { etaMin: number; driftPct: number; hedgeAdvised: boolean };
+  persistence?: { heldSec: number; hitRatePct: number; samples: number; volPctPerMin: number; jumpPct: number };
+  /** Transfer-window risk: expected PRICE drift over the in-flight ETA (the
+   *  unhedged exposure is the coin's price vol, not the premium's), plus the
+   *  worst recent single-step jump and the USDT/KRW (tether-premium) drift that
+   *  the coin hedge doesn't cover. */
+  transferRisk?: { etaMin: number; driftPct: number; jumpPct: number; fxDriftPct: number; hedgeAdvised: boolean };
   /** Funding-basis timing: when the SHORT leg next settles + both intervals. */
   fundingMeta?: { nextTs: number | null; shortIntervalH: number | null; longIntervalH: number | null };
   note?: string;
