@@ -166,3 +166,65 @@ export async function gasPriceWei(chainKey: string): Promise<number | null> {
 export function gasCostUsd(gasUnits: number, gasWei: number, nativeUsd: number): number {
   return (gasUnits * gasWei * nativeUsd) / 1e18;
 }
+
+// ── Swap / approve calldata (execution phase) ─────────────────────────────────
+// OKX returns a ready-to-sign tx; the wallet signs it (with the returned router
+// as the only allowed destination). Dormant without OKX_WEB3_* keys.
+
+export type SwapTx = {
+  to: string; // router/aggregator contract (whitelist source)
+  data: string;
+  value: string; // wei (native-in swaps)
+  gas: string;
+  minReceive: string; // raw units — our slippage floor, checked before signing
+  toAmount: string; // expected out (raw)
+};
+
+/** Build a swap tx: `amountHuman` of from-token → to-token, slippage as fraction. */
+export async function swapDex(
+  chainKey: string,
+  from: { address: string; decimals: number },
+  to: { address: string; decimals: number },
+  amountHuman: number,
+  slippage: number,
+  walletAddr: string,
+): Promise<SwapTx | null> {
+  const chainId = OKX_CHAIN_ID[chainKey];
+  if (!chainId) return null;
+  const amountRaw = BigInt(Math.round(amountHuman * 10 ** Math.min(from.decimals, 12)))
+    * BigInt(10) ** BigInt(Math.max(0, from.decimals - 12));
+  try {
+    const data = await okxGet("/api/v5/dex/aggregator/swap", {
+      chainId,
+      fromTokenAddress: from.address,
+      toTokenAddress: to.address,
+      amount: amountRaw.toString(),
+      slippage: String(slippage),
+      userWalletAddress: walletAddr,
+    });
+    const d = data[0] as { tx?: { to: string; data: string; value: string; gas: string; minReceiveAmount: string }; routerResult?: { toTokenAmount: string } } | undefined;
+    if (!d?.tx?.to || !d.tx.data) return null;
+    return {
+      to: d.tx.to, data: d.tx.data, value: d.tx.value ?? "0", gas: d.tx.gas ?? "0",
+      minReceive: d.tx.minReceiveAmount ?? "0", toAmount: d.routerResult?.toTokenAmount ?? "0",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Build an ERC20 approve tx for the aggregator's spender (one-time per token). */
+export async function approveDex(chainKey: string, tokenAddress: string, amountRaw: string): Promise<{ to: string; data: string } | null> {
+  const chainId = OKX_CHAIN_ID[chainKey];
+  if (!chainId) return null;
+  try {
+    const data = await okxGet("/api/v5/dex/aggregator/approve-transaction", {
+      chainId, tokenContractAddress: tokenAddress, approveAmount: amountRaw,
+    });
+    const d = data[0] as { dexContractAddress?: string; data?: string } | undefined;
+    if (!d?.dexContractAddress || !d.data) return null;
+    return { to: d.dexContractAddress, data: d.data };
+  } catch {
+    return null;
+  }
+}

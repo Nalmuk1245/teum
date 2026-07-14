@@ -10,7 +10,8 @@ import type { Opportunity } from "./types";
 import { chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 
 export type StepId =
-  | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle";
+  | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle"
+  | "approve" | "swap"; // cex-dex (inventory-style): DEX approve + swap, fired with the CEX leg
 
 export type ExecStep = { id: StepId; label: string; desc: string };
 export type StepPhase = "pending" | "running" | "done" | "error" | "rolledback";
@@ -37,6 +38,22 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
   const sell = opp.legs.find((l) => l.side === "sell");
   const bv = vlabel(buy?.venue);
   const sv = vlabel(sell?.venue);
+
+  // cex-dex is INVENTORY-style: both sides pre-funded, no transfer in the
+  // critical path. Approve (one-time) → DEX swap + CEX order (fired together) →
+  // settle. The DEX leg is whichever side is venue "dex".
+  if (opp.kind === "cex-dex") {
+    const dexLeg = opp.legs.find((l) => l.venue === "dex");
+    const cexLeg = opp.legs.find((l) => l.venue !== "dex");
+    const dexBuys = dexLeg?.side === "buy";
+    const steps: ExecStep[] = [
+      { id: "approve", label: "DEX 토큰 승인", desc: "1회 approve (필요 시)" },
+      { id: "swap", label: `DEX ${dexBuys ? "매수" : "매도"} (스왑)`, desc: `${opp.base} · 온체인 · minReceive 보호` },
+      { id: dexBuys ? "sell" : "buy", label: `${vlabel(cexLeg?.venue)} ${dexBuys ? "매도" : "매수"}`, desc: "동시 발사 · 델타 상쇄" },
+      { id: "settle", label: "정산", desc: "P&L 확정 · 재고 리밸런스 별도" },
+    ];
+    return steps;
+  }
   // Personal-wallet hop is ONLY for overseas → KR deposits (direct Binance→Upbit
   // stalls on travel-rule verification; wallet-origin deposits credit
   // automatically). KR → overseas and global ↔ global send DIRECT. Non-EVM

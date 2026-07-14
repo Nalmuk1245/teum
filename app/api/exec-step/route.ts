@@ -6,6 +6,8 @@ import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/
 import { fetchDepositAddress } from "@/lib/deposits";
 import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
+import { dexConfigured, approveDex, swapDex, CEXDEX_CHAINS } from "@/lib/dex";
+import { sendRawEvmTx } from "@/lib/wallet";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry, recordPnl } from "@/lib/risk";
 import { notifyNow } from "@/lib/telegram";
@@ -27,6 +29,17 @@ function destAddr(chainKey: string): string | null {
   if (fam === "solana") return process.env.WALLET_ADDR_SOL || null;
   return walletAddress() ?? process.env.WALLET_ADDR_EVM ?? null;
 }
+
+// cex-dex: resolve the DEX chain + token/stable contracts from the opp's dex
+// leg symbol ("BASE/QUOTE@chain"). Uses the detection universe (CEXDEX_CHAINS).
+function dexTarget(opp: Opportunity, dexLeg?: { symbol: string }) {
+  const chainKey = dexLeg?.symbol?.split("@")[1];
+  const uni = CEXDEX_CHAINS.find((u) => u.chain === chainKey);
+  const token = uni?.bases[opp.base];
+  const stable = uni?.quote;
+  return { chainKey: uni ? chainKey : undefined, token, stable };
+}
+const chainLabelOf = (chainKey: string) => getChain(chainKey)?.label ?? chainKey;
 
 type StepResult = {
   ok: boolean; dryRun: boolean; message: string; filledQty?: number;
@@ -99,6 +112,39 @@ async function runStep(
         : null;
       if (!r) return unwired(`${buy.venue} ${opp.base} 매수`);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: buy.quote } };
+    }
+    case "approve": {
+      // cex-dex: one-time ERC20 approve for the OKX aggregator spender. In DRY
+      // this is a no-op; live checks OKX keys + wallet.
+      if (dry) return { ok: true, dryRun: true, message: "DEX 승인 (모의)" };
+      if (!dexConfigured()) return fail("OKX_WEB3 키 없음 — DEX 실행 불가");
+      const dexLeg = opp.legs.find((l) => l.venue === "dex");
+      const { chainKey, token } = dexTarget(opp, dexLeg);
+      if (!chainKey || !token) return fail("DEX 토큰/체인 미확인 — 승인 차단");
+      const ap = await approveDex(chainKey, token.address, "115792089237316195423570985008687907853269984665640564039457584007913129639935");
+      if (!ap) return fail("approve 캘리데이터 조회 실패");
+      const res = await sendRawEvmTx({ chain: chainKey, to: ap.to, data: ap.data }, [ap.to]);
+      return { ok: res.ok, dryRun: res.dryRun, message: `DEX 승인 · ${res.message}`, tx: res.hash ? txInfo(chainLabelOf(chainKey), res.hash, res.dryRun) : undefined };
+    }
+    case "swap": {
+      // cex-dex DEX leg: OKX swap calldata → wallet signs (router whitelisted,
+      // minReceive enforced by OKX per our slippage cap).
+      if (dry) return { ok: true, dryRun: true, message: "DEX 스왑 (모의)", tx: { hash: "sim:dex:swap", url: null } };
+      if (!dexConfigured()) return fail("OKX_WEB3 키 없음 — DEX 실행 불가");
+      const dexLeg = opp.legs.find((l) => l.venue === "dex");
+      const walletAddr = walletAddress();
+      if (!walletAddr) return fail("개인지갑 주소 없음 — 스왑 차단");
+      const { chainKey, token, stable } = dexTarget(opp, dexLeg);
+      if (!chainKey || !token || !stable) return fail("DEX 경로 미확인 — 스왑 차단");
+      // buy on DEX = stable→token; sell on DEX = token→stable.
+      const dexBuys = dexLeg?.side === "buy";
+      const from = dexBuys ? stable : token;
+      const to = dexBuys ? token : stable;
+      const amountHuman = dexBuys ? sizeUsd : qty;
+      const swap = await swapDex(chainKey, from, to, amountHuman, CONFIG.MAX_SLIPPAGE_PCT / 100, walletAddr);
+      if (!swap) return fail("swap 캘리데이터 조회 실패");
+      const res = await sendRawEvmTx({ chain: chainKey, to: swap.to, data: swap.data, value: swap.value, gas: swap.gas }, [swap.to]);
+      return { ok: res.ok, dryRun: res.dryRun, message: `DEX 스왑 · ${res.message}`, tx: res.hash ? txInfo(chainLabelOf(chainKey), res.hash, res.dryRun) : undefined };
     }
     case "hedge": {
       // Hedge the ARRIVAL quantity, not the bought quantity — taker fee (base-

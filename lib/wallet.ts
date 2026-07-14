@@ -147,3 +147,38 @@ async function sendSolana(req: SendReq, key: string): Promise<SendResult> {
   const hash = await web3.sendAndConfirmTransaction(conn, tx, [from]);
   return { ok: true, dryRun: false, hash, message: "전송 완료" };
 }
+
+// ── Raw EVM tx (for DEX swap/approve calldata from OKX) ───────────────────────
+// Signs and broadcasts a pre-built transaction (to/data/value). SAFETY: only
+// EVM chains, only to a WHITELISTED router/spender, value capped — the calldata
+// comes from OKX so we never sign a tx to an arbitrary address. Live only when
+// the EVM key is set and DRY_RUN is off.
+export type RawTx = { chain: string; to: string; data: string; value?: string; gas?: string };
+export type RawTxResult = { ok: boolean; dryRun: boolean; hash: string | null; message: string };
+
+export async function sendRawEvmTx(tx: RawTx, allowList: string[], maxValueWei = 0n): Promise<RawTxResult> {
+  const chain = CHAINS[tx.chain];
+  if (!chain || chain.family !== "evm") return { ok: false, dryRun: false, hash: null, message: `EVM 체인 아님: ${tx.chain}` };
+  const key = process.env.WALLET_PRIVATE_KEY;
+  if (CONFIG.DRY_RUN || !key) {
+    return { ok: CONFIG.DRY_RUN, dryRun: CONFIG.DRY_RUN, hash: CONFIG.DRY_RUN ? `sim:${tx.chain}:rawtx` : null, message: key ? "DRY_RUN — 서명 안 함" : "지갑 키 없음" };
+  }
+  // Whitelist + value guard — never sign to an address OKX didn't route us to.
+  const to = tx.to.toLowerCase();
+  if (!allowList.map((a) => a.toLowerCase()).includes(to)) {
+    return { ok: false, dryRun: false, hash: null, message: `목적지 ${tx.to} 화이트리스트 아님 — 서명 차단` };
+  }
+  const value = BigInt(tx.value ?? "0");
+  if (maxValueWei > 0n && value > maxValueWei) {
+    return { ok: false, dryRun: false, hash: null, message: `value ${value} > 상한 ${maxValueWei} — 차단` };
+  }
+  try {
+    const provider = new JsonRpcProvider(chain.rpc);
+    const wallet = new Wallet(key, provider);
+    const sent = await wallet.sendTransaction({ to: tx.to, data: tx.data, value, ...(tx.gas ? { gasLimit: BigInt(tx.gas) } : {}) });
+    await sent.wait(1);
+    return { ok: true, dryRun: false, hash: sent.hash, message: "온체인 전송 완료" };
+  } catch (e) {
+    return { ok: false, dryRun: false, hash: null, message: e instanceof Error ? e.message : "raw tx 실패" };
+  }
+}

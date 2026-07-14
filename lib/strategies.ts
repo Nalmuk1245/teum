@@ -420,7 +420,9 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
           costPct: cost,
           netPct: net,
           notionalCapUsd: DEXDEX_REF_USD,
-          executable: false, // swap execution phase not wired yet
+          // Executable once net clears AND OKX Web3 keys are set (DEX swap wired);
+          // inventory-style so no transfer gate. DRY keeps the demo runnable.
+          executable: net > 0 && (CONFIG.DRY_RUN || dexConfigured()),
           // Stale-quote warning: OKX DEX quote is up to CEXDEX_TTL_MS + sweep old
           // vs ~12s blocks — real dislocations close within 1-2 blocks, so the
           // board edge is indicative only. Age shown so it's never mistaken live.
