@@ -95,9 +95,26 @@ export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: 
     };
     const j = await binanceSigned("fapi.binance.com", "/fapi/v1/order", p);
     const ok = !!j.orderId;
-    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, message: ok ? `Binance ${base} 선물 ${action}` : (j.msg || "선물 주문 실패") };
+    // MARKET fapi order returns executedQty + cumQuote — the hedge's real fill,
+    // fed into settle so perp P&L is a first-class leg.
+    const filledQty = j.executedQty ? Number(j.executedQty) : undefined;
+    const quoteFilled = j.cumQuote ? Number(j.cumQuote) : undefined;
+    return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, filledQty, quoteFilled, message: ok ? `Binance ${base} 선물 ${action}` : (j.msg || "선물 주문 실패") };
   } catch (e) {
     return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "선물 주문 실패" };
+  }
+}
+
+/** Free USDT margin on the futures wallet (live only; null = unknown/keys). */
+export async function binanceFuturesFree(): Promise<number | null> {
+  const { key } = bnKeys();
+  if (CONFIG.DRY_RUN || !key) return null;
+  try {
+    const j = await binanceSignedGet("/fapi/v2/balance", {});
+    const usdt = Array.isArray(j) ? j.find((b: { asset?: string }) => b.asset === "USDT") : null;
+    return usdt ? Number(usdt.availableBalance ?? 0) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -406,9 +423,12 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
     try {
       const j = await binanceSignedGet("/sapi/v1/capital/deposit/hisrec", { coin: base, startTime: sinceTs });
       const rec = Array.isArray(j)
-        ? j.find((d: { status?: number; insertTime?: number; txId?: string }) => d.status === 1 && (d.insertTime ?? 0) >= sinceTs)
+        ? j.find((d: { status?: number; insertTime?: number; txId?: string; amount?: string }) => d.status === 1 && (d.insertTime ?? 0) >= sinceTs)
         : undefined;
-      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txId, message: rec ? `Binance ${base} 입금 확인` : "입금 대기" };
+      // Thread the CREDITED amount forward — sell/close should size to what
+      // actually arrived, not to what was bought.
+      const credited = rec?.amount ? Number(rec.amount) : undefined;
+      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `Binance ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -421,10 +441,11 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const res = await fetch(`https://api.upbit.com/v1/deposits?${query}`, { headers: { Authorization: upbitAuth(query) }, cache: "no-store" });
       const j = await res.json();
       const rec = Array.isArray(j)
-        ? j.find((d: { state?: string; created_at?: string; txid?: string }) =>
+        ? j.find((d: { state?: string; created_at?: string; txid?: string; amount?: string }) =>
             d.state === "ACCEPTED" && new Date(d.created_at ?? 0).getTime() >= sinceTs)
         : undefined;
-      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txid, message: rec ? `Upbit ${base} 입금 확인` : "입금 대기" };
+      const credited = rec?.amount ? Number(rec.amount) : undefined;
+      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txid, filledQty: credited, message: rec ? `Upbit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }

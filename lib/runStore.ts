@@ -48,7 +48,7 @@ type Engine = {
   confirmed: Set<number>;
   qty?: number;
   startTs: number;
-  fills: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string };
+  fills: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
   opp: Opportunity;
 };
 
@@ -104,6 +104,8 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
   if (j.fill?.quote && !opts?.rollback) {
     if (stepId === "buy") { eng.fills.buyQuote = j.fill.quote; eng.fills.buyCcy = j.fill.ccy; }
     if (stepId === "sell") { eng.fills.sellQuote = j.fill.quote; eng.fills.sellCcy = j.fill.ccy; }
+    if (stepId === "hedge") eng.fills.hedgeOpenQuote = j.fill.quote;
+    if (stepId === "close") eng.fills.hedgeCloseQuote = j.fill.quote;
   }
   return { ok: !!j.ok, message: j.message as string | undefined, tx: j.tx as TxRef | undefined };
 }

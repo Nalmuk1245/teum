@@ -4,13 +4,14 @@ import { CONFIG, TAG_REQUIRED } from "@/lib/config";
 import { sendToken, walletAddress } from "@/lib/wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
-import { binanceSpot, binancePerp, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "@/lib/orders";
+import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "@/lib/orders";
 import { tokenFor } from "@/lib/tokens";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry, recordPnl } from "@/lib/risk";
 import { notifyNow } from "@/lib/telegram";
 import { recordTrade } from "@/lib/trades";
 import { estimateLegSlippage } from "@/lib/quote";
+import { withdrawFeeCoin } from "@/lib/networks";
 import { fetchUsdKrw } from "@/lib/exchanges";
 import type { StepId } from "@/lib/executionPlan";
 
@@ -57,7 +58,7 @@ async function runStep(
   stepId: StepId, opp: Opportunity, sizeUsd: number,
   opts: {
     rollback?: boolean; qty?: number; sinceTs?: number;
-    fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string };
+    fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
   },
 ): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
@@ -99,8 +100,27 @@ async function runStep(
       if (!r) return unwired(`${buy.venue} ${opp.base} 매수`);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: buy.quote } };
     }
-    case "hedge":
-      return await binancePerp(opp.base, "SHORT", qty);
+    case "hedge": {
+      // Hedge the ARRIVAL quantity, not the bought quantity — taker fee (base-
+      // denominated) and the flat withdrawal fee never reach the sell venue, so
+      // shorting the full buy leaves a residual net-short every trade.
+      const wFee = withdrawFeeCoin(opp.base) ?? 0;
+      const hedgeQty = Math.max(0, qty - wFee);
+      if (hedgeQty <= 0) return fail("헷지 수량 0 (출금비 차감 후)");
+      // Live margin gate: the coin is in-flight and can't collateralize the
+      // short — require free USDT ≥ 60% of notional (≈1.6x max) so a pump
+      // during transfer doesn't liquidate the hedge exactly when it matters.
+      if (!dry) {
+        const free = await binanceFuturesFree();
+        const price = opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
+        const notional = hedgeQty * price;
+        if (free !== null && free < notional * 0.6) {
+          return fail(`선물 가용 마진 부족 ($${free.toFixed(0)} < 필요 $${(notional * 0.6).toFixed(0)}) — 청산 위험, 헷지 차단`);
+        }
+      }
+      const r = await binancePerp(opp.base, "SHORT", hedgeQty);
+      return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: "USDT" } };
+    }
     case "withdraw": {
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
       // DRY: show a simulated withdraw tx chip (parity with transfer/deposit).
@@ -223,8 +243,10 @@ async function runStep(
       if (!r) return unwired(`${sell.venue} ${opp.base} 매도`);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: sell.quote } };
     }
-    case "close":
-      return await binancePerp(opp.base, "CLOSE", qty);
+    case "close": {
+      const r = await binancePerp(opp.base, "CLOSE", qty);
+      return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: "USDT" } };
+    }
     case "settle": {
       const logTrade = (realizedNetPct: number | null, realizedPnlUsd: number | null) =>
         void recordTrade({
@@ -246,11 +268,17 @@ async function runStep(
         const buyUsd = await toUsd(f.buyQuote, f.buyCcy);
         const sellUsd = await toUsd(f.sellQuote, f.sellCcy);
         if (buyUsd > 0 && sellUsd > 0) {
-          const pnl = sellUsd - buyUsd;
+          // Perp P&L is a first-class leg: SHORT opened at hedgeOpenQuote (USDT
+          // received), closed at hedgeCloseQuote (USDT paid) → open − close.
+          const perpPnl = (f.hedgeOpenQuote && f.hedgeCloseQuote)
+            ? f.hedgeOpenQuote - f.hedgeCloseQuote
+            : 0;
+          const pnl = sellUsd - buyUsd + perpPnl;
           const pct = (pnl / buyUsd) * 100;
-          if (!dry) recordPnl(pnl); // feeds the daily-loss limit
+          if (!dry) recordPnl(pnl); // feeds the daily-loss limit — spot+perp together
           logTrade(pct, pnl);
-          return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 실체결 기반` };
+          const perpNote = perpPnl !== 0 ? ` · 헷지 ${perpPnl >= 0 ? "+" : "−"}$${Math.abs(perpPnl).toFixed(2)}` : "";
+          return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)})${perpNote} · 실체결 기반` };
         }
       }
       const pnl = (opp.netPct / 100) * sizeUsd;
@@ -279,7 +307,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       stepId?: StepId; opportunity?: Opportunity; sizeUsd?: number;
       rollback?: boolean; qty?: number; sinceTs?: number;
-      fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string };
+      fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
     };
     if (!body.stepId || !body.opportunity) {
       return NextResponse.json({ ok: false, message: "stepId + opportunity 필요" }, { status: 400 });
