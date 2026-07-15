@@ -1,97 +1,162 @@
-// 상장따리 — new-listing detection. A brand-new KRW market on Upbit/Bithumb is
-// the fastest, most violent kimchi spike there is (the coin often trades far
-// above its global price for minutes). We poll the public market list on a tight
-// cadence, diff against the last snapshot, and flag/alert the instant a new
-// market appears (= real trading opened, not just an announcement).
+// 상장따리 — announcement-driven. The tradeable moment is when the LISTING
+// ANNOUNCEMENT drops, not when trading opens: the announcement makes Korean flow
+// bid the coin up on BOTH the Upbit price (the premium) and the global price. If
+// you buy on a global CEX in the first seconds after the notice — before the
+// global pump and long before Upbit trading opens — you're positioned ahead of it.
 //
-// The exchange-notice API (api-manager) is Cloudflare-gated off non-KR IPs, so
-// market-list diffing is the reliable signal. On a local KR box it fires within
-// the poll interval of the listing going live. Server-only.
+// Primary trigger: Upbit's announcement API (api-manager). It's Cloudflare-gated
+// off non-KR / datacenter IPs, so it works from a local KR box (the intended
+// deploy) and degrades to null elsewhere. Secondary/confirmation trigger: the
+// market-list diff (fires later, when trading actually opens).
 
 import { notifyNow } from "./telegram";
 
-const POLL_MS = 3000; // tight — listings are a race
-const FRESH_MS = 30 * 60_000; // a coin stays "new" for 30 min after listing
+const ANN_POLL_MS = 2500; // announcements are a sub-second race — poll tight
+const MKT_POLL_MS = 3000;
+const FRESH_MS = 60 * 60_000; // keep a play visible for 1h
 
-type Listing = { base: string; venue: "upbit" | "bithumb"; ts: number; overseas: boolean };
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
+const ANN_HEADERS = { "User-Agent": UA, "Accept": "application/json", "Referer": "https://upbit.com/service_center/notice" };
+
+// Titles that mean a NEW asset is being listed (not events/maintenance).
+const LISTING_RE = /(디지털\s*자산\s*추가|마켓\s*추가|거래지원|신규\s*상장|KRW\s*마켓|원화\s*마켓)/;
+// Ticker inside parens, e.g. "이름(ABC)" — uppercase 2–10 chars.
+const TICKER_RE = /\(([A-Z0-9]{2,10})\)/g;
+
+export type ListingPlay = {
+  base: string;
+  venue: "upbit" | "bithumb";
+  announcedAt: number; // notice time (or detection time)
+  overseas: boolean; // on a global CEX → arbable front-run
+  globalVenue?: string; // cheapest global venue that lists it
+  globalPrice?: number;
+  opened: boolean; // market-diff confirmed trading is live
+  title?: string;
+};
+
 type State = {
-  seen: Partial<Record<"upbit" | "bithumb", Set<string>>>; // baseline market sets
-  recent: Map<string, Listing>; // base → listing (within FRESH_MS)
-  loop: ReturnType<typeof setInterval> | null;
-  primed: boolean; // first poll only establishes the baseline (no alerts)
+  annSeen: Set<number>; // announcement ids already processed
+  mkt: Partial<Record<"upbit" | "bithumb", Set<string>>>; // market-list baselines
+  plays: Map<string, ListingPlay>; // base → play
+  loops: ReturnType<typeof setInterval>[];
+  primedAnn: boolean;
+  primedMkt: boolean;
 };
 const g = globalThis as unknown as { __arbListings?: State };
-g.__arbListings ??= { seen: {}, recent: new Map(), loop: null, primed: false };
+g.__arbListings ??= { annSeen: new Set(), mkt: {}, plays: new Map(), loops: [], primedAnn: false, primedMkt: false };
 const L = g.__arbListings;
 
+// Where is this coin cheapest to buy right now on a global CEX? Binance/Bybit/OKX.
+async function globalVenueFor(base: string): Promise<{ venue: string; price: number } | null> {
+  const tries: [string, string][] = [
+    ["binance", `https://api.binance.com/api/v3/ticker/price?symbol=${base}USDT`],
+    ["bybit", `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${base}USDT`],
+    ["okx", `https://www.okx.com/api/v5/market/ticker?instId=${base}-USDT`],
+  ];
+  for (const [venue, url] of tries) {
+    try {
+      const j = await (await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(3000) })).json();
+      const px = venue === "binance" ? Number(j.price)
+        : venue === "bybit" ? Number(j.result?.list?.[0]?.lastPrice)
+        : Number(j.data?.[0]?.last);
+      if (px > 0) return { venue, price: px };
+    } catch { /* next */ }
+  }
+  return null;
+}
+
+async function registerPlay(base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean) {
+  const existing = L.plays.get(base);
+  if (existing && fromAnnouncement) return; // announcement already registered it
+  const g2 = await globalVenueFor(base);
+  const play: ListingPlay = {
+    base, venue, announcedAt: existing?.announcedAt ?? Date.now(),
+    overseas: !!g2, globalVenue: g2?.venue, globalPrice: g2?.price,
+    opened: existing?.opened ?? false, title,
+  };
+  L.plays.set(base, play);
+  const head = fromAnnouncement ? "📢 상장 공지" : "🚨 거래 개시";
+  void notifyNow(
+    `${head} — <b>${base}</b> (${venue === "upbit" ? "업비트" : "빗썸"})\n` +
+    (g2
+      ? `해외 매수 지금: <b>${g2.venue}</b> @ ${g2.price}\n${fromAnnouncement ? "→ 거래개시 전 선점 · 김프 스파이크 대비" : "→ 거래 개시됨(늦음)"}`
+      : "해외 미상장 → 상장 펌핑만 (김프 아님)"),
+  );
+}
+
+// ── Announcement poll (primary) ───────────────────────────────────────────────
+async function pollAnnouncements() {
+  let items: { id: number; title: string }[] = [];
+  try {
+    const r = await fetch("https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade", {
+      headers: ANN_HEADERS, cache: "no-store", signal: AbortSignal.timeout(4000),
+    });
+    const ct = r.headers.get("content-type") ?? "";
+    if (!ct.includes("json")) return; // Cloudflare HTML challenge (non-KR IP) — skip
+    const j = await r.json();
+    const list = j?.data?.notices ?? j?.data?.list ?? j?.data ?? [];
+    items = (Array.isArray(list) ? list : []).map((x: { id: number; title: string }) => ({ id: x.id, title: x.title })).filter((x) => x.id && x.title);
+  } catch { return; }
+  if (!items.length) return;
+
+  const isFirst = !L.primedAnn;
+  for (const it of items) {
+    if (L.annSeen.has(it.id)) continue;
+    L.annSeen.add(it.id);
+    if (isFirst) continue; // prime the baseline silently
+    if (!LISTING_RE.test(it.title)) continue;
+    const tickers = new Set<string>();
+    let m: RegExpExecArray | null;
+    TICKER_RE.lastIndex = 0;
+    while ((m = TICKER_RE.exec(it.title))) tickers.add(m[1]);
+    for (const t of tickers) void registerPlay(t, "upbit", it.title, true);
+  }
+  L.primedAnn = true;
+}
+
+// ── Market-list diff (confirmation: trading opened) ───────────────────────────
 async function upbitMarkets(): Promise<Set<string>> {
   try {
-    const r = await fetch("https://api.upbit.com/v1/market/all", { cache: "no-store", signal: AbortSignal.timeout(4000) });
-    const j = (await r.json()) as Array<{ market: string }>;
+    const j = (await (await fetch("https://api.upbit.com/v1/market/all", { cache: "no-store", signal: AbortSignal.timeout(4000) })).json()) as Array<{ market: string }>;
     return new Set(j.filter((m) => m.market.startsWith("KRW-")).map((m) => m.market.slice(4)));
   } catch { return new Set(); }
 }
-async function bithumbMarkets(): Promise<Set<string>> {
-  try {
-    const r = await fetch("https://api.bithumb.com/public/ticker/ALL_KRW", { cache: "no-store", signal: AbortSignal.timeout(4000) });
-    const j = (await r.json()) as { status: string; data?: Record<string, unknown> };
-    if (j.status !== "0000" || !j.data) return new Set();
-    return new Set(Object.keys(j.data).filter((k) => k !== "date"));
-  } catch { return new Set(); }
-}
-
-// Is the coin already on a global CEX? (Then a listing = kimchi spike we can
-// actually arb: buy global, sell the pumped KR price.) Binance spot as proxy.
-async function onGlobal(base: string): Promise<boolean> {
-  try {
-    const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${base}USDT`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
-    const j = (await r.json()) as { price?: string };
-    return !!j.price;
-  } catch { return false; }
-}
-
-async function poll(): Promise<void> {
-  const [up, bt] = await Promise.all([upbitMarkets(), bithumbMarkets()]);
-  const check = async (venue: "upbit" | "bithumb", now: Set<string>) => {
-    if (now.size === 0) return; // fetch failed — don't diff against empty
-    const prev = L.seen[venue];
-    if (prev && L.primed) {
-      for (const base of now) {
-        if (!prev.has(base) && !L.recent.has(base)) {
-          const overseas = await onGlobal(base);
-          L.recent.set(base, { base, venue, ts: Date.now(), overseas });
-          void notifyNow(
-            `🚨 <b>${venue === "upbit" ? "업비트" : "빗썸"} 신규 상장 — ${base}</b>\n` +
-            (overseas ? "해외 상장 있음 → 김프 급등 가능 (해외 매수 준비)" : "해외 미상장 → 상장 펌핑만 (김프 아님)"),
-          );
-        }
+async function pollMarkets() {
+  const now = await upbitMarkets();
+  if (now.size === 0) return;
+  const prev = L.mkt.upbit;
+  if (prev && L.primedMkt) {
+    for (const base of now) {
+      if (!prev.has(base)) {
+        const play = L.plays.get(base);
+        if (play) { play.opened = true; } // announcement play now trading — upgrade
+        else void registerPlay(base, "upbit", undefined, false); // no notice seen (non-KR) → fallback
       }
     }
-    L.seen[venue] = now;
-  };
-  await check("upbit", up);
-  await check("bithumb", bt);
-  L.primed = true;
-  // Expire stale entries.
+  }
+  L.mkt.upbit = now;
+  L.primedMkt = true;
   const cutoff = Date.now() - FRESH_MS;
-  for (const [b, l] of L.recent) if (l.ts < cutoff) L.recent.delete(b);
+  for (const [b, p] of L.plays) if (p.announcedAt < cutoff) L.plays.delete(b);
 }
 
-/** Start the background listing watcher (idempotent; re-armed on hot reload). */
+/** Start both watchers (idempotent; re-armed on hot reload). */
 export function startListingWatch(): void {
-  if (L.loop) clearInterval(L.loop);
-  void poll();
-  L.loop = setInterval(() => void poll(), POLL_MS);
+  for (const l of L.loops) clearInterval(l);
+  L.loops = [];
+  void pollAnnouncements(); void pollMarkets();
+  L.loops.push(setInterval(() => void pollAnnouncements(), ANN_POLL_MS));
+  L.loops.push(setInterval(() => void pollMarkets(), MKT_POLL_MS));
 }
 
-/** Is this base a fresh listing? (used to badge/boost the board opp) */
-export function listingInfo(base: string): { venue: string; ageSec: number; overseas: boolean } | null {
-  const l = L.recent.get(base);
-  if (!l) return null;
-  return { venue: l.venue, ageSec: Math.round((Date.now() - l.ts) / 1000), overseas: l.overseas };
+/** Is this base a fresh listing? (board badge/boost) */
+export function listingInfo(base: string): { venue: string; ageSec: number; overseas: boolean; opened: boolean } | null {
+  const p = L.plays.get(base);
+  if (!p) return null;
+  return { venue: p.venue, ageSec: Math.round((Date.now() - p.announcedAt) / 1000), overseas: p.overseas, opened: p.opened };
 }
 
-/** Recent listings, newest first (for the dashboard). */
-export function recentListings(): Listing[] {
-  return [...L.recent.values()].sort((a, b) => b.ts - a.ts);
+/** Recent listing plays, newest first (dashboard). */
+export function recentListings(): ListingPlay[] {
+  return [...L.plays.values()].sort((a, b) => b.announcedAt - a.announcedAt);
 }

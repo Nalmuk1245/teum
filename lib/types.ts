@@ -66,9 +66,10 @@ export type Opportunity = {
   rateBasis?: "trade" | "apr";
   /** Gap persistence — how long/steadily this edge has held (flicker vs real). */
   persistence?: { heldSec: number; hitRatePct: number; samples: number; volPctPerMin: number; jumpPct: number };
-  /** Fresh KR listing (상장따리): the coin just listed on Upbit/Bithumb — the
-   *  fastest kimchi spike. overseas = also on a global CEX (arbable). */
-  newListing?: { venue: string; ageSec: number; overseas: boolean };
+  /** Fresh KR listing (상장따리): announced/opened on Upbit/Bithumb — the
+   *  fastest kimchi spike. overseas = on a global CEX (front-runnable);
+   *  opened = trading is live (else: announced, pre-open). */
+  newListing?: { venue: string; ageSec: number; overseas: boolean; opened: boolean };
   /** Transfer-window risk: expected PRICE drift over the in-flight ETA (the
    *  unhedged exposure is the coin's price vol, not the premium's), plus the
    *  worst recent single-step jump and the USDT/KRW (tether-premium) drift that

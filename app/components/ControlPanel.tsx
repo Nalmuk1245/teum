@@ -280,7 +280,7 @@ export function TelegramCard() {
   );
 }
 
-type Listing = { base: string; venue: string; ts: number; overseas: boolean };
+type Listing = { base: string; venue: string; announcedAt: number; overseas: boolean; opened: boolean; globalVenue?: string; globalPrice?: number; title?: string };
 function ListingsCard() {
   const [rows, setRows] = useState<Listing[]>([]);
   useEffect(() => {
@@ -296,19 +296,26 @@ function ListingsCard() {
         <span style={{ width: 6, height: 6, borderRadius: 999, background: rows.length ? "var(--amber)" : "var(--text-mute)" }} />
       </div>
       {rows.length === 0 ? (
-        <div style={{ fontSize: 11.5, color: "var(--text-mute)" }}>감시 중 — 업비트/빗썸 신규 상장을 3초마다 폴링, 뜨면 텔레그램·보드 최상단</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-mute)" }}>감시 중 — 업비트 상장 공지 2.5s·마켓 3s 폴링. 공지 뜨면 해외 매수처와 함께 텔레그램·보드 최상단. (공지 API는 KR IP에서 동작)</div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           {rows.map((l) => {
-            const age = Math.round((Date.now() - l.ts) / 1000);
+            const age = Math.round((Date.now() - l.announcedAt) / 1000);
             return (
-              <div key={l.base + l.venue} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                <span style={{ fontWeight: 800 }}>{l.base}</span>
-                <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`} 전</span>
-                <span style={{ flex: 1 }} />
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: l.overseas ? "var(--pos)" : "var(--text-mute)" }}>
-                  {l.overseas ? "해외 상장 · 김프 가능" : "해외 미상장"}
-                </span>
+              <div key={l.base + l.venue} style={{ borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  <span style={{ fontWeight: 800 }}>{l.base}</span>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>
+                    {l.opened ? "거래 개시" : "공지(선점)"}
+                  </span>
+                  <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`} 전</span>
+                  <span style={{ flex: 1 }} />
+                </div>
+                <div style={{ fontSize: 11, marginTop: 2, color: l.overseas ? "var(--pos)" : "var(--text-mute)" }}>
+                  {l.overseas
+                    ? `해외 매수: ${l.globalVenue} @ ${l.globalPrice} — 거래개시 전 선점`
+                    : "해외 미상장 (김프 아님 · 상장 펌핑만)"}
+                </div>
               </div>
             );
           })}

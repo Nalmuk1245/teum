@@ -90,7 +90,7 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
           </span>
           <span style={{ fontWeight: 700, fontSize: 15 }}>{o.base}</span>
           {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 4, padding: "0 3px" }}>mock</span>}
-          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>신규상장</span>}
+          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         </span>
         <span style={{ textAlign: "right", flex: "0 0 auto" }}>
           <span
@@ -200,7 +200,7 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
       {/* pair */}
       <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
         <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{o.base}</span>
-        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>신규상장</span>}
+        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         {o.mock ? (
           <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 5, padding: "0 4px" }}>
             mock
