@@ -361,8 +361,11 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
           </div>
 
           {/* Position / smart unwind — once a position exists (buy filled) and
-              the run isn't full-auto. Store-backed → survives modal close. */}
-          {run && statuses.buy === "done" && run.autoLevel !== "auto" && (
+              the run isn't full-auto. Store-backed → survives modal close.
+              Hidden again when nothing is left to unwind (sold or settled) —
+              unless a manual unwind happened, whose log/PnL stays visible. */}
+          {run && statuses.buy === "done" && run.autoLevel !== "auto" &&
+            (run.remaining > run.totalQty * 1e-6 || run.unwindLog.length > 0) && (
             <PositionPanel run={run} />
           )}
 

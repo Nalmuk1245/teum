@@ -211,6 +211,9 @@ async function loop(id: string) {
       const tq = eng.qty ?? (price ? run().sizeUsd / price : 0);
       upd.totalQty = tq; upd.remaining = tq;
     }
+    // The sell step disposes the whole spot position — nothing left to smart-
+    // unwind (settle too, as a backstop for plans without a sell leg).
+    if (step.id === "sell" || step.id === "settle") upd.remaining = 0;
     patch(id, upd);
     eng.i = i + 1;
   }
