@@ -74,32 +74,20 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
   const [buy, sell] = o.legs;
   const isApr = o.rateBasis === "apr";
   return (
-    <div className={flashing ? "spike-flash" : undefined} style={{ padding: "9px 11px 9px 9px", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${km.color}` }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-          <span
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5,
-              background: "color-mix(in srgb, " + km.color + " 14%, transparent)",
-              color: km.color, borderRadius: 999, padding: "3px 8px", fontSize: 10, fontWeight: 600,
-              flex: "0 0 auto",
-            }}
-          >
-            <span style={{ width: 5, height: 5, borderRadius: 999, background: km.color }} />
+    <div className={flashing ? "spike-flash" : undefined} style={{ padding: "12px 12px", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: 14.5, letterSpacing: "0.01em" }}>{o.base}</span>
+          <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
             {km.label}
           </span>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>{o.base}</span>
-          {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 4, padding: "0 3px" }}>mock</span>}
-          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
+          {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 2, padding: "0 3px" }}>mock</span>}
+          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         </span>
         <span style={{ textAlign: "right", flex: "0 0 auto" }}>
           <span
             className="tnum"
-            style={{
-              display: "inline-block",
-              background: net > 0 ? "var(--pos-soft)" : net < 0 ? "var(--neg-soft)" : "transparent",
-              color: netTone, fontWeight: 800, fontSize: 16, borderRadius: 6, padding: "2px 8px",
-            }}
+            style={{ display: "inline-block", color: netTone, fontWeight: 700, fontSize: 19, letterSpacing: "-0.03em", lineHeight: 1 }}
           >
             {pct(net)}
           </span>
@@ -146,11 +134,11 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
             disabled={!o.executable}
             onClick={() => onExecute(o)}
             style={{
-              borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
+              borderRadius: 2, padding: "8px 16px", fontSize: 13, fontWeight: 600,
               cursor: o.executable ? "pointer" : "not-allowed",
               border: o.executable ? "none" : "1px solid var(--border-strong)",
-              background: o.executable ? "var(--brand-grad)" : "transparent",
-              color: o.executable ? "#fff" : "var(--text-mute)",
+              background: o.executable ? "var(--brand)" : "transparent",
+              color: o.executable ? "#10141a" : "var(--text-mute)",
               boxShadow: "none",
               flex: "0 0 auto",
             }}
@@ -183,26 +171,23 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
         transition: "background 100ms",
       }}
     >
-      {/* strategy pill */}
+      {/* strategy label — plain small-caps text, no chip box */}
       <span
         style={{
           justifySelf: "start",
-          display: "inline-flex", alignItems: "center", gap: 6,
-          background: "color-mix(in srgb, " + km.color + " 14%, transparent)",
-          color: km.color, borderRadius: 999, padding: "3px 9px",
-          fontSize: 11, fontWeight: 600,
+          color: km.color, fontSize: 10, fontWeight: 600,
+          letterSpacing: "0.1em", textTransform: "uppercase",
         }}
       >
-        <span style={{ width: 6, height: 6, borderRadius: 999, background: km.color }} />
         {km.label}
       </span>
 
       {/* pair */}
       <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
         <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{o.base}</span>
-        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
+        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         {o.mock ? (
-          <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 5, padding: "0 4px" }}>
+          <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 2, padding: "0 4px" }}>
             mock
           </span>
         ) : !isApr && <PersistChip p={o.persistence} />}
@@ -230,11 +215,7 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
       </span>
       <span
         className="tnum"
-        style={{
-          justifySelf: "end",
-          background: net > 0 ? "var(--pos-soft)" : net < 0 ? "var(--neg-soft)" : "transparent",
-          color: netTone, fontWeight: 700, borderRadius: 7, padding: "3px 8px",
-        }}
+        style={{ justifySelf: "end", color: netTone, fontWeight: 700, fontSize: 14 }}
       >
         {pct(net)}
       </span>
@@ -252,7 +233,7 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
           onClick={() => onExecute(o)}
           style={{
             justifySelf: "end",
-            borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,
+            borderRadius: 2, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,
             cursor: o.executable ? "pointer" : "not-allowed",
             border: o.executable ? "none" : "1px solid var(--border-strong)",
             background: o.executable ? "var(--brand-grad)" : "transparent",

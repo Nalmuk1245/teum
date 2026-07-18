@@ -72,7 +72,7 @@ export function AssetSummary({ isMobile, onOpen }: { isMobile?: boolean; onOpen?
       {skewed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--neg)" }}>편중</span>}
       <span style={{ flex: 1 }} />
       {pf.mock && (
-        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 2, padding: "1px 7px" }}>
           데모
         </span>
       )}
@@ -114,7 +114,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>총자본 (USD 환산)</span>
           {pf.mock && (
-            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 2, padding: "1px 7px" }}>
               데모 — 키 넣으면 실잔고
             </span>
           )}
@@ -132,7 +132,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
           <span style={{ color: "var(--brand-2)" }}>글로벌 · USDT {usd(pf.globalUsd)}</span>
           <span style={{ color: "var(--sky)" }}>KR · 원화 {usd(pf.krUsd)}</span>
         </div>
-        <div style={{ display: "flex", height: 10, borderRadius: 999, overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", height: 10, borderRadius: 2, overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)" }}>
           <div style={{ width: `${g}%`, background: "var(--brand)" }} />
           <div style={{ width: `${100 - g}%`, background: "var(--sky)" }} />
         </div>
@@ -142,7 +142,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
         </div>
 
         {skewed ? (
-          <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 8, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
+          <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 2, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
             {g > 85
               ? "글로벌 과다 — USDT 놀고 있음. KR 재고 보충하거나 규모 확대"
               : `KR 과다 — 원화가 묶임. USD 회수(리패트리에이션)를 원/USDT 유리할 때 배치로 (목표 글로벌 ${target}%)`}
@@ -239,7 +239,7 @@ function AssetTable({ rows, header }: {
           <span style={{ textAlign: "right" }}>
             <span className="tnum" style={{ fontSize: 12.5, fontWeight: 600 }}>{usd(r.usdValue)}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 2 }}>
-              <span style={{ width: 46, height: 3, borderRadius: 999, background: "var(--bg)", overflow: "hidden" }}>
+              <span style={{ width: 46, height: 3, borderRadius: 2, background: "var(--bg)", overflow: "hidden" }}>
                 <span style={{ display: "block", width: `${Math.min(100, r.sharePct)}%`, height: "100%", background: "var(--brand)" }} />
               </span>
               <span className="tnum" style={{ fontSize: 9.5, color: "var(--text-mute)", minWidth: 26 }}>{r.sharePct.toFixed(0)}%</span>

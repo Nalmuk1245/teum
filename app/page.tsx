@@ -182,22 +182,12 @@ export default function Cockpit() {
           display: "flex", alignItems: "center", gap: isMobile ? 10 : 14,
           padding: isMobile ? "9px 12px" : "9px 16px",
           borderBottom: "1px solid var(--border)",
-          background: "rgba(11,14,17,0.85)",
+          background: "rgba(21,23,27,0.9)",
           backdropFilter: "blur(12px)",
         }}
       >
-        <div
-          style={{
-            width: 28, height: 28, borderRadius: 6,
-            background: "var(--brand-grad)",
-            display: "grid", placeItems: "center",
-            color: "#181a20", fontWeight: 800, fontSize: 14,
-          }}
-        >
-          ⇄
-        </div>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
             Arb Cockpit
           </span>
           {!isMobile && (
@@ -217,10 +207,10 @@ export default function Cockpit() {
             border: `1px solid ${runsStore.killed ? "var(--neg)" : "var(--border-strong)"}`,
             background: runsStore.killed ? "var(--neg-soft)" : "transparent",
             color: runsStore.killed ? "var(--neg)" : "var(--text-dim)",
-            borderRadius: 6, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+            borderRadius: 2, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 999, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 2, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
           {runsStore.killed ? "중단됨" : "STOP"}
         </button>
         <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
@@ -229,9 +219,8 @@ export default function Cockpit() {
         {meta && (
           <Pill
             text={meta.dryRun ? "모의" : "실주문"}
-            tone={meta.dryRun ? "var(--pos)" : "var(--neg)"}
+            tone={meta.dryRun ? "var(--amber)" : "var(--neg)"}
             soft
-            dot
           />
         )}
       </header>
@@ -240,9 +229,9 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 3,
-            padding: 4, marginBottom: isMobile ? 10 : 14,
-            background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12,
+            display: "grid", gridTemplateColumns: "repeat(5, 1fr)",
+            marginBottom: isMobile ? 10 : 14,
+            borderBottom: "1px solid var(--border)",
           }}
         >
           {([
@@ -264,20 +253,22 @@ export default function Cockpit() {
                   setMode(m.k);
                 }}
                 style={{
-                  border: "none", cursor: "pointer", borderRadius: 9, padding: "9px 8px",
-                  background: active ? "var(--brand-soft)" : "transparent",
+                  border: "none", cursor: "pointer", borderRadius: 0, padding: "10px 8px",
+                  background: "transparent",
+                  borderBottom: active ? "2px solid var(--brand)" : "2px solid transparent",
+                  marginBottom: -1,
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
                 }}
               >
-                <span style={{ fontSize: 14, fontWeight: 700, color: active ? "var(--brand-2)" : "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 13.5, fontWeight: active ? 700 : 500, color: active ? "var(--text)" : "var(--text-mute)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {m.label}
                   {m.k === "control" && activeRuns > 0 && (
-                    <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "#181a20", background: "var(--brand)", borderRadius: 999, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
+                    <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "#181a20", background: "var(--brand)", borderRadius: 2, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
                       {activeRuns}
                     </span>
                   )}
                 </span>
-                <span style={{ fontSize: 11, color: active ? "var(--brand)" : "var(--text-mute)" }}>
+                <span style={{ fontSize: 9, letterSpacing: "0.08em", color: active ? "var(--text-dim)" : "var(--text-mute)" }}>
                   {m.sub}
                 </span>
               </button>
@@ -342,7 +333,7 @@ export default function Cockpit() {
           style={{
             display: "inline-flex", gap: 4, padding: 4,
             background: "var(--card)", border: "1px solid var(--border)",
-            borderRadius: 999,
+            borderRadius: 2,
           }}
         >
           {(["all", ...GAP_KINDS] as const).map((k) => {
@@ -355,7 +346,7 @@ export default function Cockpit() {
                 type="button"
                 onClick={() => setFilter(k)}
                 style={{
-                  border: "none", cursor: "pointer", borderRadius: 999,
+                  border: "none", cursor: "pointer", borderRadius: 2,
                   padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
                   background: active ? "var(--brand-soft)" : "transparent",
                   color: active ? "var(--brand-2)" : "var(--text-dim)",
@@ -405,10 +396,10 @@ export default function Cockpit() {
                   background: alertsOn ? "var(--brand-soft)" : "transparent",
                   border: `1px solid ${alertsOn ? "var(--brand)" : "var(--border)"}`,
                   color: alertsOn ? "var(--brand-2)" : "var(--text-mute)",
-                  borderRadius: 4, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+                  borderRadius: 2, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
                 }}
               >
-                <span style={{ width: 5, height: 5, borderRadius: 999, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
+                <span style={{ width: 5, height: 5, borderRadius: 2, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
                 알림 {alertsOn ? "ON" : "OFF"}
               </button>
             )}
@@ -436,7 +427,7 @@ export default function Cockpit() {
             borderTop: "1px solid var(--border)",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 999, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 2, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
           <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
             최고 <b style={{ color: "var(--text)" }}>{best.o.base}</b>
           </span>

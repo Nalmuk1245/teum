@@ -54,19 +54,19 @@ export function Tile({
   return (
     <div
       style={{
-        background: "var(--card)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius)", padding: compact ? "8px 10px" : "10px 14px",
-        boxShadow: "var(--shadow-sm)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius)", padding: compact ? "10px 11px" : "12px 14px",
       }}
     >
-      <div style={{ color: "var(--text-dim)", fontSize: compact ? 11 : 12, fontWeight: 500, whiteSpace: "nowrap" }}>{label}</div>
       <div
         className="tnum"
-        style={{ color: tone ?? "var(--text)", fontSize: compact ? 17 : 20, fontWeight: 700, letterSpacing: "-0.02em", marginTop: compact ? 3 : 4 }}
+        style={{ color: tone ?? "var(--text)", fontSize: compact ? 20 : 22, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1 }}
       >
         {value}
       </div>
-      {sub && <div style={{ color: "var(--text-mute)", fontSize: compact ? 10 : 11, marginTop: 2, whiteSpace: "nowrap" }}>{sub}</div>}
+      <div style={{ color: "var(--text-mute)", fontSize: 9, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 7, whiteSpace: "nowrap" }}>
+        {label}{sub ? <span style={{ color: "var(--text-mute)", opacity: 0.7 }}> · {sub}</span> : null}
+      </div>
     </div>
   );
 }
@@ -89,7 +89,7 @@ export function Empty({ text }: { text: string }) {
 
 export function Metric({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
-    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}>
+    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, padding: "8px 10px" }}>
       <div style={{ fontSize: 10, color: "var(--text-mute)" }}>{label}</div>
       <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: tone ?? "var(--text)" }}>{value}</div>
       {sub && <div style={{ fontSize: 9.5, color: "var(--text-mute)" }}>{sub}</div>}
@@ -118,7 +118,7 @@ export function Line({
 
 export function Warn({ text }: { text: string }) {
   return (
-    <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 8, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
+    <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 2, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
       {text}
     </div>
   );
@@ -209,7 +209,7 @@ export function PersistChip({ p }: { p?: Opportunity["persistence"] }) {
       title={`지속 ${label} · 적중률 ${p.hitRatePct}%`}
       style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600, color: tone }}
     >
-      <span style={{ width: 4, height: 4, borderRadius: 999, background: tone }} />
+      <span style={{ width: 4, height: 4, borderRadius: 2, background: tone }} />
       {held <= 0 ? "신규" : `지속 ${label}`}
     </span>
   );
@@ -228,7 +228,7 @@ export function ScanAge({ ts, live }: { ts: number; live: boolean }) {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--text-mute)" }}>
       {live && (
         <>
-          <span style={{ width: 5, height: 5, borderRadius: 999, background: "var(--pos)" }} />
+          <span style={{ width: 5, height: 5, borderRadius: 2, background: "var(--pos)" }} />
           <span style={{ color: "var(--pos)", fontWeight: 600 }}>실시간</span>
           <span>·</span>
         </>
@@ -252,12 +252,12 @@ export function LiveDots({ status, ages, isMobile }: { status: LiveStatus; ages:
         title={`${label} · ${age != null ? age + "s 전" : "미수신"}`}
         style={{
           display: "inline-flex", alignItems: "center", gap: 4,
-          border: "1px solid var(--border)", borderRadius: 4,
+          border: "1px solid var(--border)", borderRadius: 2,
           padding: isMobile ? "2px 5px" : "2px 7px",
           background: "var(--card)",
         }}
       >
-        <span style={{ width: 5, height: 5, borderRadius: 999, background: tone }} />
+        <span style={{ width: 5, height: 5, borderRadius: 2, background: tone }} />
         <span className="tnum" style={{ fontSize: 10, fontWeight: 600, color: on ? "var(--text-dim)" : "var(--text-mute)" }}>
           {label}
           {!isMobile && age != null && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}> {age}s</span>}
@@ -288,10 +288,10 @@ export function Pill({
         display: "inline-flex", alignItems: "center", gap: 6,
         border: `1px solid ${soft ? "transparent" : tone}`,
         background: soft ? "color-mix(in srgb, " + tone + " 14%, transparent)" : "transparent",
-        color: tone, fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "5px 11px",
+        color: tone, fontSize: 12, fontWeight: 600, borderRadius: 2, padding: "5px 11px",
       }}
     >
-      {dot && <span style={{ width: 7, height: 7, borderRadius: 999, background: tone }} />}
+      {dot && <span style={{ width: 7, height: 7, borderRadius: 2, background: tone }} />}
       {text}
     </span>
   );
@@ -299,5 +299,5 @@ export function Pill({
 
 export const xBtn: React.CSSProperties = {
   background: "transparent", border: "1px solid var(--border-strong)",
-  color: "var(--text-dim)", fontSize: 13, borderRadius: 8, padding: "4px 9px", cursor: "pointer",
+  color: "var(--text-dim)", fontSize: 13, borderRadius: 2, padding: "4px 9px", cursor: "pointer",
 };

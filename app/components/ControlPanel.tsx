@@ -86,7 +86,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
   const field = (label: string, key: "perTrade" | "inFlight" | "dailyLoss") => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 2, padding: "6px 8px", background: "var(--bg)" }}>
         <span style={{ color: "var(--text-mute)", fontSize: 12 }}>$</span>
         <input
           className="tnum"
@@ -123,7 +123,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
               <span>총 노출 (진행 중)</span>
               <span className="tnum">{usd(inFlight)} / {usd(rs.maxInFlightUsd)}</span>
             </div>
-            <div style={{ height: 5, borderRadius: 999, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 5, borderRadius: 2, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
               <div style={{ width: `${flightPct}%`, height: "100%", background: flightPct > 90 ? "var(--neg)" : "var(--brand)" }} />
             </div>
           </div>
@@ -134,7 +134,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
                 {rs.realizedPnlUsd >= 0 ? "+" : "−"}${Math.abs(rs.realizedPnlUsd).toFixed(2)}
               </span>
             </div>
-            <div style={{ height: 5, borderRadius: 999, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 5, borderRadius: 2, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
               <div style={{ width: `${lossPct}%`, height: "100%", background: lossPct > 80 ? "var(--neg)" : "var(--amber)" }} />
             </div>
             <div style={{ fontSize: 10, color: "var(--text-mute)", marginTop: 3 }}>손실 한도까지 {usd(Math.max(0, rs.maxDailyLossUsd - loss))} 남음</div>
@@ -176,7 +176,7 @@ export function GatesCard() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="코인 검색 (예: XRP)"
-        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 8 }}
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 8 }}
       />
       {!data ? (
         <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "8px 0" }}>조회 중…</div>
@@ -263,11 +263,11 @@ export function TelegramCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>텔레그램 알림</span>
-        <span style={{ width: 6, height: 6, borderRadius: 999, background: on ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 2, background: on ? "var(--pos)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, color: on ? "var(--pos)" : "var(--text-mute)" }}>{on ? "연결됨" : "키 필요"}</span>
         <span style={{ flex: 1 }} />
         {on && (
-          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             {busy ? "…" : "테스트 발송"}
           </button>
         )}
@@ -287,7 +287,7 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
   const field = (label: string, key: "minNet" | "minHeld" | "sizeUsd", suffix: string) => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 2, padding: "6px 8px", background: "var(--bg)" }}>
         <input className="tnum" inputMode="decimal" value={String(cfg[key])} disabled={cfg.armed}
           onChange={(e) => onChange({ ...cfg, [key]: num(e.target.value) })}
           style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: "var(--text)", fontSize: 13, outline: "none" }} />
@@ -299,7 +299,7 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
     <div style={{ background: cfg.armed ? "var(--brand-soft)" : "var(--card)", border: `1px solid ${cfg.armed ? "var(--brand)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>조건부 자동 진입</span>
-        <span style={{ width: 6, height: 6, borderRadius: 999, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 2, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, color: cfg.armed ? "var(--pos)" : "var(--text-mute)" }}>{cfg.armed ? "무장됨" : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
         <button type="button" disabled={killed} onClick={() => onChange({ ...cfg, armed: !cfg.armed })}
@@ -345,7 +345,7 @@ function ListingsCard() {
     <div style={{ background: "var(--card)", border: `1px solid ${rows.length ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: rows.length ? 8 : 0 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>상장따리 — 최근 신규 상장</span>
-        <span style={{ width: 6, height: 6, borderRadius: 999, background: rows.length ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 2, background: rows.length ? "var(--amber)" : "var(--text-mute)" }} />
       </div>
       {rows.length === 0 ? (
         <div style={{ fontSize: 11.5, color: "var(--text-mute)" }}>감시 중 — 업비트 상장 공지 2.5s·마켓 3s 폴링. 공지 뜨면 해외 매수처와 함께 텔레그램·보드 최상단. (공지 API는 KR IP에서 동작)</div>
@@ -357,7 +357,7 @@ function ListingsCard() {
               <div key={l.base + l.venue} style={{ borderTop: "1px solid var(--border)", paddingTop: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
                   <span style={{ fontWeight: 800 }}>{l.base}</span>
-                  <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 4, padding: "1px 5px" }}>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>
                     {l.opened ? "거래 개시" : "공지(선점)"}
                   </span>
                   <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`} 전</span>
@@ -375,7 +375,7 @@ function ListingsCard() {
                       type="button"
                       disabled={buying === l.base}
                       onClick={() => void quickBuy(l.base)}
-                      style={{ border: "none", borderRadius: 6, padding: "5px 12px", background: "var(--brand-grad)", color: "#181a20", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
+                      style={{ border: "none", borderRadius: 2, padding: "5px 12px", background: "var(--brand-grad)", color: "#181a20", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
                     >
                       {buying === l.base ? "…" : `$${buyUsd} 매수`}
                     </button>
@@ -403,7 +403,7 @@ export function ToolsCard() {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {tools.map((x) => (
           <div key={x.t} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
-            <span style={{ marginTop: 5, width: 5, height: 5, borderRadius: 999, background: "var(--brand)", flex: "0 0 auto" }} />
+            <span style={{ marginTop: 5, width: 5, height: 5, borderRadius: 2, background: "var(--brand)", flex: "0 0 auto" }} />
             <div>
               <div style={{ fontSize: 12.5, fontWeight: 600 }}>{x.t}</div>
               <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{x.d}</div>
@@ -458,7 +458,7 @@ export function RunsDashboard({ runs, onOpen }: {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 6, height: 6, borderRadius: 999, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
+                <span style={{ width: 6, height: 6, borderRadius: 2, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
                 <span style={{ fontWeight: 700, fontSize: 13.5 }}>{r.base}</span>
                 <span style={{ fontSize: 11, color: "var(--text-mute)" }}>{r.route}</span>
                 <span style={{ flex: 1 }} />
@@ -466,7 +466,7 @@ export function RunsDashboard({ runs, onOpen }: {
                 <span style={{ fontSize: 11, fontWeight: 600, color: ph.c }}>{ph.t}</span>
               </div>
               {/* progress */}
-              <div style={{ display: "flex", height: 5, borderRadius: 999, overflow: "hidden", background: "var(--bg)", marginTop: 8 }}>
+              <div style={{ display: "flex", height: 5, borderRadius: 2, overflow: "hidden", background: "var(--bg)", marginTop: 8 }}>
                 <div style={{ width: `${total ? (doneCount / total) * 100 : 0}%`, background: r.phase === "error" ? "var(--neg)" : "var(--brand)", transition: "width 200ms" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 10.5, color: "var(--text-mute)" }}>
