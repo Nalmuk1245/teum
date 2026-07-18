@@ -120,7 +120,8 @@ async function revalidate(eng: Engine, sizeUsd: number) {
   try {
     const res = await fetch("/api/quote", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ opportunity: eng.opp, sizeUsd }),
+      // fresh: money is about to move — never decide off a cached book
+      body: JSON.stringify({ opportunity: eng.opp, sizeUsd, fresh: true }),
     });
     const j = await res.json();
     const q = j.quote;

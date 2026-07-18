@@ -10,11 +10,12 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       opportunity?: Opportunity;
       sizeUsd?: number;
+      fresh?: boolean; // bypass the book/fx micro-cache (pre-trade revalidation)
     };
     if (!body.opportunity || !body.sizeUsd) {
       return NextResponse.json({ error: "opportunity + sizeUsd required" }, { status: 400 });
     }
-    const quote = await quoteOpportunity(body.opportunity, body.sizeUsd);
+    const quote = await quoteOpportunity(body.opportunity, body.sizeUsd, { fresh: body.fresh });
     return NextResponse.json({ quote });
   } catch (e) {
     return NextResponse.json(

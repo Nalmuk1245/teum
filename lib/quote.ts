@@ -15,6 +15,41 @@ import { getAdapter, fetchUsdKrw } from "./exchanges";
 
 type LevelUsd = { priceUsd: number; size: number };
 
+// ── Micro-cache (books + fx) ──────────────────────────────────────────────────
+// A quote is 3 REST calls; size tweaks and the 5s modal auto-refresh would
+// re-fetch identical books. 2.5s TTL keeps repeat quotes ~instant while staying
+// fresher than the 3s scan. Live-money revalidation passes fresh=true to bypass
+// reads (it still populates the cache).
+type Book = { bids: { price: number; size: number }[]; asks: { price: number; size: number }[] };
+const g = globalThis as unknown as {
+  __arbQuoteCache?: { books: Map<string, { ts: number; v: Book }>; fx: Map<string, { ts: number; v: number | null }> };
+};
+g.__arbQuoteCache ??= { books: new Map(), fx: new Map() };
+const QC = g.__arbQuoteCache;
+const QUOTE_TTL_MS = 2500;
+
+async function cachedBook(
+  fetcher: (symbol: string) => Promise<Book>,
+  venue: Venue,
+  symbol: string,
+  fresh: boolean,
+): Promise<Book> {
+  const key = `${venue}:${symbol}`;
+  const hit = QC.books.get(key);
+  if (!fresh && hit && Date.now() - hit.ts < QUOTE_TTL_MS) return hit.v;
+  const v = await fetcher(symbol);
+  if (v.bids.length || v.asks.length) QC.books.set(key, { ts: Date.now(), v });
+  return v;
+}
+
+async function cachedFx(venue: Venue, fresh: boolean): Promise<number | null> {
+  const hit = QC.fx.get(venue);
+  if (!fresh && hit && Date.now() - hit.ts < QUOTE_TTL_MS) return hit.v;
+  const v = await fetchUsdKrw(venue);
+  if (v != null) QC.fx.set(venue, { ts: Date.now(), v });
+  return v;
+}
+
 const toUsd = (price: number, quote: string, usdKrw: number) =>
   quote === "KRW" ? price / usdKrw : price; // USDT/USD ≈ 1
 
@@ -79,7 +114,9 @@ export async function estimateLegSlippage(
 export async function quoteOpportunity(
   opp: Opportunity,
   sizeUsd: number,
+  opts?: { fresh?: boolean },
 ): Promise<Quote | null> {
+  const fresh = opts?.fresh ?? false;
   const buyLeg = opp.legs.find((l) => l.side === "buy");
   const sellLeg = opp.legs.find((l) => l.side === "sell");
   if (!buyLeg || !sellLeg) return null;
@@ -88,16 +125,16 @@ export async function quoteOpportunity(
   const sellAd = getAdapter(sellLeg.venue);
   if (!buyAd?.fetchOrderBook || !sellAd?.fetchOrderBook) return null; // unwired (mock)
 
-  // FX from whichever leg is KRW-quoted, from that venue.
+  // FX from whichever leg is KRW-quoted, from that venue. All three calls are
+  // independent — one round-trip, not two.
   const krVenue: Venue | null =
     buyLeg.quote === "KRW" ? buyLeg.venue : sellLeg.quote === "KRW" ? sellLeg.venue : null;
-  const usdKrw = krVenue ? await fetchUsdKrw(krVenue) : 1;
-  if (!usdKrw) return null;
-
-  const [buyBook, sellBook] = await Promise.all([
-    buyAd.fetchOrderBook(buyLeg.symbol),
-    sellAd.fetchOrderBook(sellLeg.symbol),
+  const [usdKrw, buyBook, sellBook] = await Promise.all([
+    krVenue ? cachedFx(krVenue, fresh) : Promise.resolve(1),
+    cachedBook(buyAd.fetchOrderBook.bind(buyAd), buyLeg.venue, buyLeg.symbol, fresh),
+    cachedBook(sellAd.fetchOrderBook.bind(sellAd), sellLeg.venue, sellLeg.symbol, fresh),
   ]);
+  if (!usdKrw) return null;
   if (!buyBook.asks.length || !sellBook.bids.length) return null;
 
   const asks: LevelUsd[] = buyBook.asks

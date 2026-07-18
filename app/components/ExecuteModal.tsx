@@ -48,8 +48,8 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
   useEffect(() => {
     if (sizeUsd <= 0) return;
     let cancelled = false;
-    setQuoting(true);
-    const t = setTimeout(async () => {
+    const fetchQuote = async (spinner: boolean) => {
+      if (spinner) setQuoting(true);
       try {
         const res = await fetch("/api/quote", {
           method: "POST",
@@ -62,14 +62,19 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
           setQuotable(j.quote != null);
         }
       } catch {
-        if (!cancelled) setQuote(null);
+        if (!cancelled && spinner) setQuote(null); // silent refresh keeps last good quote
       } finally {
-        if (!cancelled) setQuoting(false);
+        if (!cancelled && spinner) setQuoting(false);
       }
-    }, 150);
+    };
+    const t = setTimeout(() => fetchQuote(true), 150);
+    // Keep the number live while the modal is open — silent (no spinner), and
+    // the server book micro-cache makes each tick ~free.
+    const iv = setInterval(() => fetchQuote(false), 5000);
     return () => {
       cancelled = true;
       clearTimeout(t);
+      clearInterval(iv);
     };
   }, [opp, sizeUsd]);
 
