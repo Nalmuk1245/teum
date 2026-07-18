@@ -44,9 +44,12 @@ type State = {
   loops: ReturnType<typeof setInterval>[];
   primedAnn: boolean;
   primedMkt: boolean;
+  /** Watcher health — last successful poll ts per source (0 = never). */
+  srcOk: { ann: number; annBlocked: boolean; mkt: number; tg: number };
 };
 const g = globalThis as unknown as { __arbListings?: State };
-g.__arbListings ??= { annSeen: new Set(), tgSeen: new Set(), mkt: {}, plays: new Map(loadSection<[string, ListingPlay][]>("listingPlays") ?? []), loops: [], primedAnn: false, primedMkt: false };
+g.__arbListings ??= { annSeen: new Set(), tgSeen: new Set(), mkt: {}, plays: new Map(loadSection<[string, ListingPlay][]>("listingPlays") ?? []), loops: [], primedAnn: false, primedMkt: false, srcOk: { ann: 0, annBlocked: false, mkt: 0, tg: 0 } };
+g.__arbListings.srcOk ??= { ann: 0, annBlocked: false, mkt: 0, tg: 0 }; // hot-reload of older state shape
 const L = g.__arbListings;
 
 // Where is this coin cheapest to buy right now on a global CEX? Binance/Bybit/OKX.
@@ -107,7 +110,9 @@ async function pollAnnouncements() {
       headers: ANN_HEADERS, cache: "no-store", signal: AbortSignal.timeout(4000),
     });
     const ct = r.headers.get("content-type") ?? "";
-    if (!ct.includes("json")) return; // Cloudflare HTML challenge (non-KR IP) — skip
+    if (!ct.includes("json")) { L.srcOk.annBlocked = true; return; } // Cloudflare HTML challenge (non-KR IP)
+    L.srcOk.annBlocked = false;
+    L.srcOk.ann = Date.now();
     const j = await r.json();
     const list = j?.data?.notices ?? j?.data?.list ?? j?.data ?? [];
     items = (Array.isArray(list) ? list : []).map((x: { id: number; title: string }) => ({ id: x.id, title: x.title })).filter((x) => x.id && x.title);
@@ -139,6 +144,7 @@ async function upbitMarkets(): Promise<Set<string>> {
 async function pollMarkets() {
   const now = await upbitMarkets();
   if (now.size === 0) return;
+  L.srcOk.mkt = Date.now();
   const prev = L.mkt.upbit;
   if (prev && L.primedMkt) {
     for (const base of now) {
@@ -174,6 +180,7 @@ async function pollTgChannel() {
     .map((m) => m[1].replace(/<br\s*\/?\s*>/g, " ").replace(/<[^>]+>/g, "").trim())
     .slice(-20);
   if (!texts.length) return;
+  L.srcOk.tg = Date.now();
   const isFirst = !L.primedTg;
   for (const t of texts) {
     // Hash the message so each is processed once.
@@ -212,4 +219,18 @@ export function listingInfo(base: string): { venue: string; ageSec: number; over
 /** Recent listing plays, newest first (dashboard). */
 export function recentListings(): ListingPlay[] {
   return [...L.plays.values()].sort((a, b) => b.announcedAt - a.announcedAt);
+}
+
+/** Watcher-source health for the listing dashboard. */
+export function watchStatus() {
+  const ago = (t: number) => (t ? Math.round((Date.now() - t) / 1000) : null);
+  return {
+    annOkAgoSec: ago(L.srcOk.ann),
+    annBlocked: L.srcOk.annBlocked,
+    mktOkAgoSec: ago(L.srcOk.mkt),
+    tgConfigured: !!process.env.LISTING_TG_CHANNEL,
+    tgChannel: process.env.LISTING_TG_CHANNEL ?? null,
+    tgOkAgoSec: ago(L.srcOk.tg),
+    plays: L.plays.size,
+  };
 }

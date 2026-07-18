@@ -9,7 +9,7 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import AssetsPanel, { AssetSummary } from "./components/InventoryPanel";
 import CockpitBoard from "./components/CockpitBoard";
 import ExecuteModal from "./components/ExecuteModal";
-import ControlPanel from "./components/ControlPanel";
+import ControlPanel, { ListingPanel } from "./components/ControlPanel";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 
 function useIsMobile() {
@@ -43,7 +43,7 @@ export default function Cockpit() {
   const [selected, setSelected] = useState<Opportunity | null>(null);
   // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
   // trades, control = ops (runs dashboard + risk + kill), assets = balances.
-  const [mode, setMode] = useState<"monitor" | "funding" | "execute" | "control" | "assets">("monitor");
+  const [mode, setMode] = useState<"monitor" | "funding" | "execute" | "listing" | "control" | "assets">("monitor");
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -247,7 +247,7 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "repeat(5, 1fr)",
+            display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
             marginBottom: isMobile ? 10 : 14,
             borderBottom: "1px solid var(--border)",
           }}
@@ -256,6 +256,7 @@ export default function Cockpit() {
             { k: "monitor", label: "갭", sub: "원샷 차익" },
             { k: "funding", label: "펀딩", sub: "APR" },
             { k: "execute", label: "실행", sub: "주문" },
+            { k: "listing", label: "상장", sub: "따리·물량" },
             { k: "control", label: "관제", sub: "실행·리스크" },
             { k: "assets", label: "자산", sub: "잔고" },
           ] as const).map((m) => {
@@ -297,9 +298,12 @@ export default function Cockpit() {
         {/* ── Assets: one-line summary on trading tabs; full panel on 자산 ── */}
         {mode === "assets" ? (
           <AssetsPanel isMobile={isMobile} />
-        ) : mode === "control" ? null : (
+        ) : mode === "control" || mode === "listing" ? null : (
           <AssetSummary isMobile={isMobile} onOpen={() => setMode("assets")} />
         )}
+
+        {/* ── 상장 대시보드: 상장따리 감시 + 온체인 물량 신호 ── */}
+        {mode === "listing" && <ListingPanel />}
 
         {/* ── Control tower: runs dashboard + risk limits + tools ── */}
         {mode === "control" && (

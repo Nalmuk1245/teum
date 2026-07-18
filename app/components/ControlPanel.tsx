@@ -16,18 +16,55 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry }: {
   const inFlight = inFlightUsd();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
+      <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
       <KillCard killed={killed} />
       <RiskCard inFlight={inFlight} />
       {runs.length > 0
         ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
       {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
-      <ListingsCard />
-      <HoldingsCard />
       <PnlCard />
       <TelegramCard />
       <GatesCard />
       <ToolsCard />
+    </div>
+  );
+}
+
+// ── 관제 현황 스트립 — 지금 시스템이 뭘 하고 있는지 한 줄 요약 ────────────────
+function StatusCard({ runs, killed, inFlight, autoArmed }: { runs: RunView[]; killed: boolean; inFlight: number; autoArmed?: boolean }) {
+  const [risk, setRisk] = useState<RiskState | null>(null);
+  const [watch, setWatch] = useState<{ plays: number; annBlocked: boolean; annOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
+  useEffect(() => {
+    const load = () => {
+      fetch("/api/risk", { cache: "no-store" }).then((r) => r.json()).then(setRisk).catch(() => {});
+      fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => setWatch(j.watch ?? null)).catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 10_000);
+    return () => clearInterval(id);
+  }, []);
+  const running = runs.filter((r) => r.phase === "running").length;
+  const paused = runs.filter((r) => r.phase === "paused").length;
+  const errored = runs.filter((r) => r.phase === "error").length;
+  const pnl = risk?.realizedPnlUsd ?? 0;
+  const listingWatchOk = watch != null && (!watch.annBlocked || (watch.tgConfigured && watch.tgOkAgoSec != null));
+  const cell = (label: string, value: React.ReactNode, tone?: string) => (
+    <div style={{ padding: "10px 12px", borderRight: "1px solid var(--border)", minWidth: 0 }}>
+      <div className="tnum" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.1, color: tone ?? "var(--text)", whiteSpace: "nowrap" }}>{value}</div>
+      <div style={{ marginTop: 5, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)", whiteSpace: "nowrap" }}>{label}</div>
+    </div>
+  );
+  return (
+    <div style={{ border: `1px solid ${killed ? "var(--neg)" : "var(--border)"}`, borderRadius: "var(--radius)", overflow: "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" }}>
+        {cell("상태", killed ? "중단됨" : errored > 0 ? "오류" : running > 0 ? "실행 중" : "대기", killed ? "var(--neg)" : errored > 0 ? "var(--amber)" : running > 0 ? "var(--pos)" : undefined)}
+        {cell("실행 · 대기 · 오류", `${running} · ${paused} · ${errored}`, errored > 0 ? "var(--amber)" : undefined)}
+        {cell("노출", risk ? `$${inFlight.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : `$${inFlight.toFixed(0)}`)}
+        {cell("오늘 실현 손익", `${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`, pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : undefined)}
+        {cell("자동 진입", autoArmed ? "무장" : "꺼짐", autoArmed ? "var(--amber)" : undefined)}
+        {cell("상장 감시", watch == null ? "—" : listingWatchOk ? `정상 · ${watch.plays}건` : "차단/꺼짐", watch == null ? undefined : listingWatchOk ? "var(--pos)" : "var(--amber)")}
+      </div>
     </div>
   );
 }
@@ -323,8 +360,38 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
 }
 
 type Listing = { base: string; venue: string; announcedAt: number; overseas: boolean; opened: boolean; globalVenue?: string; globalPrice?: number; title?: string };
-function ListingsCard() {
+function SourceChip({ label, ok, text }: { label: string; ok: boolean; text: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: "var(--text-mute)", border: "1px solid var(--border)", borderRadius: 2, padding: "2px 7px" }}>
+      <span style={{ width: 5, height: 5, borderRadius: 2, background: ok ? "var(--pos)" : "var(--amber)" }} />
+      <span style={{ fontWeight: 600, color: "var(--text-dim)" }}>{label}</span>
+      <span className="tnum">{text}</span>
+    </span>
+  );
+}
+
+/** 상장 탭 — 상장따리 감시 + 온체인 물량 신호를 한 곳에. */
+export function ListingPanel() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
+      <ListingsCard showWatch />
+      <HoldingsCard />
+      <div style={{ fontSize: 10.5, color: "var(--text-mute)", lineHeight: 1.6, padding: "0 2px" }}>
+        흐름: 공지 감지(공지 API·TG 채널) → 텔레그램 알림 + 보유량 자동 발송 → 해외 최저가 매수(원클릭 $500) →
+        마켓 diff로 거래 개시 확인 → 업비트 입금·매도. 핫월렛 잔고가 얇을수록 펌핑이 오래 갑니다.
+      </div>
+    </div>
+  );
+}
+
+export type ListingWatch = {
+  annOkAgoSec: number | null; annBlocked: boolean; mktOkAgoSec: number | null;
+  tgConfigured: boolean; tgChannel: string | null; tgOkAgoSec: number | null; plays: number;
+};
+
+export function ListingsCard({ showWatch }: { showWatch?: boolean }) {
   const [rows, setRows] = useState<Listing[]>([]);
+  const [watch, setWatch] = useState<ListingWatch | null>(null);
   const [buying, setBuying] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ base: string; text: string } | null>(null);
   const buyUsd = 500; // LISTING_BUY_USD 서버 기본과 일치
@@ -337,16 +404,36 @@ function ListingsCard() {
     finally { setBuying(null); }
   };
   useEffect(() => {
-    const load = () => fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => setRows(j.listings ?? [])).catch(() => {});
+    const load = () => fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => { setRows(j.listings ?? []); setWatch(j.watch ?? null); }).catch(() => {});
     void load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
   }, []);
   return (
     <div style={{ background: "var(--card)", border: `1px solid ${rows.length ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: rows.length ? 8 : 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: rows.length || showWatch ? 8 : 0, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>상장따리 — 최근 신규 상장</span>
         <span style={{ width: 6, height: 6, borderRadius: 2, background: rows.length ? "var(--amber)" : "var(--text-mute)" }} />
+        {showWatch && watch && (
+          <>
+            <span style={{ flex: 1 }} />
+            <SourceChip
+              label="공지 API"
+              ok={!watch.annBlocked && watch.annOkAgoSec != null}
+              text={watch.annBlocked ? "차단(비KR IP)" : watch.annOkAgoSec != null ? `${watch.annOkAgoSec}s 전` : "대기"}
+            />
+            <SourceChip
+              label="TG 채널"
+              ok={watch.tgConfigured && watch.tgOkAgoSec != null}
+              text={!watch.tgConfigured ? "미설정" : watch.tgOkAgoSec != null ? `${watch.tgChannel} · ${watch.tgOkAgoSec}s 전` : "대기"}
+            />
+            <SourceChip
+              label="마켓 diff"
+              ok={watch.mktOkAgoSec != null}
+              text={watch.mktOkAgoSec != null ? `${watch.mktOkAgoSec}s 전` : "대기"}
+            />
+          </>
+        )}
       </div>
       {rows.length === 0 ? (
         <div style={{ fontSize: 11.5, color: "var(--text-mute)" }}>감시 중 — 업비트 상장 공지 2.5s·마켓 3s 폴링. 공지 뜨면 해외 매수처와 함께 텔레그램·보드 최상단. (공지 API는 KR IP에서 동작)</div>
