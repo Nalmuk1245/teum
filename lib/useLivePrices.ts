@@ -20,7 +20,9 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
   const oppsRef = useRef(opps);
   oppsRef.current = opps;
 
-  const bn = useRef(new Map<string, number>()); // base -> USDT
+  const bn = useRef(new Map<string, number>()); // base -> USDT last
+  const bnBook = useRef(new Map<string, { bid: number; ask: number }>()); // base -> best b/a (from !ticker@arr)
+  const upBook = useRef(new Map<string, { bid: number; ask: number }>()); // base -> KRW best b/a (orderbook WS)
   const up = useRef(new Map<string, number>()); // base -> KRW
   const bt = useRef(new Map<string, number>()); // base -> KRW
   const fx = useRef({ upbit: 0, bithumb: 0 }); // USDT/KRW per venue
@@ -67,7 +69,10 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
           set("binance", true); // green only once data actually arrives
           for (const t of arr) {
             if (typeof t.s === "string" && t.s.endsWith("USDT")) {
-              bn.current.set(t.s.slice(0, -4), Number(t.c));
+              const base = t.s.slice(0, -4);
+              bn.current.set(base, Number(t.c));
+              const bid = Number(t.b), ask = Number(t.a);
+              if (bid > 0 && ask > 0) bnBook.current.set(base, { bid, ask });
             }
           }
         } catch {
@@ -89,7 +94,11 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       const hasNew = [...codes].some((c) => !upSubbed.has(c));
       if (!hasNew && upSubbed.size > 0) return;
       for (const c of codes) upSubbed.add(c);
-      upWs.send(JSON.stringify([{ ticket: "arb-cockpit" }, { type: "ticker", codes: [...upSubbed] }]));
+      upWs.send(JSON.stringify([
+        { ticket: "arb-cockpit" },
+        { type: "ticker", codes: [...upSubbed] },
+        { type: "orderbook", codes: [...upSubbed] }, // best bid/ask → executable overlay
+      ]));
     };
     const connectUpbit = () => {
       if (closed) return;
@@ -110,6 +119,15 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         try {
           const text = new TextDecoder().decode(e.data as ArrayBuffer);
           const m = JSON.parse(text);
+          if (m.type === "orderbook" && m.code && Array.isArray(m.orderbook_units)) {
+            const u = m.orderbook_units[0];
+            const base = String(m.code).replace("KRW-", "");
+            if (u?.bid_price > 0 && u?.ask_price > 0) {
+              lastMsg.current.upbit = Date.now();
+              upBook.current.set(base, { bid: u.bid_price, ask: u.ask_price });
+            }
+            return;
+          }
           if (m.code && typeof m.trade_price === "number") {
             lastMsg.current.upbit = Date.now();
             set("upbit", true);
@@ -184,17 +202,27 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         const globalLeg = o.legs.find((l) => l.quote === "USDT");
         if (!kr || !globalLeg) continue;
         const venue = kr.venue as "upbit" | "bithumb";
-        // Anchor to the scan's EXECUTABLE gross (spread-crossed) and apply only
-        // the live PRICE-MOVEMENT delta since scan — never recompute gross from
-        // last prices, which drops both spreads and reads systematically too
-        // optimistic. delta ≈ how much the KR/global price ratio moved vs scan.
+        const buyGlobal = o.legs.find((l) => l.side === "buy")?.quote === "USDT";
+        // PREFERRED: fully-executable live gross from real best bid/ask on both
+        // sides (Upbit orderbook WS + Binance b/a) — same math as the scan.
+        const kb = venue === "upbit" ? upBook.current.get(o.base) : undefined;
+        const gb = bnBook.current.get(o.base);
+        const rate = venue === "upbit" ? fx.current.upbit : fx.current.bithumb;
+        if (kb && gb && rate > 0) {
+          const grossPct = buyGlobal
+            ? ((kb.bid / rate - gb.ask) / gb.ask) * 100      // buy global ask → sell KR bid
+            : ((gb.bid - kb.ask / rate) / (kb.ask / rate)) * 100; // buy KR ask → sell global bid
+          ov[o.id] = { premiumPct: grossPct, grossPct, netPct: grossPct - o.costPct };
+          continue;
+        }
+        // FALLBACK (bithumb leg / book not yet streamed): anchor to the scan's
+        // executable gross and apply only the live price-movement delta.
         const liveKr = venue === "upbit" ? up.current.get(o.base) : bt.current.get(o.base);
         const liveGlobal = bn.current.get(o.base); // Binance WS last (proxy for the USDT mover)
         const scanKr = kr.price, scanGlobal = globalLeg.price;
         if (!liveKr || !liveGlobal || !scanKr || !scanGlobal) continue; // no live pair → keep scan value
         const ratioNow = (liveKr / scanKr) / (liveGlobal / scanGlobal);
         const premiumDeltaPct = (ratioNow - 1) * 100;
-        const buyGlobal = o.legs.find((l) => l.side === "buy")?.quote === "USDT";
         // buyGlobal (sell KR): profit rises as KR outpaces global (+delta).
         // reverse (sell global): profit rises as global outpaces KR (−delta).
         const grossPct = o.grossPct + (buyGlobal ? premiumDeltaPct : -premiumDeltaPct);
