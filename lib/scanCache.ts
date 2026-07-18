@@ -10,6 +10,7 @@ import { scanAll } from "./scanner";
 import type { Opportunity } from "./types";
 import { notify, telegramConfigured } from "./telegram";
 import { startListingWatch } from "./listings";
+import { startWatchdog } from "./watchdog";
 
 const REFRESH_MS = 8000;
 const ALERT_NET_PCT = 0.5; // matches the client board threshold
@@ -67,7 +68,8 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   // snapshot warm even between visits (personal local box, cost is fine).
   if (!C.loop) {
     C.loop = setInterval(() => void refresh(), REFRESH_MS);
-    startListingWatch(); // 상장따리: tight-poll KR market lists for new listings
+    startListingWatch(); // 상장따리: notice/TG/market watchers
+    startWatchdog(() => ({ scanTs: C.ts, liveOpps: C.opps.filter((o) => !o.mock).length }));
   }
   if (C.ts === 0) {
     await refresh(); // cold boot: nothing to serve yet
