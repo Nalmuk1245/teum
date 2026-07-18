@@ -86,6 +86,17 @@ async function registerPlay(base: string, venue: "upbit" | "bithumb", title: str
       ? `해외 매수 지금: <b>${g2.venue}</b> @ ${g2.price}\n${fromAnnouncement ? "→ 거래개시 전 선점 · 김프 스파이크 대비" : "→ 거래 개시됨(늦음)"}`
       : "해외 미상장 → 상장 펌핑만 (김프 아님)"),
   );
+  // Follow-up: on-chain exchange holdings (dump-supply signal). Fire-and-forget
+  // so the primary alert is never delayed by RPC/CoinGecko.
+  if (fromAnnouncement) {
+    void (async () => {
+      try {
+        const { fetchHoldings, holdingsSummaryText } = await import("./holdings");
+        const h = await fetchHoldings(base);
+        if (!("error" in h)) void notifyNow(`📊 <b>${base}</b> ${holdingsSummaryText(h)}`);
+      } catch { /* signal is best-effort */ }
+    })();
+  }
 }
 
 // ── Announcement poll (primary) ───────────────────────────────────────────────

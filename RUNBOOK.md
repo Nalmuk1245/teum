@@ -12,6 +12,7 @@
   - 확인: 관제 탭 → 텔레그램 카드 "연결됨" → **테스트 발송** 클릭 → 폰 수신
 - [ ] **상장따리 소스**: 로컬에서 `curl -s -H "User-Agent: Mozilla/5.0" "https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=1&category=trade" | head -c 200`
   - JSON 나오면 공지 API 작동. HTML이면 `LISTING_TG_CHANNEL`에 신뢰하는 상장알림 텔레그램 채널명 설정
+- [ ] **거래소 지갑 라벨 임포트** (상장따리 물량 신호용): 관제 탭 → "거래소 온체인 보유량" 카드 → **라벨 임포트** 1회 클릭 (Etherscan 공개 라벨 ~22MB → `data/exchange-wallets.json`). 이후 상장 공지 텔레그램에 거래소 핫/콜드 보유량이 자동 포함됨. 핫/콜드 재분류는 아캄 웹(intel.arkm.com) 참고해 파일에서 `type` 수정
 - [ ] **개인지갑**: 새 지갑 생성(기존 주력 지갑 금지). `WALLET_PRIVATE_KEY`(EVM). 소액 ETH(가스)만 넣기
   - ⚠️ 이 키는 자금을 옮길 수 있음 — `.env.local`에만, 절대 커밋 금지 (`.gitignore`가 `.env*` 커버함)
 

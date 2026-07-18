@@ -17,7 +17,8 @@ export type ChainInfo = {
 const env = (k: string, d: string) => process.env[k] || d;
 
 export const CHAINS: Record<string, ChainInfo> = {
-  ethereum: { key: "ethereum", family: "evm", label: "Ethereum", native: "ETH", evmChainId: 1, rpc: env("WALLET_RPC_ETHEREUM", "https://eth.llamarpc.com"), explorer: "https://etherscan.io/tx/" },
+  // publicnode: llamarpc 403s datacenter IPs and is generally flakier
+  ethereum: { key: "ethereum", family: "evm", label: "Ethereum", native: "ETH", evmChainId: 1, rpc: env("WALLET_RPC_ETHEREUM", "https://ethereum-rpc.publicnode.com"), explorer: "https://etherscan.io/tx/" },
   polygon: { key: "polygon", family: "evm", label: "Polygon", native: "POL", evmChainId: 137, rpc: env("WALLET_RPC_POLYGON", "https://polygon-rpc.com"), explorer: "https://polygonscan.com/tx/" },
   arbitrum: { key: "arbitrum", family: "evm", label: "Arbitrum One", native: "ETH", evmChainId: 42161, rpc: env("WALLET_RPC_ARBITRUM", "https://arb1.arbitrum.io/rpc"), explorer: "https://arbiscan.io/tx/" },
   optimism: { key: "optimism", family: "evm", label: "Optimism", native: "ETH", evmChainId: 10, rpc: env("WALLET_RPC_OPTIMISM", "https://mainnet.optimism.io"), explorer: "https://optimistic.etherscan.io/tx/" },

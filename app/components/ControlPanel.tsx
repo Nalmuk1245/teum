@@ -23,6 +23,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry }: {
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
       {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
       <ListingsCard />
+      <HoldingsCard />
       <PnlCard />
       <TelegramCard />
       <GatesCard />
@@ -385,6 +386,134 @@ function ListingsCard() {
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 거래소 온체인 보유량 (상장따리 물량 신호) ─────────────────────────────────
+type HoldingsData = {
+  symbol: string; name: string; priceUsd: number | null; volumeUsd: number | null;
+  chains: string[]; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string;
+  venues: { venue: string; hot: number; cold: number; hotUsd: number | null; coldUsd: number | null; addresses: number; hotDeltaPerMin: number | null }[];
+};
+
+function fmtQty(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n >= 1 ? n.toFixed(1) : n > 0 ? n.toFixed(4) : "0";
+}
+
+export function HoldingsCard() {
+  const [sym, setSym] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [data, setData] = useState<HoldingsData | null>(null);
+  const [stats, setStats] = useState<Record<string, { hot: number; cold: number }> | null>(null);
+
+  const lookup = async (s: string) => {
+    const q = s.trim().toUpperCase();
+    if (!q) return;
+    setBusy(true); setErr(null);
+    try {
+      const j = await (await fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(q)}`, { cache: "no-store" })).json();
+      if (j.stats) setStats(j.stats);
+      if (j.error) { setErr(j.error); setData(null); }
+      else setData(j.holdings);
+    } catch { setErr("조회 실패"); }
+    finally { setBusy(false); }
+  };
+  const runImport = async () => {
+    setImporting(true); setErr(null);
+    try {
+      const j = await (await fetch("/api/exchange-holdings", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "import" }),
+      })).json();
+      if (j.error) setErr(`임포트 실패: ${j.error}`);
+      else setErr(`✓ 라벨 임포트 완료: ${Object.entries(j.counts as Record<string, number>).map(([v, n]) => `${v} ${n}`).join(" · ")}`);
+    } catch { setErr("임포트 요청 실패"); }
+    finally { setImporting(false); }
+  };
+  const totalAddrs = stats ? Object.values(stats).reduce((s, v) => s + v.hot + v.cold, 0) : null;
+
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>거래소 온체인 보유량</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>상장따리 물량 신호 · ETH/BSC/Base</span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button" disabled={importing} onClick={() => void runImport()}
+          title="Etherscan 공개 라벨 덤프에서 거래소 지갑 주소를 가져옵니다 (1회, ~22MB)"
+          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+        >
+          {importing ? "임포트 중…" : `라벨 임포트${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          value={sym}
+          onChange={(e) => setSym(e.target.value.toUpperCase())}
+          onKeyDown={(e) => { if (e.key === "Enter") void lookup(sym); }}
+          placeholder="티커 (예: PYR)"
+          style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "7px 10px", fontSize: 12.5, outline: "none" }}
+        />
+        <button
+          type="button" disabled={busy || !sym.trim()} onClick={() => void lookup(sym)}
+          style={{ border: "none", borderRadius: 2, padding: "7px 16px", background: "var(--brand)", color: "#10141a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+        >
+          {busy ? "…" : "조회"}
+        </button>
+      </div>
+      {err && <div style={{ marginTop: 8, fontSize: 11.5, color: err.startsWith("✓") ? "var(--pos)" : "var(--amber)" }}>{err}</div>}
+      {data && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 6 }}>
+            <b style={{ color: "var(--text)" }}>{data.symbol}</b> ({data.name}) · {data.chains.join("/")}
+            {data.priceUsd != null && <span className="tnum"> · ${data.priceUsd < 0.01 ? data.priceUsd.toPrecision(3) : data.priceUsd.toLocaleString()}</span>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(70px,auto) 1fr 1fr auto", gap: "4px 12px", fontSize: 11.5 }}>
+            <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase" }}>거래소</span>
+            <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>핫월렛</span>
+            <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>콜드</span>
+            <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>핫 Δ/분</span>
+            {data.venues.filter((v) => v.hot + v.cold > 0 || v.addresses > 0).map((v) => (
+              <Fragment key={v.venue}>
+                <span style={{ fontWeight: 600 }}>{vlabel(v.venue as never) ?? v.venue}<span style={{ color: "var(--text-mute)", fontWeight: 400 }}> ·{v.addresses}주소</span></span>
+                <span className="tnum" style={{ textAlign: "right" }}>
+                  {fmtQty(v.hot)}{v.hotUsd != null && v.hotUsd > 0 ? <span style={{ color: "var(--text-mute)" }}> (${fmtQty(v.hotUsd)})</span> : null}
+                </span>
+                <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{fmtQty(v.cold)}</span>
+                <span className="tnum" style={{ textAlign: "right", color: v.hotDeltaPerMin == null || v.hotDeltaPerMin === 0 ? "var(--text-mute)" : v.hotDeltaPerMin > 0 ? "var(--pos)" : "var(--neg)" }}>
+                  {v.hotDeltaPerMin == null ? "—"
+                    : v.hotDeltaPerMin === 0 ? "0"
+                    : data.priceUsd != null
+                      ? `${v.hotDeltaPerMin > 0 ? "+$" : "−$"}${fmtQty(Math.abs(v.hotDeltaPerMin * data.priceUsd))}`
+                      : `${v.hotDeltaPerMin > 0 ? "+" : "−"}${fmtQty(Math.abs(v.hotDeltaPerMin))}`}
+                </span>
+              </Fragment>
+            ))}
+          </div>
+          {data.globalHotUsd != null && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)", fontSize: 11.5 }}>
+              <span style={{ color: "var(--text-dim)" }}>즉시 유입가능(글로벌 핫 합계) </span>
+              <b className="tnum">${fmtQty(data.globalHotUsd)}</b>
+              {data.dumpRatioPct != null && (
+                <span style={{ marginLeft: 8, color: data.dumpRatioPct > 50 ? "var(--amber)" : "var(--pos)", fontWeight: 600 }}>
+                  = 24h 거래량의 {data.dumpRatioPct.toFixed(0)}% {data.dumpRatioPct > 50 ? "⚠ 덤핑 압력 큼 → 펌핑 짧을 확률" : "→ 유입 압력 낮음"}
+                </span>
+              )}
+            </div>
+          )}
+          {data.note && <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--text-mute)" }}>{data.note}</div>}
+        </div>
+      )}
+      {!data && !err && (
+        <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-mute)" }}>
+          상장 공지가 뜨면 텔레그램 알림에 자동 포함됩니다. 여기선 아무 티커나 수동 조회. 최초 1회 라벨 임포트 필요.
         </div>
       )}
     </div>
