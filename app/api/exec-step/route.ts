@@ -21,6 +21,22 @@ export const dynamic = "force-dynamic";
 
 const NET_LABEL = BINANCE_NET; // shared exchange network codes
 
+// Idempotency cache — successful step results by run:step key, 10min TTL.
+const gi = globalThis as unknown as { __arbIdem?: Map<string, { r: StepResult; ts: number }> };
+gi.__arbIdem ??= new Map();
+function idemGet(key: string): StepResult | null {
+  const hit = gi.__arbIdem!.get(key);
+  if (!hit || Date.now() - hit.ts > 10 * 60_000) return null;
+  return hit.r;
+}
+function idemSet(key: string, r: StepResult) {
+  gi.__arbIdem!.set(key, { r, ts: Date.now() });
+  if (gi.__arbIdem!.size > 500) { // bound
+    const oldest = [...gi.__arbIdem!.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+    if (oldest) gi.__arbIdem!.delete(oldest[0]);
+  }
+}
+
 // Our wallet's receive address on a chain family (for the withdraw destination).
 function destAddr(chainKey: string): string | null {
   const fam = getChain(chainKey)?.family;
@@ -354,6 +370,7 @@ export async function POST(req: Request) {
       stepId?: StepId; opportunity?: Opportunity; sizeUsd?: number;
       rollback?: boolean; qty?: number; sinceTs?: number;
       fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+      idempotencyKey?: string;
     };
     if (!body.stepId || !body.opportunity) {
       return NextResponse.json({ ok: false, message: "stepId + opportunity 필요" }, { status: 400 });
@@ -371,9 +388,18 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: false, message: "인증 실패" }, { status: 403 });
       }
     }
+    // Idempotency: replay a cached SUCCESS for the same run+step (protects the
+    // "network died but the server executed" case). Failures are never cached,
+    // so a genuine retry re-executes.
+    const idem = body.idempotencyKey;
+    if (idem) {
+      const hit = idemGet(idem);
+      if (hit) return NextResponse.json({ ...hit, message: `${hit.message} · (재전송 방지 — 이전 결과)` });
+    }
     const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0, {
       rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills,
     });
+    if (idem && result.ok) idemSet(idem, result);
     // Live failure on a money step → phone alert (LIVE only; DRY sims fail loudly
     // in the UI already and would be noise).
     if (!result.ok && !CONFIG.DRY_RUN && !body.rollback) {

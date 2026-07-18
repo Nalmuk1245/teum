@@ -97,6 +97,9 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
       stepId, opportunity: eng.opp, sizeUsd: R.store.runs[id]?.sizeUsd ?? 0,
       rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
       fills: stepId === "settle" ? eng.fills : undefined,
+      // Idempotency: if the network dropped AFTER the server executed, a retry
+      // with the same key replays the cached success instead of double-firing.
+      idempotencyKey: opts?.rollback ? undefined : `${id}:${stepId}`,
     }),
   });
   const j = await res.json();
