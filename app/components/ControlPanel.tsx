@@ -11,7 +11,8 @@ import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON,
 
 export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number };
 
-export function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void }) {
+export type AutoEntryCfg = { armed: boolean; minNet: number; minHeld: number; sizeUsd: number };
+export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; autoEntry?: AutoEntryCfg; onAutoEntry?: (v: AutoEntryCfg) => void }) {
   const inFlight = inFlightUsd();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
@@ -20,6 +21,7 @@ export function ControlPanel({ runs, killed, onOpen }: { runs: RunView[]; killed
       {runs.length > 0
         ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
         : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
+      {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
       <ListingsCard />
       <PnlCard />
       <TelegramCard />
@@ -276,6 +278,45 @@ export function TelegramCard() {
           : ".env.local에 TELEGRAM_BOT_TOKEN·TELEGRAM_CHAT_ID를 넣으면 켜집니다 (@BotFather로 봇 생성)."}
       </div>
       {msg && <div style={{ fontSize: 11, color: "var(--brand-2)", marginTop: 6 }}>{msg}</div>}
+    </div>
+  );
+}
+
+function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange: (v: AutoEntryCfg) => void; killed: boolean }) {
+  const num = (v: string) => Number(v.replace(/[^\d.]/g, "")) || 0;
+  const field = (label: string, key: "minNet" | "minHeld" | "sizeUsd", suffix: string) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)" }}>
+        <input className="tnum" inputMode="decimal" value={String(cfg[key])} disabled={cfg.armed}
+          onChange={(e) => onChange({ ...cfg, [key]: num(e.target.value) })}
+          style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: "var(--text)", fontSize: 13, outline: "none" }} />
+        <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{suffix}</span>
+      </div>
+    </label>
+  );
+  return (
+    <div style={{ background: cfg.armed ? "var(--brand-soft)" : "var(--card)", border: `1px solid ${cfg.armed ? "var(--brand)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>조건부 자동 진입</span>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ fontSize: 11, color: cfg.armed ? "var(--pos)" : "var(--text-mute)" }}>{cfg.armed ? "무장됨" : "꺼짐"}</span>
+        <span style={{ flex: 1 }} />
+        <button type="button" disabled={killed} onClick={() => onChange({ ...cfg, armed: !cfg.armed })}
+          style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
+            background: cfg.armed ? "var(--neg)" : "var(--brand-grad)", color: cfg.armed ? "#fff" : "#181a20" }}>
+          {cfg.armed ? "해제" : "무장"}
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+        {field("최소 순수익", "minNet", "%")}
+        {field("최소 지속", "minHeld", "s")}
+        {field("규모", "sizeUsd", "$")}
+      </div>
+      <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginTop: 8, lineHeight: 1.5 }}>
+        조건 충족 시 자동으로 매수+헷지까지 진입하고 <b>출금 직전에 멈춥니다</b>(승인 필요). 동시 1건 ·
+        코인당 30분 쿨다운 · 킬스위치 하위 · 브라우저가 열려 있어야 동작. 무장 상태는 저장되지 않음(세션마다 직접 켜기).
+      </div>
     </div>
   );
 }

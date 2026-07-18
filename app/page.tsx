@@ -143,6 +143,36 @@ export default function Cockpit() {
     fetch("/api/kill").then((r) => r.json()).then((s) => { if (s.killed) void setKillSwitch(true); }).catch(() => {});
   }, []);
 
+  // ── 조건부 자동 진입 (opt-in) — browser must be open (engine is client-side).
+  // Enters automatically when a gap meets ALL of: executable (live gates),
+  // hedgeable, live net ≥ minNet, held ≥ minHeld. Entry runs to beforeWithdraw
+  // (buy+hedge auto, the irreversible withdraw still needs a human tap).
+  const [autoEntry, setAutoEntryState] = useState({ armed: false, minNet: 0.8, minHeld: 60, sizeUsd: 300 });
+  useEffect(() => {
+    try { const v = JSON.parse(localStorage.getItem("ac.autoentry") || "null"); if (v) setAutoEntryState((p) => ({ ...p, ...v, armed: false })); } catch { /* */ }
+  }, []); // armed never persists — re-arm each session deliberately
+  const setAutoEntry = (v: typeof autoEntry) => {
+    setAutoEntryState(v);
+    localStorage.setItem("ac.autoentry", JSON.stringify({ ...v, armed: false }));
+  };
+  const autoCooldown = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (!autoEntry.armed || runsStore.killed) return;
+    if (activeRuns > 0) return; // one position at a time
+    for (const o of gapOpps) {
+      if (o.mock || !o.executable || !o.hasPerp) continue;
+      const net = liveOverlay[o.id]?.netPct ?? o.netPct;
+      if (net < autoEntry.minNet) continue;
+      if ((o.persistence?.heldSec ?? 0) < autoEntry.minHeld) continue;
+      const last = autoCooldown.current.get(o.base) ?? 0;
+      if (Date.now() - last < 30 * 60_000) continue; // per-coin cooldown
+      autoCooldown.current.set(o.base, Date.now());
+      const res = startRun({ opp: o, sizeUsd: autoEntry.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" });
+      if (!("error" in res)) beep();
+      break; // at most one entry per tick
+    }
+  }, [liveOverlay, gapOpps, autoEntry, runsStore.killed, activeRuns]);
+
   return (
     <main style={{ minHeight: "100dvh" }}>
       {/* ── Header ─────────────────────────────────────────────── */}
@@ -268,6 +298,8 @@ export default function Cockpit() {
             runs={runList}
             killed={runsStore.killed}
             onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); setMode("execute"); }}
+            autoEntry={autoEntry}
+            onAutoEntry={setAutoEntry}
           />
         )}
 
