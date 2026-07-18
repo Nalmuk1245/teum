@@ -36,6 +36,8 @@ export type ListingPlay = {
 
 type State = {
   annSeen: Set<number>; // announcement ids already processed
+  tgSeen: Set<number>; // telegram message hashes
+  primedTg?: boolean;
   mkt: Partial<Record<"upbit" | "bithumb", Set<string>>>; // market-list baselines
   plays: Map<string, ListingPlay>; // base → play
   loops: ReturnType<typeof setInterval>[];
@@ -43,11 +45,11 @@ type State = {
   primedMkt: boolean;
 };
 const g = globalThis as unknown as { __arbListings?: State };
-g.__arbListings ??= { annSeen: new Set(), mkt: {}, plays: new Map(), loops: [], primedAnn: false, primedMkt: false };
+g.__arbListings ??= { annSeen: new Set(), tgSeen: new Set(), mkt: {}, plays: new Map(), loops: [], primedAnn: false, primedMkt: false };
 const L = g.__arbListings;
 
 // Where is this coin cheapest to buy right now on a global CEX? Binance/Bybit/OKX.
-async function globalVenueFor(base: string): Promise<{ venue: string; price: number } | null> {
+export async function globalVenueFor(base: string): Promise<{ venue: string; price: number } | null> {
   const tries: [string, string][] = [
     ["binance", `https://api.binance.com/api/v3/ticker/price?symbol=${base}USDT`],
     ["bybit", `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${base}USDT`],
@@ -140,13 +142,51 @@ async function pollMarkets() {
   for (const [b, p] of L.plays) if (p.announcedAt < cutoff) L.plays.delete(b);
 }
 
-/** Start both watchers (idempotent; re-armed on hot reload). */
+// ── Telegram public-channel scrape (CF-free fallback) ─────────────────────────
+// t.me/s/<channel> is Telegram's own public web view — no Cloudflare, no KR-IP
+// requirement, works from anywhere. Point LISTING_TG_CHANNEL at the channel you
+// trust (Upbit official or a fast listing-alert channel); empty = disabled.
+// Verified mechanism: message texts live in .tgme_widget_message_text blocks.
+const TG_POLL_MS = 3000;
+
+async function pollTgChannel() {
+  const channel = process.env.LISTING_TG_CHANNEL;
+  if (!channel) return;
+  let html = "";
+  try {
+    const r = await fetch(`https://t.me/s/${channel}`, { cache: "no-store", signal: AbortSignal.timeout(5000), redirect: "follow" });
+    html = await r.text();
+  } catch { return; }
+  const texts = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)]
+    .map((m) => m[1].replace(/<br\s*\/?\s*>/g, " ").replace(/<[^>]+>/g, "").trim())
+    .slice(-20);
+  if (!texts.length) return;
+  const isFirst = !L.primedTg;
+  for (const t of texts) {
+    // Hash the message so each is processed once.
+    let h = 0;
+    for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+    if (L.tgSeen.has(h)) continue;
+    L.tgSeen.add(h);
+    if (isFirst) continue; // baseline silently
+    if (!LISTING_RE.test(t)) continue;
+    const tickers = new Set<string>();
+    let m: RegExpExecArray | null;
+    TICKER_RE.lastIndex = 0;
+    while ((m = TICKER_RE.exec(t))) tickers.add(m[1]);
+    for (const tk of tickers) void registerPlay(tk, "upbit", t.slice(0, 80), true);
+  }
+  L.primedTg = true;
+}
+
+/** Start all watchers (idempotent; re-armed on hot reload). */
 export function startListingWatch(): void {
   for (const l of L.loops) clearInterval(l);
   L.loops = [];
-  void pollAnnouncements(); void pollMarkets();
+  void pollAnnouncements(); void pollMarkets(); void pollTgChannel();
   L.loops.push(setInterval(() => void pollAnnouncements(), ANN_POLL_MS));
   L.loops.push(setInterval(() => void pollMarkets(), MKT_POLL_MS));
+  L.loops.push(setInterval(() => void pollTgChannel(), TG_POLL_MS));
 }
 
 /** Is this base a fresh listing? (board badge/boost) */

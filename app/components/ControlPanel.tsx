@@ -283,6 +283,17 @@ export function TelegramCard() {
 type Listing = { base: string; venue: string; announcedAt: number; overseas: boolean; opened: boolean; globalVenue?: string; globalPrice?: number; title?: string };
 function ListingsCard() {
   const [rows, setRows] = useState<Listing[]>([]);
+  const [buying, setBuying] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ base: string; text: string } | null>(null);
+  const buyUsd = 500; // LISTING_BUY_USD 서버 기본과 일치
+  const quickBuy = async (base: string) => {
+    setBuying(base); setMsg(null);
+    try {
+      const j = await (await fetch("/api/listing-buy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ base, sizeUsd: buyUsd }) })).json();
+      setMsg({ base, text: `${j.ok ? "✓" : "✗"} ${j.message ?? ""}${j.venue ? ` (${j.venue})` : ""}` });
+    } catch { setMsg({ base, text: "요청 실패" }); }
+    finally { setBuying(null); }
+  };
   useEffect(() => {
     const load = () => fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => setRows(j.listings ?? [])).catch(() => {});
     void load();
@@ -311,11 +322,25 @@ function ListingsCard() {
                   <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`} 전</span>
                   <span style={{ flex: 1 }} />
                 </div>
-                <div style={{ fontSize: 11, marginTop: 2, color: l.overseas ? "var(--pos)" : "var(--text-mute)" }}>
-                  {l.overseas
-                    ? `해외 매수: ${l.globalVenue} @ ${l.globalPrice} — 거래개시 전 선점`
-                    : "해외 미상장 (김프 아님 · 상장 펌핑만)"}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, marginTop: 2 }}>
+                  <span style={{ color: l.overseas ? "var(--pos)" : "var(--text-mute)" }}>
+                    {l.overseas
+                      ? `해외 매수: ${l.globalVenue} @ ${l.globalPrice} — 거래개시 전 선점`
+                      : "해외 미상장 (김프 아님 · 상장 펌핑만)"}
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  {l.overseas && (
+                    <button
+                      type="button"
+                      disabled={buying === l.base}
+                      onClick={() => void quickBuy(l.base)}
+                      style={{ border: "none", borderRadius: 6, padding: "5px 12px", background: "var(--brand-grad)", color: "#181a20", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
+                    >
+                      {buying === l.base ? "…" : `$${buyUsd} 매수`}
+                    </button>
+                  )}
                 </div>
+                {msg?.base === l.base && <div style={{ fontSize: 10.5, color: "var(--brand-2)", marginTop: 2 }}>{msg.text}</div>}
               </div>
             );
           })}
