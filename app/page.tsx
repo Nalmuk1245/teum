@@ -59,7 +59,7 @@ export default function Cockpit() {
 
   useEffect(() => {
     void load();
-    const id = setInterval(load, 8000);
+    const id = setInterval(load, 3000); // matches the server refresh cadence
     return () => clearInterval(id);
   }, [load]);
 

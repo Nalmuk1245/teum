@@ -7,7 +7,7 @@
 import { loadSection, saveSection } from "./persist";
 
 const WINDOW_MS = 5 * 60_000; // rolling window
-const MAX_SAMPLES = 60;
+const MAX_SAMPLES = 120; // ≥ window / scan cadence (3s) so the cap never shrinks the window
 
 export type Persistence = {
   heldSec: number; // consecutive seconds net has stayed > 0 (0 if currently ≤ 0)
@@ -80,7 +80,7 @@ export function pruneHistory(seen: Set<string>, ts: number) {
 }
 
 // A gap held profitable this long counts as "confirmed" (full ranking weight).
-export const SUSTAIN_SEC = 24; // ~3 scans at 8s
+export const SUSTAIN_SEC = 24;
 /** Ranking confidence in [0.5, 1] — fresh spikes are down-weighted, not hidden. */
 export function confidence(p: Persistence | undefined): number {
   if (!p) return 0.5;

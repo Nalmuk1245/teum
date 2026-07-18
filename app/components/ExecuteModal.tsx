@@ -66,7 +66,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
       } finally {
         if (!cancelled) setQuoting(false);
       }
-    }, 400);
+    }, 150);
     return () => {
       cancelled = true;
       clearTimeout(t);

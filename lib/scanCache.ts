@@ -12,7 +12,9 @@ import { notify, telegramConfigured } from "./telegram";
 import { startListingWatch } from "./listings";
 import { startWatchdog } from "./watchdog";
 
-const REFRESH_MS = 8000;
+// 3s: a full sweep takes ~1.2s (binance bookTicker + parallel upbit chunks),
+// and per-venue call rates stay far below every venue's public limits.
+const REFRESH_MS = 3000;
 const ALERT_NET_PCT = 0.5; // matches the client board threshold
 
 type Cache = {

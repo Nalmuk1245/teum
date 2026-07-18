@@ -26,23 +26,37 @@ const binance: ExchangeAdapter = {
   async fetchTickers() {
     const out: TickerMap = new Map();
     try {
-      const res = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
-        cache: "no-store",
-      });
-      const rows = (await res.json()) as Array<{
-        symbol: string;
-        lastPrice: string;
-        quoteVolume: string;
-        bidPrice: string; askPrice: string; bidQty: string; askQty: string;
+      // Fast path every scan: bookTicker (weight 2, ~0.7s) gives live best
+      // bid/ask for every symbol. The heavy 24hr endpoint (weight 80, ~1.4s)
+      // only supplies volumes, which move slowly — cache it for 60s.
+      const g = globalThis as unknown as { __bnVol?: { ts: number; vol: Map<string, number> } };
+      const volStale = !g.__bnVol || Date.now() - g.__bnVol.ts > 60_000;
+      const [bookRes, volRes] = await Promise.all([
+        fetch("https://api.binance.com/api/v3/ticker/bookTicker", { cache: "no-store" }),
+        volStale
+          ? fetch("https://api.binance.com/api/v3/ticker/24hr", { cache: "no-store" })
+          : Promise.resolve(null),
+      ]);
+      if (volRes) {
+        const rows = (await volRes.json()) as Array<{ symbol: string; quoteVolume: string }>;
+        const vol = new Map<string, number>();
+        for (const r of rows) if (r.symbol.endsWith("USDT")) vol.set(r.symbol.slice(0, -4), Number(r.quoteVolume));
+        g.__bnVol = { ts: Date.now(), vol };
+      }
+      const vols = g.__bnVol?.vol;
+      const books = (await bookRes.json()) as Array<{
+        symbol: string; bidPrice: string; askPrice: string; bidQty: string; askQty: string;
       }>;
-      for (const r of rows) {
+      for (const r of books) {
         if (!r.symbol.endsWith("USDT")) continue;
         const base = r.symbol.slice(0, -4);
+        const bid = Number(r.bidPrice), ask = Number(r.askPrice);
+        if (!(bid > 0) || !(ask > 0)) continue;
         out.set(base, {
-          price: Number(r.lastPrice),
+          price: (bid + ask) / 2,
           quote: "USDT",
-          quoteVolumeUsd: Number(r.quoteVolume),
-          bid: Number(r.bidPrice) || undefined, ask: Number(r.askPrice) || undefined,
+          quoteVolumeUsd: vols?.get(base) ?? 0,
+          bid, ask,
           bidSize: Number(r.bidQty) || undefined, askSize: Number(r.askQty) || undefined,
         });
       }
@@ -105,12 +119,16 @@ const upbit: ExchangeAdapter = {
           });
         }
       }
-      // Merge best bid/ask from a bulk orderbook call (multi-market, chunked).
+      // Merge best bid/ask from a bulk orderbook call (multi-market, chunked,
+      // chunks fetched in parallel — well under Upbit's 10 req/s quotation cap).
       const codes = [...out.keys()].map((b) => `KRW-${b}`);
-      for (let i = 0; i < codes.length; i += 100) {
-        const chunk = codes.slice(i, i + 100).join(",");
+      const chunks: string[] = [];
+      for (let i = 0; i < codes.length; i += 100) chunks.push(codes.slice(i, i + 100).join(","));
+      const obLists = await Promise.all(chunks.map(async (chunk) => {
         const obRes = await fetch(`https://api.upbit.com/v1/orderbook?markets=${chunk}`, { cache: "no-store" });
-        const obs = (await obRes.json()) as Array<{ market: string; orderbook_units: Array<{ ask_price: number; bid_price: number; ask_size: number; bid_size: number }> }>;
+        return (await obRes.json()) as Array<{ market: string; orderbook_units: Array<{ ask_price: number; bid_price: number; ask_size: number; bid_size: number }> }>;
+      }));
+      for (const obs of obLists) {
         if (!Array.isArray(obs)) continue;
         for (const ob of obs) {
           const base = ob.market.replace("KRW-", "");
