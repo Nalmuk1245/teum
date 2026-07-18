@@ -88,6 +88,7 @@ async function runStep(
   opts: {
     rollback?: boolean; qty?: number; sinceTs?: number;
     fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+    durations?: Record<string, number>;
   },
 ): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
@@ -316,6 +317,7 @@ async function runStep(
           route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
           sizeUsd, detectedNetPct: opp.netPct, realizedNetPct, realizedPnlUsd,
           hedged: !!opp.hasPerp, dryRun: dry, status: "done",
+          durationsSec: opts.durations,
         });
       // Prefer REAL fills threaded from the buy/sell steps; KRW legs convert at
       // the venue's live USDT/KRW. Falls back to the scan-time estimate.
@@ -371,6 +373,7 @@ export async function POST(req: Request) {
       rollback?: boolean; qty?: number; sinceTs?: number;
       fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
       idempotencyKey?: string;
+      durations?: Record<string, number>;
     };
     if (!body.stepId || !body.opportunity) {
       return NextResponse.json({ ok: false, message: "stepId + opportunity 필요" }, { status: 400 });
@@ -397,7 +400,7 @@ export async function POST(req: Request) {
       if (hit) return NextResponse.json({ ...hit, message: `${hit.message} · (재전송 방지 — 이전 결과)` });
     }
     const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0, {
-      rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills,
+      rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills, durations: body.durations,
     });
     if (idem && result.ok) idemSet(idem, result);
     // Live failure on a money step → phone alert (LIVE only; DRY sims fail loudly

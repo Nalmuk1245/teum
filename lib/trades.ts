@@ -20,6 +20,9 @@ export type TradeRecord = {
   hedged: boolean;
   dryRun: boolean;
   status: "done" | "error";
+  /** Real per-step seconds (buy/withdraw/deposit/...) — actual transfer time vs
+   *  ETA calibration data. */
+  durationsSec?: Record<string, number>;
   note?: string;
 };
 

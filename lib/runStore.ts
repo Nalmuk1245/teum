@@ -49,6 +49,7 @@ type Engine = {
   qty?: number;
   startTs: number;
   fills: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+  durations: Record<string, number>; // stepId → seconds actually taken
   opp: Opportunity;
 };
 
@@ -97,6 +98,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
       stepId, opportunity: eng.opp, sizeUsd: R.store.runs[id]?.sizeUsd ?? 0,
       rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
       fills: stepId === "settle" ? eng.fills : undefined,
+      durations: stepId === "settle" ? eng.durations : undefined,
       // Idempotency: if the network dropped AFTER the server executed, a retry
       // with the same key replays the cached success instead of double-firing.
       idempotencyKey: opts?.rollback ? undefined : `${id}:${stepId}`,
@@ -165,9 +167,11 @@ async function loop(id: string) {
     }
 
     patch(id, { statuses: { ...run().statuses, [step.id]: "running" } });
+    const stepT0 = Date.now();
     let r: { ok: boolean; message?: string; tx?: TxRef };
     try { r = await callStep(id, eng, step.id); }
     catch (e) { r = { ok: false, message: e instanceof Error ? e.message : "실패" }; }
+    eng.durations[step.id] = Math.round((Date.now() - stepT0) / 1000); // real per-step seconds
     if (eng.cancelled) { eng.busy = false; return; }
 
     const upd: Partial<RunView> = {};
@@ -234,7 +238,7 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   };
   R.engines.set(id, {
     cancelled: false, busy: false, i: 0, confirmed: new Set(),
-    startTs: 0, fills: {}, opp: cfg.opp,
+    startTs: 0, fills: {}, durations: {}, opp: cfg.opp,
   });
   emit();
   void loop(id);
