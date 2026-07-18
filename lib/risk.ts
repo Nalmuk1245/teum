@@ -13,17 +13,20 @@ export type Limits = {
   maxDailyLossUsd: number;
 };
 
+import { loadSection, saveSection } from "./persist";
+
 const g = globalThis as unknown as {
   __arbRisk?: { limits: Limits; day: string; realizedPnlUsd: number };
 };
+const persisted = loadSection<{ day: string; realizedPnlUsd: number }>("riskPnl");
 g.__arbRisk ??= {
   limits: {
     maxPerTradeUsd: Number(process.env.RISK_MAX_PER_TRADE_USD ?? 5000),
     maxInFlightUsd: Number(process.env.RISK_MAX_INFLIGHT_USD ?? 15000),
     maxDailyLossUsd: Number(process.env.RISK_MAX_DAILY_LOSS_USD ?? 500),
   },
-  day: "",
-  realizedPnlUsd: 0,
+  day: persisted?.day ?? "",
+  realizedPnlUsd: persisted?.realizedPnlUsd ?? 0,
 };
 const S = g.__arbRisk;
 
@@ -50,6 +53,7 @@ export function setLimits(p: Partial<Limits>): Limits {
 export function recordPnl(usd: number) {
   roll();
   S.realizedPnlUsd += usd;
+  saveSection("riskPnl", { day: S.day, realizedPnlUsd: S.realizedPnlUsd }); // daily-loss limit survives restarts
 }
 
 export function riskState() {

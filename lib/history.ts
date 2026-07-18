@@ -4,6 +4,8 @@
 // that's been profitable for several scans is real; a one-scan spike usually
 // isn't tradeable (it's gone by the time you buy + transfer).
 
+import { loadSection, saveSection } from "./persist";
+
 const WINDOW_MS = 5 * 60_000; // rolling window
 const MAX_SAMPLES = 60;
 
@@ -17,7 +19,8 @@ export type Persistence = {
 
 type Track = { streakStart: number | null; samples: { ts: number; pos: boolean; gross: number; price: number }[] };
 const g = globalThis as unknown as { __arbHist?: Map<string, Track> };
-g.__arbHist ??= new Map();
+// Hydrate from disk so persistence scores survive restarts.
+g.__arbHist ??= new Map(loadSection<[string, Track][]>("history") ?? []);
 const H = g.__arbHist;
 
 // Per-minute σ of the GLOBAL PRICE log-returns (increments, not levels) — the
@@ -73,6 +76,7 @@ export function pruneHistory(seen: Set<string>, ts: number) {
   for (const [id, t] of H) {
     if (!seen.has(id) && (t.samples.length === 0 || t.samples[t.samples.length - 1].ts < cutoff)) H.delete(id);
   }
+  saveSection("history", [...H.entries()]); // debounced snapshot (restart resilience)
 }
 
 // A gap held profitable this long counts as "confirmed" (full ranking weight).

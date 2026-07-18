@@ -10,6 +10,7 @@
 // market-list diff (fires later, when trading actually opens).
 
 import { notifyNow } from "./telegram";
+import { loadSection, saveSection } from "./persist";
 
 const ANN_POLL_MS = 2500; // announcements are a sub-second race — poll tight
 const MKT_POLL_MS = 3000;
@@ -45,7 +46,7 @@ type State = {
   primedMkt: boolean;
 };
 const g = globalThis as unknown as { __arbListings?: State };
-g.__arbListings ??= { annSeen: new Set(), tgSeen: new Set(), mkt: {}, plays: new Map(), loops: [], primedAnn: false, primedMkt: false };
+g.__arbListings ??= { annSeen: new Set(), tgSeen: new Set(), mkt: {}, plays: new Map(loadSection<[string, ListingPlay][]>("listingPlays") ?? []), loops: [], primedAnn: false, primedMkt: false };
 const L = g.__arbListings;
 
 // Where is this coin cheapest to buy right now on a global CEX? Binance/Bybit/OKX.
@@ -77,6 +78,7 @@ async function registerPlay(base: string, venue: "upbit" | "bithumb", title: str
     opened: existing?.opened ?? false, title,
   };
   L.plays.set(base, play);
+  saveSection("listingPlays", [...L.plays.entries()]);
   const head = fromAnnouncement ? "📢 상장 공지" : "🚨 거래 개시";
   void notifyNow(
     `${head} — <b>${base}</b> (${venue === "upbit" ? "업비트" : "빗썸"})\n` +
