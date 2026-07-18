@@ -13,6 +13,7 @@
 - [ ] **상장따리 소스**: 로컬에서 `curl -s -H "User-Agent: Mozilla/5.0" "https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=1&category=trade" | head -c 200`
   - JSON 나오면 공지 API 작동. HTML이면 `LISTING_TG_CHANNEL`에 신뢰하는 상장알림 텔레그램 채널명 설정
 - [ ] **거래소 지갑 라벨 임포트** (상장따리 물량 신호용): 관제 탭 → "거래소 온체인 보유량" 카드 → **라벨 임포트** 1회 클릭 (Etherscan 공개 라벨 ~22MB → `data/exchange-wallets.json`). 이후 상장 공지 텔레그램에 거래소 핫/콜드 보유량이 자동 포함됨. 핫/콜드 재분류는 아캄 웹(intel.arkm.com) 참고해 파일에서 `type` 수정
+- [ ] **상장 자동매수(선택)**: 상장 탭에서 무장 + 규모 설정. 라이브 집행은 `LISTING_AUTO_LIVE=true` 추가 필요(이중 옵트인). TG 채널 여러 개는 `LISTING_TG_CHANNEL=chan1,chan2` (빗썸 키워드 자동 인식). 핫월렛 급증 알림 임계는 `LISTING_SURGE_USD_MIN`(기본 $25K/분)
 - [ ] **개인지갑**: 새 지갑 생성(기존 주력 지갑 금지). `WALLET_PRIVATE_KEY`(EVM). 소액 ETH(가스)만 넣기
   - ⚠️ 이 키는 자금을 옮길 수 있음 — `.env.local`에만, 절대 커밋 금지 (`.gitignore`가 `.env*` 커버함)
 

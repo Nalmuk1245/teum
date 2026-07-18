@@ -3,7 +3,7 @@ import { CONFIG } from "@/lib/config";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry } from "@/lib/risk";
 import { binanceSpot, bybitOrder, okxOrder } from "@/lib/orders";
-import { globalVenueFor, listingInfo } from "@/lib/listings";
+import { globalVenueFor, listingInfo, recordListingBuy } from "@/lib/listings";
 import { notifyNow } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 // kimchi flow once trading opens.
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { base?: string; sizeUsd?: number };
+    const body = (await req.json().catch(() => ({}))) as { base?: string; sizeUsd?: number; venue?: string };
     const base = body.base?.toUpperCase();
     const sizeUsd = Number(body.sizeUsd ?? process.env.LISTING_BUY_USD ?? 500);
     if (!base) return NextResponse.json({ ok: false, message: "base 필요" }, { status: 400 });
@@ -29,19 +29,48 @@ export async function POST(req: Request) {
       }
     }
 
-    const g = await globalVenueFor(base);
-    if (!g) return NextResponse.json({ ok: false, message: `${base} 해외 미상장 — 매수 불가` });
+    // Explicit venue wins; otherwise cheapest global right now.
+    let venue = body.venue?.toLowerCase();
+    let price: number | null = null;
+    if (venue && !["binance", "bybit", "okx"].includes(venue)) {
+      return NextResponse.json({ ok: false, message: `지원 안 하는 거래소: ${venue}` }, { status: 400 });
+    }
+    if (!venue) {
+      const g = await globalVenueFor(base);
+      if (!g) return NextResponse.json({ ok: false, message: `${base} 해외 미상장 — 매수 불가` });
+      venue = g.venue; price = g.price;
+    } else {
+      // Explicit venue — grab its price so DRY runs still record a usable qty.
+      try {
+        const url =
+          venue === "binance" ? `https://api.binance.com/api/v3/ticker/price?symbol=${base}USDT`
+          : venue === "bybit" ? `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${base}USDT`
+          : `https://www.okx.com/api/v5/market/ticker?instId=${base}-USDT`;
+        const j = await (await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(3000) })).json();
+        const p = venue === "binance" ? Number(j.price) : venue === "bybit" ? Number(j.result?.list?.[0]?.lastPrice) : Number(j.data?.[0]?.last);
+        if (p > 0) price = p;
+      } catch { /* record without price */ }
+    }
 
     const r =
-      g.venue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: sizeUsd })
-      : g.venue === "bybit" ? await bybitOrder(base, "BUY", { quoteUsd: sizeUsd })
+      venue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: sizeUsd })
+      : venue === "bybit" ? await bybitOrder(base, "BUY", { quoteUsd: sizeUsd })
       : await okxOrder(base, "BUY", { quoteUsd: sizeUsd });
 
     const info = listingInfo(base);
-    if (r.ok && !CONFIG.DRY_RUN) {
-      void notifyNow(`✅ 상장따리 매수 — <b>${base}</b> $${sizeUsd} @ ${g.venue} (공지 ${info?.ageSec ?? "?"}s 전)`);
+    if (r.ok) {
+      // DRY sims report no fill — estimate from the live ticker so position
+      // tracking (and the sell path) still works end-to-end in rehearsal.
+      const qty = r.filledQty ?? (r.dryRun && price ? sizeUsd / price : null);
+      recordListingBuy(base, {
+        where: venue, usd: sizeUsd, qty,
+        price: r.filledQty ? sizeUsd / r.filledQty : price, ts: Date.now(), dry: !!r.dryRun,
+      });
+      if (!CONFIG.DRY_RUN) {
+        void notifyNow(`✅ 상장따리 매수 — <b>${base}</b> $${sizeUsd} @ ${venue} (공지 ${info?.ageSec ?? "?"}s 전)`);
+      }
     }
-    return NextResponse.json({ ok: r.ok, dryRun: r.dryRun, venue: g.venue, price: g.price, message: r.message });
+    return NextResponse.json({ ok: r.ok, dryRun: r.dryRun, venue, price, qty: r.filledQty ?? (r.dryRun && price ? sizeUsd / price : null), message: r.message });
   } catch (e) {
     return NextResponse.json({ ok: false, message: e instanceof Error ? e.message : "listing-buy failed" }, { status: 500 });
   }

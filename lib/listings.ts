@@ -24,15 +24,29 @@ const LISTING_RE = /(디지털\s*자산\s*추가|마켓\s*추가|거래지원|�
 // Ticker inside parens, e.g. "이름(ABC)" — uppercase 2–10 chars.
 const TICKER_RE = /\(([A-Z0-9]{2,10})\)/g;
 
+export type ListingBuy = {
+  where: string; // "binance" | "okx" | ... | "dex:ethereum"
+  usd: number;
+  qty: number | null; // filled qty when known
+  price: number | null;
+  ts: number;
+  dry: boolean;
+};
+
 export type ListingPlay = {
   base: string;
   venue: "upbit" | "bithumb";
   announcedAt: number; // notice time (or detection time)
   overseas: boolean; // on a global CEX → arbable front-run
   globalVenue?: string; // cheapest global venue that lists it
-  globalPrice?: number;
+  globalPrice?: number; // price at announcement (baseline for peak tracking)
   opened: boolean; // market-diff confirmed trading is live
+  openedAt?: number;
   title?: string;
+  buys?: ListingBuy[]; // my entries (position tracking)
+  sells?: ListingBuy[]; // my exits (same shape; usd = proceeds)
+  peakPct?: number; // max % above announcement price seen so far
+  surgeAlerted?: boolean; // hot-wallet inflow alert already sent
 };
 
 type State = {
@@ -71,6 +85,51 @@ export async function globalVenueFor(base: string): Promise<{ venue: string; pri
   return null;
 }
 
+// ── 자동매수 프리셋 (공지 감지 즉시) ──────────────────────────────────────────
+// UI에서 무장; 서버가 공지 등록 직후 바로 산다. 라이브 실행은 env
+// LISTING_AUTO_LIVE=true 를 추가로 요구 (무인 자금 집행은 이중 옵트인).
+export type ListingAutoCfg = { armed: boolean; sizeUsd: number };
+export function getListingAuto(): ListingAutoCfg {
+  const saved = loadSection<ListingAutoCfg>("listingAuto");
+  return { armed: saved?.armed ?? false, sizeUsd: saved?.sizeUsd ?? Number(process.env.LISTING_BUY_USD ?? 500) };
+}
+export function setListingAuto(cfg: Partial<ListingAutoCfg>): ListingAutoCfg {
+  const cur = getListingAuto();
+  const next = {
+    armed: typeof cfg.armed === "boolean" ? cfg.armed : cur.armed,
+    sizeUsd: typeof cfg.sizeUsd === "number" && cfg.sizeUsd > 0 ? cfg.sizeUsd : cur.sizeUsd,
+  };
+  saveSection("listingAuto", next);
+  return next;
+}
+
+async function autoBuy(base: string, gVenue: string, gPrice: number) {
+  const cfg = getListingAuto();
+  if (!cfg.armed) return;
+  const { CONFIG } = await import("./config");
+  if (!CONFIG.DRY_RUN && process.env.LISTING_AUTO_LIVE !== "true") {
+    void notifyNow(`⏸ 자동매수 보류 — <b>${base}</b>: 라이브인데 LISTING_AUTO_LIVE 미설정 (수동 승인 필요)`);
+    return;
+  }
+  const { isKilled } = await import("./killswitch");
+  const { checkEntry } = await import("./risk");
+  if (isKilled()) return;
+  const risk = checkEntry(cfg.sizeUsd);
+  if (risk) { void notifyNow(`⏸ 자동매수 차단 — <b>${base}</b>: ${risk}`); return; }
+  const { binanceSpot, bybitOrder, okxOrder } = await import("./orders");
+  const r =
+    gVenue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: cfg.sizeUsd })
+    : gVenue === "bybit" ? await bybitOrder(base, "BUY", { quoteUsd: cfg.sizeUsd })
+    : await okxOrder(base, "BUY", { quoteUsd: cfg.sizeUsd });
+  if (r.ok) {
+    recordListingBuy(base, {
+      where: gVenue, usd: cfg.sizeUsd, qty: r.filledQty ?? null,
+      price: r.filledQty ? cfg.sizeUsd / r.filledQty : gPrice, ts: Date.now(), dry: !!r.dryRun,
+    });
+  }
+  void notifyNow(`${r.ok ? "🤖✅" : "🤖✗"} 자동매수 — <b>${base}</b> $${cfg.sizeUsd} @ ${gVenue} ${r.dryRun ? "(모의)" : ""}\n${r.message ?? ""}`);
+}
+
 async function registerPlay(base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean) {
   const existing = L.plays.get(base);
   if (existing && fromAnnouncement) return; // announcement already registered it
@@ -79,9 +138,11 @@ async function registerPlay(base: string, venue: "upbit" | "bithumb", title: str
     base, venue, announcedAt: existing?.announcedAt ?? Date.now(),
     overseas: !!g2, globalVenue: g2?.venue, globalPrice: g2?.price,
     opened: existing?.opened ?? false, title,
+    buys: existing?.buys, sells: existing?.sells,
   };
   L.plays.set(base, play);
   saveSection("listingPlays", [...L.plays.entries()]);
+  if (fromAnnouncement && g2) void autoBuy(base, g2.venue, g2.price);
   const head = fromAnnouncement ? "📢 상장 공지" : "🚨 거래 개시";
   void notifyNow(
     `${head} — <b>${base}</b> (${venue === "upbit" ? "업비트" : "빗썸"})\n` +
@@ -141,24 +202,71 @@ async function upbitMarkets(): Promise<Set<string>> {
     return new Set(j.filter((m) => m.market.startsWith("KRW-")).map((m) => m.market.slice(4)));
   } catch { return new Set(); }
 }
-async function pollMarkets() {
-  const now = await upbitMarkets();
-  if (now.size === 0) return;
-  L.srcOk.mkt = Date.now();
-  const prev = L.mkt.upbit;
+async function bithumbMarkets(): Promise<Set<string>> {
+  try {
+    const j = (await (await fetch("https://api.bithumb.com/public/ticker/ALL_KRW", { cache: "no-store", signal: AbortSignal.timeout(4000) })).json()) as { status: string; data?: Record<string, unknown> };
+    if (j.status !== "0000" || !j.data) return new Set();
+    return new Set(Object.keys(j.data).filter((k) => k !== "date"));
+  } catch { return new Set(); }
+}
+
+function diffMarkets(venue: "upbit" | "bithumb", now: Set<string>) {
+  const prev = L.mkt[venue];
   if (prev && L.primedMkt) {
     for (const base of now) {
       if (!prev.has(base)) {
         const play = L.plays.get(base);
-        if (play) { play.opened = true; } // announcement play now trading — upgrade
-        else void registerPlay(base, "upbit", undefined, false); // no notice seen (non-KR) → fallback
+        if (play) { play.opened = true; play.openedAt = Date.now(); } // announcement play now trading
+        else void registerPlay(base, venue, undefined, false); // no notice seen → fallback
       }
     }
   }
-  L.mkt.upbit = now;
+  L.mkt[venue] = now;
+}
+
+async function pollMarkets() {
+  const [up, bt] = await Promise.all([upbitMarkets(), bithumbMarkets()]);
+  if (up.size === 0 && bt.size === 0) return;
+  L.srcOk.mkt = Date.now();
+  if (up.size > 0) diffMarkets("upbit", up);
+  if (bt.size > 0) diffMarkets("bithumb", bt);
   L.primedMkt = true;
   const cutoff = Date.now() - FRESH_MS;
   for (const [b, p] of L.plays) if (p.announcedAt < cutoff) L.plays.delete(b);
+}
+
+// ── 활성 플레이 추적 (60s): 피크 수익률 + 핫월렛 급증 알림 ─────────────────────
+const TRACK_MS = 60_000;
+const SURGE_USD_PER_MIN = Number(process.env.LISTING_SURGE_USD_MIN ?? 25_000);
+
+async function trackPlays() {
+  const now = Date.now();
+  for (const p of L.plays.values()) {
+    if (now - p.announcedAt > 2 * 3600_000) continue; // stale — stop tracking
+    // Peak vs announcement price (성과 히스토리 데이터).
+    if (p.overseas && p.globalPrice && p.globalPrice > 0) {
+      const g2 = await globalVenueFor(p.base).catch(() => null);
+      if (g2 && g2.price > 0) {
+        const pct = ((g2.price - p.globalPrice) / p.globalPrice) * 100;
+        if (p.peakPct == null || pct > p.peakPct) p.peakPct = pct;
+      }
+    }
+    // Hot-wallet inflow surge — arb sellers loading KR exchanges ⇒ dump soon.
+    if (!p.surgeAlerted) {
+      try {
+        const { fetchHoldings } = await import("./holdings");
+        const h = await fetchHoldings(p.base);
+        if (!("error" in h) && h.priceUsd) {
+          const surge = h.venues.find((v) => v.hotDeltaPerMin != null && v.hotDeltaPerMin * h.priceUsd! > SURGE_USD_PER_MIN);
+          if (surge) {
+            p.surgeAlerted = true;
+            void notifyNow(`🌊 <b>${p.base}</b> ${surge.venue} 핫월렛 급증 +$${Math.round(surge.hotDeltaPerMin! * h.priceUsd / 1000)}K/분 — 덤핑 물량 유입 중`);
+          }
+        }
+      } catch { /* best-effort */ }
+    }
+  }
+  saveSection("listingPlays", [...L.plays.entries()]);
 }
 
 // ── Telegram public-channel scrape (CF-free fallback) ─────────────────────────
@@ -169,34 +277,40 @@ async function pollMarkets() {
 const TG_POLL_MS = 3000;
 
 async function pollTgChannel() {
-  const channel = process.env.LISTING_TG_CHANNEL;
-  if (!channel) return;
-  let html = "";
-  try {
-    const r = await fetch(`https://t.me/s/${channel}`, { cache: "no-store", signal: AbortSignal.timeout(5000), redirect: "follow" });
-    html = await r.text();
-  } catch { return; }
-  const texts = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)]
-    .map((m) => m[1].replace(/<br\s*\/?\s*>/g, " ").replace(/<[^>]+>/g, "").trim())
-    .slice(-20);
-  if (!texts.length) return;
-  L.srcOk.tg = Date.now();
-  const isFirst = !L.primedTg;
-  for (const t of texts) {
-    // Hash the message so each is processed once.
-    let h = 0;
-    for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
-    if (L.tgSeen.has(h)) continue;
-    L.tgSeen.add(h);
-    if (isFirst) continue; // baseline silently
-    if (!LISTING_RE.test(t)) continue;
-    const tickers = new Set<string>();
-    let m: RegExpExecArray | null;
-    TICKER_RE.lastIndex = 0;
-    while ((m = TICKER_RE.exec(t))) tickers.add(m[1]);
-    for (const tk of tickers) void registerPlay(tk, "upbit", t.slice(0, 80), true);
+  // Comma-separated list — e.g. an Upbit alert channel + a Bithumb one.
+  const channels = (process.env.LISTING_TG_CHANNEL ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!channels.length) return;
+  let any = false;
+  for (const channel of channels) {
+    let html = "";
+    try {
+      const r = await fetch(`https://t.me/s/${channel}`, { cache: "no-store", signal: AbortSignal.timeout(5000), redirect: "follow" });
+      html = await r.text();
+    } catch { continue; }
+    const texts = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)]
+      .map((m) => m[1].replace(/<br\s*\/?\s*>/g, " ").replace(/<[^>]+>/g, "").trim())
+      .slice(-20);
+    if (!texts.length) continue;
+    any = true;
+    const isFirst = !L.primedTg;
+    for (const t of texts) {
+      // Hash the message so each is processed once.
+      let h = 0;
+      for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+      if (L.tgSeen.has(h)) continue;
+      L.tgSeen.add(h);
+      if (isFirst) continue; // baseline silently
+      if (!LISTING_RE.test(t)) continue;
+      // Which KR venue is this notice about? (alert channels cover both)
+      const krVenue: "upbit" | "bithumb" = /빗썸|bithumb/i.test(t) ? "bithumb" : "upbit";
+      const tickers = new Set<string>();
+      let m: RegExpExecArray | null;
+      TICKER_RE.lastIndex = 0;
+      while ((m = TICKER_RE.exec(t))) tickers.add(m[1]);
+      for (const tk of tickers) void registerPlay(tk, krVenue, t.slice(0, 80), true);
+    }
   }
-  L.primedTg = true;
+  if (any) { L.srcOk.tg = Date.now(); L.primedTg = true; }
 }
 
 /** Start all watchers (idempotent; re-armed on hot reload). */
@@ -207,6 +321,7 @@ export function startListingWatch(): void {
   L.loops.push(setInterval(() => void pollAnnouncements(), ANN_POLL_MS));
   L.loops.push(setInterval(() => void pollMarkets(), MKT_POLL_MS));
   L.loops.push(setInterval(() => void pollTgChannel(), TG_POLL_MS));
+  L.loops.push(setInterval(() => void trackPlays(), TRACK_MS)); // 피크·급증 추적
 }
 
 /** Is this base a fresh listing? (board badge/boost) */
@@ -219,6 +334,29 @@ export function listingInfo(base: string): { venue: string; ageSec: number; over
 /** Recent listing plays, newest first (dashboard). */
 export function recentListings(): ListingPlay[] {
   return [...L.plays.values()].sort((a, b) => b.announcedAt - a.announcedAt);
+}
+
+/** Record one of my entries on a play (position tracking). Creates the play if
+ *  the buy came before any watcher registered it (manual ticker). */
+export function recordListingBuy(base: string, buy: ListingBuy): void {
+  let p = L.plays.get(base);
+  if (!p) {
+    p = { base, venue: "upbit", announcedAt: Date.now(), overseas: true, opened: false, title: "수동 등록" };
+    L.plays.set(base, p);
+  }
+  (p.buys ??= []).push(buy);
+  saveSection("listingPlays", [...L.plays.entries()]);
+}
+
+export function getPlay(base: string): ListingPlay | null {
+  return L.plays.get(base) ?? null;
+}
+
+export function recordListingSell(base: string, sell: ListingBuy): void {
+  const p = L.plays.get(base);
+  if (!p) return;
+  (p.sells ??= []).push(sell);
+  saveSection("listingPlays", [...L.plays.entries()]);
 }
 
 /** Watcher-source health for the listing dashboard. */

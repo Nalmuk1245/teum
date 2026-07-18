@@ -9,7 +9,8 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import AssetsPanel, { AssetSummary } from "./components/InventoryPanel";
 import CockpitBoard from "./components/CockpitBoard";
 import ExecuteModal from "./components/ExecuteModal";
-import ControlPanel, { ListingPanel } from "./components/ControlPanel";
+import ControlPanel from "./components/ControlPanel";
+import { ListingPanel } from "./components/ListingPanel";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 
 function useIsMobile() {
