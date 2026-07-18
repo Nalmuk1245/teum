@@ -10,7 +10,7 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn } from "./cockpit-ui";
 
 export function Board({
-  rows, loading, onExecute, mobile, showExecute, live, flash,
+  rows, loading, onExecute, mobile, showExecute, live, flash, emptyText,
 }: {
   rows: Opportunity[];
   loading: boolean;
@@ -19,6 +19,7 @@ export function Board({
   showExecute?: boolean;
   live?: Record<string, LiveGap>;
   flash?: Set<string>;
+  emptyText?: string;
 }) {
   return (
     <div
@@ -50,7 +51,7 @@ export function Board({
       {loading && rows.length === 0 ? (
         <Empty text="시장 스캔 중…" />
       ) : rows.length === 0 ? (
-        <Empty text="기회 없음" />
+        <Empty text={emptyText ?? "기회 없음"} />
       ) : (
         rows.map((o) =>
           mobile ? (

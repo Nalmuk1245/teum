@@ -29,6 +29,17 @@ export default function Cockpit() {
   const [meta, setMeta] = useState<{ dryRun: boolean; mock: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StrategyKind | "all">("all");
+  // 수익만 — hide net≤0 rows (they're the honest-cost-model majority and mostly
+  // noise; the toggle brings them back for gap-watching). Persisted.
+  const [plusOnly, setPlusOnly] = useState(true);
+  useEffect(() => {
+    try { const v = localStorage.getItem("arb.plusOnly"); if (v != null) setPlusOnly(v === "1"); } catch { /* private mode */ }
+  }, []);
+  const togglePlusOnly = () =>
+    setPlusOnly((p) => {
+      try { localStorage.setItem("arb.plusOnly", p ? "0" : "1"); } catch { /* private mode */ }
+      return !p;
+    });
   const [selected, setSelected] = useState<Opportunity | null>(null);
   // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
   // trades, control = ops (runs dashboard + risk + kill), assets = balances.
@@ -77,8 +88,15 @@ export default function Cockpit() {
     const base = funding || filter === "all" ? pool : pool.filter((o) => o.kind === filter);
     if (funding) return base;
     const liveNet = (o: Opportunity) => liveOverlay[o.id]?.netPct ?? o.netPct;
-    return [...base].sort((a, b) => liveNet(b) - liveNet(a));
-  }, [pool, filter, funding, liveOverlay]);
+    const sorted = [...base].sort((a, b) => liveNet(b) - liveNet(a));
+    return plusOnly ? sorted.filter((o) => liveNet(o) > 0) : sorted;
+  }, [pool, filter, funding, liveOverlay, plusOnly]);
+  // What the 수익만 filter is hiding right now (for the empty-state message).
+  const hiddenNeg = useMemo(() => {
+    if (funding || !plusOnly) return 0;
+    const base = filter === "all" ? pool : pool.filter((o) => o.kind === filter);
+    return base.filter((o) => (liveOverlay[o.id]?.netPct ?? o.netPct) <= 0).length;
+  }, [pool, filter, funding, plusOnly, liveOverlay]);
   const positive = pool.filter((o) => o.netPct > 0).length;
   const bestEdge = pool.length ? Math.max(...pool.map((o) => o.netPct)) : null;
 
@@ -328,7 +346,8 @@ export default function Cockpit() {
 
         {/* ── Segmented filter (gap modes only — funding is a single strategy) ── */}
         {!funding && (
-        <div style={{ overflowX: "auto", marginBottom: 16, maxWidth: "100%", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ display: "flex", alignItems: "stretch", gap: 8, marginBottom: 16, maxWidth: "100%" }}>
+        <div style={{ overflowX: "auto", minWidth: 0, WebkitOverflowScrolling: "touch" }}>
         <div
           style={{
             display: "inline-flex", gap: 4, padding: 4,
@@ -361,6 +380,24 @@ export default function Cockpit() {
             );
           })}
         </div>
+        </div>
+        {/* Always visible (outside the scrollable chip strip). */}
+        <button
+          type="button"
+          onClick={togglePlusOnly}
+          title="순수익 마이너스(비용 못 넘는) 갭 숨기기"
+          style={{
+            border: `1px solid ${plusOnly ? "var(--pos)" : "var(--border)"}`,
+            cursor: "pointer", borderRadius: 2, flex: "0 0 auto",
+            padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
+            background: plusOnly ? "var(--pos-soft)" : "transparent",
+            color: plusOnly ? "var(--pos)" : "var(--text-dim)",
+            transition: "background 120ms, color 120ms",
+          }}
+        >
+          수익만
+          <span style={{ marginLeft: 6, fontWeight: 500 }}>{positive}</span>
+        </button>
         </div>
         )}
 
@@ -406,7 +443,14 @@ export default function Cockpit() {
             <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
           </span>
         </div>
-        <CockpitBoard rows={rows} loading={loading} onExecute={(o) => { setOpenRunId(null); setSelected(o); }} mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} flash={flashIds} />
+        <CockpitBoard
+          rows={rows} loading={loading}
+          onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
+          mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} flash={flashIds}
+          emptyText={hiddenNeg > 0
+            ? `비용 넘는 갭 없음 — 마이너스 ${hiddenNeg}건 숨김${bestEdge != null ? ` (최고 ${bestEdge.toFixed(2)}%)` : ""} · '수익만' 해제 시 전체 표시`
+            : undefined}
+        />
 
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
           {funding
