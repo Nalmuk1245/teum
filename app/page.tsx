@@ -13,6 +13,7 @@ import ControlPanel from "./components/ControlPanel";
 import { ListingPanel } from "./components/ListingPanel";
 import { GapInspect } from "./components/GapInspect";
 import { DashboardPanel } from "./components/DashboardPanel";
+import { SettingsModal } from "./components/SettingsModal";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 
 function useIsMobile() {
@@ -49,6 +50,7 @@ export default function Cockpit() {
   const [mode, setMode] = useState<"home" | "monitor" | "funding" | "listing" | "control" | "assets">("home");
   // PC: 보드 행 클릭 → 우측 상세(차트·히스토리·실행) 검사창.
   const [inspectId, setInspectId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // 테마 — 다크 기본(상시 감시 화면), 라이트는 수동 토글 (persisted).
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   useEffect(() => {
@@ -254,6 +256,18 @@ export default function Cockpit() {
         >
           <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
           {runsStore.killed ? "중단됨" : "STOP"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          title="설정 — API 키·리스크 한도·알림"
+          style={{
+            border: "1px solid var(--border-strong)", background: "transparent",
+            color: "var(--text-dim)", borderRadius: 999, width: 26, height: 26,
+            display: "grid", placeItems: "center", fontSize: 13, cursor: "pointer",
+          }}
+        >
+          ⚙
         </button>
         <button
           type="button"
@@ -582,6 +596,7 @@ export default function Cockpit() {
       {selected && (
         <ExecuteModal opp={selected} initialRunId={openRunId} onClose={() => { setSelected(null); setOpenRunId(null); }} isMobile={isMobile} />
       )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </main>
   );
 }

@@ -24,10 +24,8 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
         {runsBlock}
         <KillCard killed={killed} />
-        <RiskCard inFlight={inFlight} />
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <PnlCard />
-        <TelegramCard />
         <GatesCard />
       </div>
     );
@@ -43,7 +41,6 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr 1fr", gap: 12, alignItems: "start" }}>
         <div style={col}>
           <KillCard killed={killed} />
-          <RiskCard inFlight={inFlight} />
           {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         </div>
         <div style={col}>
@@ -51,7 +48,6 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
           <PnlCard />
         </div>
         <div style={col}>
-          <TelegramCard />
           <GatesCard />
         </div>
       </div>

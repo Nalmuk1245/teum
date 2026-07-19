@@ -7,6 +7,8 @@
 // stale data immediately instead of blocking.
 
 import { scanAll } from "./scanner";
+import { loadSecretsIntoEnv } from "./secrets";
+loadSecretsIntoEnv(); // 설정창에 저장된 키를 부팅 즉시 주입 (env보다 우선)
 import type { Opportunity } from "./types";
 import { notify, telegramConfigured } from "./telegram";
 import { startListingWatch } from "./listings";
