@@ -213,7 +213,7 @@ export type GateRow = { base: string; venues: Record<string, { deposit: boolean;
 
 export function GatesCard() {
   const [q, setQ] = useState("");
-  const [data, setData] = useState<{ venues: string[]; rows: GateRow[] } | null>(null);
+  const [data, setData] = useState<{ venues: string[]; rows: GateRow[]; missing?: string[] } | null>(null);
   useEffect(() => {
     fetch("/api/gates", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
   }, []);
@@ -234,6 +234,11 @@ export function GatesCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>입출금 상태 조회</div>
       <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 8 }}>실행 전 코인의 거래소별 입금·출금 열림 여부 확인 (<span style={{ color: "var(--pos)" }}>입/출</span> = 열림, <span style={{ color: "var(--neg)" }}>빨강</span> = 중단)</div>
+      {data && (data.missing?.length ?? 0) > 0 && (
+        <div style={{ fontSize: 10.5, color: "var(--amber)", marginBottom: 8 }}>
+          {data.missing!.map((v) => VENUE_LABEL[v] ?? v).join("·")}는 인증 API라 키 등록 후 표시됩니다 — 헤더 ⚙ 설정에서 입력 (빗썸만 공개 API)
+        </div>
+      )}
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}

@@ -29,5 +29,7 @@ export async function GET(req: Request) {
     return { base, venues: perVenue };
   });
 
-  return NextResponse.json({ venues, rows });
+  // 키가 없어 조회 불가한 거래소 — UI가 "왜 없는지" 설명할 수 있게.
+  const missing = (["upbit", "binance"] as Venue[]).filter((v) => !ts.byVenue[v]);
+  return NextResponse.json({ venues, rows, missing });
 }
