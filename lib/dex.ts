@@ -150,6 +150,24 @@ export const QUOTE_STABLES: Record<string, { symbol: string; address: string; de
   base: { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
   bsc: { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
   solana: { symbol: "USDC", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6 },
+  // 아래는 OKX all-tokens에서 추출 후 네이티브→스테이블 실견적 통과한 주소만
+  // (팬텀은 리스트에 스테이블이 없어 제외 — 소닉으로 이주)
+  polygon: { symbol: "USDC", address: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", decimals: 6 },
+  arbitrum: { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
+  optimism: { symbol: "USDC", address: "0x0b2c639c533813f4aa9d7837caf62653d097ff85", decimals: 6 },
+  avalanche: { symbol: "USDC", address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", decimals: 6 },
+  zksync: { symbol: "USDC", address: "0x1d17cbcf0d6d143135ae902365d2e5e2a16538d4", decimals: 6 },
+  linea: { symbol: "USDC", address: "0x176211869ca2b568f2a7d4ee941e073a821ee1ff", decimals: 6 },
+  mantle: { symbol: "USDC", address: "0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9", decimals: 6 },
+  scroll: { symbol: "USDC", address: "0x06efdbff2a14a7c8e15944d1f4a48f9f95f663a4", decimals: 6 },
+  xlayer: { symbol: "USDC", address: "0x74b7f16337b8972027f6196a17a631ac6de26d22", decimals: 6 },
+  manta: { symbol: "USDC", address: "0xb73603c5d87fa094b7314c74ace2e64d165016fb", decimals: 6 },
+  metis: { symbol: "m.USDT", address: "0xbB06DCA3AE6887fAbF931640f67cab3e3a16F4dC", decimals: 6 },
+  blast: { symbol: "USDB", address: "0x4300000000000000000000000000000000000003", decimals: 18 },
+  sonic: { symbol: "USDC", address: "0x29219dd400f2bf60e5a23d13be72b486d4038894", decimals: 6 },
+  cronos: { symbol: "USDC", address: "0xc21223249CA28397B4B6541dfFaEcC539BfF0c59", decimals: 6 },
+  monad: { symbol: "USDC", address: "0x754704bc059f8c67012fed69bc8a327a5aafb603", decimals: 6 },
+  hyperevm: { symbol: "USDC", address: "0xb88339cb7199b77e23db6e890353e22632ba630f", decimals: 6 },
 };
 
 // OKX 토큰리스트 (체인당 1시간 캐시) — cex-dex 유니버스 자동 확장의 원천.
