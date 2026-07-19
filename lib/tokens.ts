@@ -46,3 +46,56 @@ export function tokenFor(base: string, chainKey: string): WalletAsset {
   if (t) return { kind: "token", known: true, address: t.address, decimals: t.decimals };
   return { kind: "unknown", known: false };
 }
+
+// 온체인 decimals() 직접 확인 — OKX가 decimals를 안 줄 때의 정답지.
+async function erc20Decimals(chainKey: string, address: string): Promise<number | null> {
+  try {
+    const { JsonRpcProvider, Contract } = await import("ethers");
+    const provider = new JsonRpcProvider(CHAINS[chainKey].rpc, undefined, { staticNetwork: true });
+    const c = new Contract(address, ["function decimals() view returns (uint8)"], provider);
+    return Number(await c.decimals());
+  } catch { return null; }
+}
+
+// okxWallet 체인 표기 ↔ chains.ts 키
+const OKX_CHAIN_SHORT: Record<string, string> = {
+  ethereum: "eth", optimism: "op", bsc: "bsc", polygon: "poly",
+  base: "base", arbitrum: "arb", avalanche: "avax",
+};
+
+/** tokenFor의 비동기 확장 — 큐레이션 맵에 없으면 OKX로 자동 해석 (EVM만).
+ *  우선순위: ① 큐레이션 ② 내 지갑 실보유 토큰의 컨트랙트(OKX 잔고 — 방금 받은
+ *  코인은 여기서 100% 잡힘) ③ OKX 토큰리스트 심볼 매칭(모호하면 거부).
+ *  decimals는 리스트에서, 없으면 온체인 decimals()로 확정. */
+export async function resolveWalletAsset(base: string, chainKey: string): Promise<WalletAsset> {
+  const cur = tokenFor(base, chainKey);
+  if (cur.known) return cur;
+  if (CHAINS[chainKey]?.family !== "evm") return cur; // 자동 해석은 EVM만 (SPL/TRC20 전송 미배선)
+
+  try {
+    const { okxAllWalletCoins } = await import("./okxWallet");
+    const { allTokens } = await import("./dex");
+    const short = OKX_CHAIN_SHORT[chainKey];
+
+    // ② 지갑이 실제 들고 있는 토큰 — 심볼+체인 일치 시 그 컨트랙트가 정답.
+    const evmAddr = process.env.WALLET_ADDR_EVM ?? null;
+    if (short) {
+      const coins = await okxAllWalletCoins({ evm: evmAddr }).catch(() => null);
+      const held = coins?.find((c) => c.symbol === base && c.chain === short && c.contract);
+      if (held?.contract) {
+        // 네이티브 표기는 contract가 비어 오므로 여기 오면 항상 토큰.
+        const list = await allTokens(chainKey);
+        const dec = list.get(base)?.address.toLowerCase() === held.contract.toLowerCase()
+          ? list.get(base)!.decimals
+          : await erc20Decimals(chainKey, held.contract);
+        if (dec != null) return { kind: "token", known: true, address: held.contract, decimals: dec };
+      }
+    }
+
+    // ③ OKX 토큰리스트 — 심볼 유일할 때만 (중복 심볼 = 모호 → 차단 유지).
+    const list = await allTokens(chainKey);
+    const t = list.get(base);
+    if (t) return { kind: "token", known: true, address: t.address, decimals: t.decimals };
+  } catch { /* 해석 실패 → unknown 유지 (송금 차단이 안전) */ }
+  return { kind: "unknown", known: false };
+}

@@ -5,7 +5,7 @@ import { sendToken, walletAddress } from "@/lib/wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/chains";
 import { fetchDepositAddress } from "@/lib/deposits";
 import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "@/lib/orders";
-import { tokenFor } from "@/lib/tokens";
+import { resolveWalletAsset } from "@/lib/tokens";
 import { dexConfigured, approveDex, swapDex, CEXDEX_CHAINS } from "@/lib/dex";
 import { sendRawEvmTx } from "@/lib/wallet";
 import { isKilled } from "@/lib/killswitch";
@@ -266,7 +266,8 @@ async function runStep(
       if (!fetched?.address && !dry) return fail("입금주소 미확인 — 송금 차단");
       if (TAG_REQUIRED.has(opp.base) && !fetched?.tag && !dry) return fail(`${opp.base} 태그 필수 — 태그 미확인, 송금 차단`);
       const to = fetched?.address || "0xDRYRUN_DEST";
-      const asset = tokenFor(opp.base, chain); // native vs ERC20/TRC20/SPL
+      // 큐레이션 → 내 지갑 보유 컨트랙트(OKX) → 토큰리스트 순 자동 해석.
+      const asset = await resolveWalletAsset(opp.base, chain);
       if (asset.kind === "unknown" && !dry) return fail(`${opp.base} 토큰 컨트랙트 미확인 — 송금 차단`);
       const res = await sendToken({
         chain, to, amountHuman: String(+qty.toFixed(6)),
