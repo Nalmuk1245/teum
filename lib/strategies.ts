@@ -345,6 +345,9 @@ const fundingBasis: Strategy = {
         notionalCapUsd: null,
         executable: false, // perp-DEX / cross-venue order routing not wired yet
         rateBasis: "apr",
+        // >200% APR spreads are almost always new-listing spikes with no real
+        // capturable size — flag + demote instead of headlining the board.
+        suspectApr: grossApr > 200,
         // Funding pays only at the settlement snapshot — surface the SHORT
         // leg's next one + both intervals so entries can be timed.
         fundingMeta: { nextTs: hi.nextTs, shortIntervalH: hi.intervalH, longIntervalH: lo.intervalH },
@@ -352,7 +355,8 @@ const fundingBasis: Strategy = {
         ts: now(),
       });
     }
-    out.sort((a, b) => b.netPct - a.netPct);
+    // Suspect spikes sink below normal rows regardless of APR.
+    out.sort((a, b) => (a.suspectApr ? 1 : 0) - (b.suspectApr ? 1 : 0) || b.netPct - a.netPct);
     return out.slice(0, 20);
   },
 };

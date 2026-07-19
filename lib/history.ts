@@ -6,8 +6,8 @@
 
 import { loadSection, saveSection } from "./persist";
 
-const WINDOW_MS = 5 * 60_000; // rolling window
-const MAX_SAMPLES = 120; // ≥ window / scan cadence (3s) so the cap never shrinks the window
+const WINDOW_MS = 30 * 60_000; // rolling window — long enough to see gap patterns
+const MAX_SAMPLES = 650; // ≥ window / scan cadence (3s) so the cap never shrinks the window
 
 export type Persistence = {
   heldSec: number; // consecutive seconds net has stayed > 0 (0 if currently ≤ 0)
@@ -68,6 +68,11 @@ export function recordGap(id: string, netPct: number, grossPct: number, price: n
     volPctPerMin: pv.volPctPerMin,
     samples: t.samples.length,
   };
+}
+
+/** Raw gross-history samples for one opp (sparkline). Newest last. */
+export function getTrack(id: string): { ts: number; gross: number }[] {
+  return (H.get(id)?.samples ?? []).map((s) => ({ ts: s.ts, gross: s.gross }));
 }
 
 /** Drop tracks not seen this scan cycle (prevents unbounded growth). */

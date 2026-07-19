@@ -79,6 +79,9 @@ export type Opportunity = {
   fundingMeta?: { nextTs: number | null; shortIntervalH: number | null; longIntervalH: number | null };
   note?: string;
   mock?: boolean; // sample data, not a live signal
+  /** Funding: gross APR is an outlier spike (new listing / thin OI) — likely
+   *  not capturable at size; ranked below normal rows. */
+  suspectApr?: boolean;
   ts: number;
 };
 

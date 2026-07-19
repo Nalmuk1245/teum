@@ -11,6 +11,7 @@ import CockpitBoard from "./components/CockpitBoard";
 import ExecuteModal from "./components/ExecuteModal";
 import ControlPanel from "./components/ControlPanel";
 import { ListingPanel } from "./components/ListingPanel";
+import { GapInspect } from "./components/GapInspect";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 
 function useIsMobile() {
@@ -44,7 +45,9 @@ export default function Cockpit() {
   const [selected, setSelected] = useState<Opportunity | null>(null);
   // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
   // trades, control = ops (runs dashboard + risk + kill), assets = balances.
-  const [mode, setMode] = useState<"monitor" | "funding" | "execute" | "listing" | "control" | "assets">("monitor");
+  const [mode, setMode] = useState<"monitor" | "funding" | "listing" | "control" | "assets">("monitor");
+  // PC: 보드 행 클릭 → 우측 상세(차트·히스토리·실행) 검사창.
+  const [inspectId, setInspectId] = useState<string | null>(null);
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -98,8 +101,10 @@ export default function Cockpit() {
     const base = filter === "all" ? pool : pool.filter((o) => o.kind === filter);
     return base.filter((o) => (liveOverlay[o.id]?.netPct ?? o.netPct) <= 0).length;
   }, [pool, filter, funding, plusOnly, liveOverlay]);
-  const positive = pool.filter((o) => o.netPct > 0).length;
-  const bestEdge = pool.length ? Math.max(...pool.map((o) => o.netPct)) : null;
+  // KPI는 실데이터만 — mock이 "최고 수익"을 오염시키면 보드를 못 믿게 된다.
+  const livePool = useMemo(() => pool.filter((o) => !o.mock), [pool]);
+  const positive = livePool.filter((o) => o.netPct > 0).length;
+  const bestEdge = livePool.length ? Math.max(...livePool.map((o) => o.netPct)) : null;
 
   // ── Spike alerts — live net crossing the threshold beeps + notifies + flashes.
   const [alertsOn, setAlertsOn] = useState(false);
@@ -248,15 +253,14 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
+            display: "grid", gridTemplateColumns: "repeat(5, 1fr)",
             marginBottom: isMobile ? 10 : 14,
             borderBottom: "1px solid var(--border)",
           }}
         >
           {([
-            { k: "monitor", label: "갭", sub: "원샷 차익" },
+            { k: "monitor", label: "갭", sub: "차익·실행" },
             { k: "funding", label: "펀딩", sub: "APR" },
-            { k: "execute", label: "실행", sub: "주문" },
             { k: "listing", label: "상장", sub: "따리·물량" },
             { k: "control", label: "관제", sub: "실행·리스크" },
             { k: "assets", label: "자산", sub: "잔고" },
@@ -269,7 +273,7 @@ export default function Cockpit() {
                 onClick={() => {
                   // Runs persist in the background store now, so leaving the
                   // execute view never kills anything — just close the modal.
-                  if (m.k !== "execute") setSelected(null);
+                  if (m.k !== "monitor") { setSelected(null); setInspectId(null); }
                   setMode(m.k);
                 }}
                 style={{
@@ -311,42 +315,43 @@ export default function Cockpit() {
           <ControlPanel
             runs={runList}
             killed={runsStore.killed}
-            onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); setMode("execute"); }}
+            onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }}
             autoEntry={autoEntry}
             onAutoEntry={setAutoEntry}
             wide={!isMobile}
           />
         )}
 
-        {(mode === "monitor" || mode === "funding" || mode === "execute") && (<>
+        {(mode === "monitor" || mode === "funding") && (<>
         {/* ── KPI tiles ────────────────────────────────────────── */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            // PC에서 타일이 화면 1/3씩 먹지 않게 — 좌측 정렬 소형 타일.
+            gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(3, minmax(140px, 210px))",
             gap: isMobile ? 6 : 10,
             marginBottom: isMobile ? 10 : 14,
           }}
         >
           <Tile
             label={funding ? "펀딩 기회" : "기회"}
-            value={String(pool.length)}
+            value={String(livePool.length)}
             sub={funding ? "스프레드 8%+" : `전략 ${GAP_KINDS.length}종`}
-            compact={isMobile}
+            compact
           />
           <Tile
             label={funding ? "수익 스프레드" : "수익 기회"}
             value={String(positive)}
             sub={funding ? "APR 양수" : "비용 넘김"}
             tone="var(--pos)"
-            compact={isMobile}
+            compact
           />
           <Tile
             label={funding ? "최고 APR" : "최고 수익"}
             value={bestEdge == null ? "—" : pct(bestEdge)}
-            sub={funding ? "연환산" : "수수료 반영"}
+            sub={funding ? "연환산" : "실데이터 · 목업 제외"}
             tone={bestEdge && bestEdge > 0 ? "var(--pos)" : "var(--text)"}
-            compact={isMobile}
+            compact
           />
         </div>
 
@@ -408,7 +413,7 @@ export default function Cockpit() {
         )}
 
         {/* Runs live on the 관제 tab now — nudge there when any are active. */}
-        {mode === "execute" && activeRuns > 0 && (
+        {mode === "monitor" && activeRuns > 0 && (
           <button
             type="button"
             onClick={() => setMode("control")}
@@ -449,14 +454,39 @@ export default function Cockpit() {
             <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
           </span>
         </div>
-        <CockpitBoard
-          rows={rows} loading={loading}
-          onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
-          mobile={isMobile} showExecute={mode === "execute"} live={liveOverlay} flash={flashIds}
-          emptyText={hiddenNeg > 0
-            ? `비용 넘는 갭 없음 — 마이너스 ${hiddenNeg}건 숨김${bestEdge != null ? ` (최고 ${bestEdge.toFixed(2)}%)` : ""} · '수익만' 해제 시 전체 표시`
-            : undefined}
-        />
+        {(() => {
+          // PC 검사창 — inspectId의 최신 스냅샷(스캔마다 갱신)을 우측에.
+          const inspectOpp = !isMobile && !funding && inspectId
+            ? (gapOpps.find((o) => o.id === inspectId) ?? null)
+            : null;
+          const board = (
+            <CockpitBoard
+              rows={rows} loading={loading}
+              onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
+              mobile={isMobile} showExecute={!funding} live={liveOverlay} flash={flashIds}
+              onInspect={!isMobile && !funding ? (o) => setInspectId((cur) => (cur === o.id ? null : o.id)) : undefined}
+              inspectedId={inspectId}
+              lastColLabel={funding ? "다음 정산" : undefined}
+              emptyText={hiddenNeg > 0
+                ? `비용 넘는 갭 없음 — 마이너스 ${hiddenNeg}건 숨김${bestEdge != null ? ` (최고 ${bestEdge.toFixed(2)}%)` : ""} · '수익만' 해제 시 전체 표시`
+                : undefined}
+            />
+          );
+          if (!inspectOpp) return board;
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 520px", gap: 14, alignItems: "start" }}>
+              <div style={{ minWidth: 0 }}>{board}</div>
+              <div style={{ position: "sticky", top: 60 }}>
+                <GapInspect
+                  opp={inspectOpp}
+                  live={liveOverlay[inspectOpp.id]}
+                  onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
+                  onClose={() => setInspectId(null)}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
           {funding
@@ -491,7 +521,7 @@ export default function Cockpit() {
           <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
             수익 기회 <b style={{ color: "var(--pos)" }}>{positive}</b>건
           </span>
-          {mode === "execute" && best.o.executable && (
+          {mode === "monitor" && best.o.executable && (
             <button
               type="button"
               onClick={() => setSelected(best.o)}
@@ -507,7 +537,7 @@ export default function Cockpit() {
         </div>
       )}
 
-      {selected && mode === "execute" && (
+      {selected && (
         <ExecuteModal opp={selected} initialRunId={openRunId} onClose={() => { setSelected(null); setOpenRunId(null); }} isMobile={isMobile} />
       )}
     </main>

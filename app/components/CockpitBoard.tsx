@@ -10,7 +10,7 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn } from "./cockpit-ui";
 
 export function Board({
-  rows, loading, onExecute, mobile, showExecute, live, flash, emptyText,
+  rows, loading, onExecute, mobile, showExecute, live, flash, emptyText, onInspect, inspectedId, lastColLabel,
 }: {
   rows: Opportunity[];
   loading: boolean;
@@ -20,6 +20,10 @@ export function Board({
   live?: Record<string, LiveGap>;
   flash?: Set<string>;
   emptyText?: string;
+  /** PC: 행 클릭 → 우측 상세 패널 */
+  onInspect?: (o: Opportunity) => void;
+  inspectedId?: string | null;
+  lastColLabel?: string;
 }) {
   return (
     <div
@@ -43,7 +47,7 @@ export function Board({
           <span style={{ textAlign: "right" }}>총차익</span>
           <span style={{ textAlign: "right" }}>비용</span>
           <span style={{ textAlign: "right" }}>순수익</span>
-          <span style={{ textAlign: "right" }}>한도</span>
+          <span style={{ textAlign: "right" }}>{lastColLabel ?? "한도"}</span>
           {showExecute && <span />}
         </div>
       )}
@@ -57,7 +61,7 @@ export function Board({
           mobile ? (
             <OppCard key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} />
           ) : (
-            <Row key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} />
+            <Row key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} onInspect={onInspect} inspected={inspectedId === o.id} />
           ),
         )
       )}
@@ -152,7 +156,7 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
   );
 }
 
-export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean }) {
+export function Row({ o, onExecute, showExecute, live, flashing, onInspect, inspected }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean; onInspect?: (o: Opportunity) => void; inspected?: boolean }) {
   const km = KIND_META[o.kind];
   const [hover, setHover] = useState(false);
   const net = live?.netPct ?? o.netPct;
@@ -164,11 +168,14 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onClick={onInspect ? () => onInspect(o) : undefined}
       className={flashing ? "spike-flash" : undefined}
       style={{
         display: "grid", gridTemplateColumns: showExecute ? COLS : COLS_MON, gap: 10, alignItems: "center",
         padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: 12.5,
-        background: hover ? "var(--card-2)" : "transparent",
+        background: inspected ? "var(--brand-soft)" : hover ? "var(--card-2)" : "transparent",
+        cursor: onInspect ? "pointer" : undefined,
+        boxShadow: inspected ? "inset 2px 0 0 var(--brand)" : undefined,
         transition: "background 100ms",
       }}
     >
@@ -186,6 +193,11 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
       {/* pair */}
       <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
         <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{o.base}</span>
+        {o.suspectApr && (
+          <span title="APR 스파이크 — 신규상장/얇은 OI로 실체결 용량이 없을 확률이 높음" style={{ fontSize: 9, fontWeight: 700, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 2, padding: "0 4px" }}>
+            스파이크?
+          </span>
+        )}
         {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         {o.mock ? (
           <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 2, padding: "0 4px" }}>
@@ -231,7 +243,7 @@ export function Row({ o, onExecute, showExecute, live, flashing }: { o: Opportun
         <button
           type="button"
           disabled={!o.executable}
-          onClick={() => onExecute(o)}
+          onClick={(e) => { e.stopPropagation(); onExecute(o); }}
           style={{
             justifySelf: "end",
             borderRadius: 2, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,

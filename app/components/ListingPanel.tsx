@@ -223,7 +223,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
 }
 
 // ── 차트 (PC용) — CEX는 TradingView 임베드, DEX는 DexScreener 임베드 ──────────
-const TV_SYMBOL: Record<string, (b: string) => string> = {
+export const TV_SYMBOL: Record<string, (b: string) => string> = {
   binance: (b) => `BINANCE:${b}USDT`,
   bybit: (b) => `BYBIT:${b}USDT`,
   okx: (b) => `OKX:${b}USDT`,
