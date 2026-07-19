@@ -91,27 +91,31 @@ export async function fetchWalletBalance(px: Map<string, number>): Promise<Venue
   const sol = process.env.WALLET_ADDR_SOL;
   if (!evm && !xrp && !tron && !sol) return null; // no address → nothing to read
 
-  // OKX Web3 잔고 API가 있으면 EVM 쪽은 전 토큰 자동 발견(가격 포함) — DEX로 산
-  // 잡코인까지 잡힌다. 없으면 기존 네이티브 RPC 폴백.
-  let evmCoins: CoinBal[] | null = null;
-  if (evm) {
-    try {
-      const { okxWalletCoins } = await import("./okxWallet");
-      const okx = await okxWalletCoins(evm);
-      if (okx && okx.length) {
-        evmCoins = okx.map((c) => ({ asset: c.symbol, amount: c.amount, usdValue: c.usdValue }));
-      }
-    } catch { /* fallback below */ }
-  }
+  // 1차: OKX Web3 지갑 API — EVM 7체인 + 솔라나 + 트론 전 토큰 자동 발견(가격
+  // 포함). 키가 없거나 실패하면 기존 네이티브 RPC 폴백. XRP는 항상 RPC.
+  let okxCoins: CoinBal[] | null = null;
+  try {
+    const { okxAllWalletCoins } = await import("./okxWallet");
+    const okx = await okxAllWalletCoins({ evm, sol, tron });
+    if (okx && okx.length) {
+      okxCoins = okx.map((c) => ({
+        // 체인 표기: 같은 심볼이 여러 체인에 있어도 구분되게.
+        asset: c.chain === "eth" ? c.symbol : `${c.symbol}·${c.chain}`,
+        amount: c.amount, usdValue: c.usdValue,
+      }));
+    }
+  } catch { /* fallback below */ }
 
   const jobs: Promise<CoinBal | null>[] = [];
-  if (evm && !evmCoins) for (const c of EVM_READ) jobs.push(evmNative(c, evm, px));
-  if (xrp) jobs.push(xrpNative(xrp, px));
-  if (tron) jobs.push(tronNative(tron, px));
-  if (sol) jobs.push(solNative(sol, px));
+  if (!okxCoins) {
+    if (evm) for (const c of EVM_READ) jobs.push(evmNative(c, evm, px));
+    if (tron) jobs.push(tronNative(tron, px));
+    if (sol) jobs.push(solNative(sol, px));
+  }
+  if (xrp) jobs.push(xrpNative(xrp, px)); // OKX 미지원 체인 — 항상 RPC
 
   const rest = (await Promise.all(jobs)).filter((c): c is CoinBal => !!c && c.usdValue >= 0.5);
-  const coins = [...(evmCoins ?? []), ...rest].sort((a, b) => b.usdValue - a.usdValue);
+  const coins = [...(okxCoins ?? []), ...rest].sort((a, b) => b.usdValue - a.usdValue);
   const totalUsd = coins.reduce((s, c) => s + c.usdValue, 0);
   return { venue: "wallet", connected: true, cashLabel: "", cashRaw: 0, cashUsd: 0, coins, totalUsd };
 }

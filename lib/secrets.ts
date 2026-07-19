@@ -39,6 +39,10 @@ export const SECRET_DEFS: SecretDef[] = [
   // 개인지갑
   { name: "WALLET_PRIVATE_KEY", label: "EVM 지갑 프라이빗 키", group: "개인지갑", secret: true, danger: true, placeholder: "0x… (자금 이동 가능 — 전용 지갑만)" },
   { name: "WALLET_ADDR_EVM", label: "EVM 지갑 주소 (키 없이 조회용)", group: "개인지갑", placeholder: "0x…" },
+  { name: "WALLET_SOL_KEY", label: "솔라나 지갑 키 (base58)", group: "개인지갑", secret: true, danger: true },
+  { name: "WALLET_ADDR_SOL", label: "솔라나 지갑 주소 (조회용)", group: "개인지갑" },
+  { name: "WALLET_ADDR_TRON", label: "트론 지갑 주소 (조회용)", group: "개인지갑" },
+  { name: "WALLET_ADDR_XRP", label: "XRP 지갑 주소 (조회용)", group: "개인지갑" },
   // 알림
   { name: "TELEGRAM_BOT_TOKEN", label: "텔레그램 봇 토큰", group: "알림", secret: true },
   { name: "TELEGRAM_CHAT_ID", label: "텔레그램 Chat ID", group: "알림" },
