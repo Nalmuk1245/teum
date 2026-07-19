@@ -30,6 +30,7 @@ export function Board({
       style={{
         background: "var(--card)", border: "1px solid var(--border)",
         borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)",
+        backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)",
       }}
     >
       {!mobile && (
