@@ -427,7 +427,7 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
     })),
   ];
   const [sel, setSel] = useState<string | null>(null);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false); // 상장 순간엔 실행정보 우선 — 차트는 접어둠
   const active = opts.find((o) => o.key === sel) ?? opts[0];
   if (!opts.length) return null;
   return (
@@ -565,16 +565,29 @@ function DetailPanel({ base }: { base: string }) {
     finally { setBusy(null); }
   }, []);
 
-  // 미리보기 토글 — 클릭 시 OKX 견적으로 예상 수령·슬리피지·가스·라우팅·안전성.
-  const loadPreview = useCallback(async (chain: string, contract: string, decimals: number, usd: number) => {
-    const cur = preview[chain];
-    if (cur && cur !== "loading" && !("error" in cur)) { setPreview((p) => { const n = { ...p }; delete n[chain]; return n; }); return; }
-    setPreview((p) => ({ ...p, [chain]: "loading" }));
-    try {
-      const j = await (await fetch(`/api/swap-preview?chain=${chain}&token=${contract}&usd=${usd}&decimals=${decimals}`)).json();
-      setPreview((p) => ({ ...p, [chain]: j.error ? { error: j.error } : j }));
-    } catch { setPreview((p) => ({ ...p, [chain]: { error: "요청 실패" } })); }
-  }, [preview]);
+  // verified DEX 미리보기 자동 로드 — 클릭 없이 유동성·슬리피지가 바로 뜨게.
+  // 상세가 뜨거나 매수 금액이 바뀌면(디바운스) 각 DEX를 병렬 재견적한다.
+  const dexKey = d?.dex.filter((x) => x.verified).map((x) => x.chain).join(",") ?? "";
+  useEffect(() => {
+    const usd = Number(sizeUsd) || 0;
+    if (!d || usd <= 0) return;
+    const targets = d.dex.filter((x) => x.verified);
+    if (!targets.length) return;
+    let stop = false;
+    const t = setTimeout(() => {
+      setPreview((p) => { const n = { ...p }; for (const x of targets) n[x.chain] = "loading"; return n; });
+      for (const x of targets) {
+        void (async () => {
+          try {
+            const j = await (await fetch(`/api/swap-preview?chain=${x.chain}&token=${x.contract}&usd=${usd}&decimals=${x.decimals}`)).json();
+            if (!stop) setPreview((p) => ({ ...p, [x.chain]: j.error ? { error: j.error } : j }));
+          } catch { if (!stop) setPreview((p) => ({ ...p, [x.chain]: { error: "요청 실패" } })); }
+        })();
+      }
+    }, 500);
+    return () => { stop = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dexKey, sizeUsd]);
 
   // 스왑 tx 폴링 — 확정/실패까지 6초 간격, 모의는 즉시 성공.
   useEffect(() => {
@@ -638,9 +651,6 @@ function DetailPanel({ base }: { base: string }) {
         {signal("24h 피크", play?.peakPct != null ? `+${play.peakPct.toFixed(1)}%` : "—", (play?.peakPct ?? 0) > 0 ? "var(--pos)" : undefined)}
       </div>
 
-      {/* ② 차트 */}
-      <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
-
       {/* ③ 매수·매도 — CEX+DEX 통합 표, 금액 입력은 표 머리에 */}
       {sec("매수 · 매도", (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -689,11 +699,8 @@ function DetailPanel({ base }: { base: string }) {
               {x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
             </span>
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
-              {x.verified && size > 0 && (
-                <button type="button" style={BTN_GHOST} title="OKX 견적 미리보기"
-                  onClick={() => void loadPreview(x.chain, x.contract, x.decimals, size)}>
-                  {preview[x.chain] === "loading" ? "…" : preview[x.chain] ? "닫기" : "미리보기"}
-                </button>
+              {x.verified && preview[x.chain] === "loading" && (
+                <span style={{ ...CAP, alignSelf: "center" }}>견적…</span>
               )}
               <button type="button" style={BTN} disabled={busy != null || size <= 0 || !x.verified}
                 onClick={() => void act(`dex:${x.chain}`, "/api/listing-dex-buy", { base, chain: x.chain, sizeUsd: size })}>
@@ -774,6 +781,9 @@ function DetailPanel({ base }: { base: string }) {
       {holdings && holdings.venues.some((v) => (v.hotDeltaPerMin ?? 0) > 0) && (
         <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--amber)" }}>▲ 핫월렛 유입 = 거래소가 매도 물량을 준비 중일 수 있음 (덤프 경계)</div>
       )}
+
+      {/* ② 차트 */}
+      <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
 
       {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (
