@@ -33,18 +33,20 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
       </div>
     );
   }
-  // PC: 현황 풀폭 + 3컬럼 — 좌: 실행 흐름(런·자동진입), 중: 안전장치(킬·리스크·손익), 우: 인프라(TG·게이트·도구)
+  // PC: 현황 풀폭 + 3컬럼, 성격별 그룹 — ① 안전장치(킬·리스크·자동진입)
+  // ② 활동·기록(실행 현황·거래손익) ③ 연결·도구(TG·입출금·도구).
+  // 컬럼 높이가 비슷해지도록 긴 목록(입출금)은 카드 안에서 스크롤.
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
       <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 12, alignItems: "start" }}>
-        <div style={col}>
-          {runsBlock}
-          {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr 1fr", gap: 12, alignItems: "start" }}>
         <div style={col}>
           <KillCard killed={killed} />
           <RiskCard inFlight={inFlight} />
+          {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
+        </div>
+        <div style={col}>
+          {runsBlock}
           <PnlCard />
         </div>
         <div style={col}>
@@ -245,7 +247,7 @@ export function GatesCard() {
       {!data ? (
         <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "8px 0" }}>조회 중…</div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: `64px repeat(${data.venues.length}, 1fr)`, gap: "6px 10px", fontSize: 12, minWidth: 60 + data.venues.length * 70 }}>
             <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>코인</span>
             {data.venues.map((v) => <span key={v} style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{VENUE_LABEL[v] ?? v}</span>)}
