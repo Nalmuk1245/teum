@@ -22,14 +22,13 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
     return (
       <div style={{ ...col, paddingBottom: 40 }}>
         <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
+        {runsBlock}
         <KillCard killed={killed} />
         <RiskCard inFlight={inFlight} />
-        {runsBlock}
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <PnlCard />
         <TelegramCard />
         <GatesCard />
-        <ToolsCard />
       </div>
     );
   }
@@ -39,6 +38,8 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
       <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
+      {/* 진행 중 실행 = 최우선 — 풀폭 히어로로 크게 */}
+      {runs.length > 0 && <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} hero />}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr 1fr", gap: 12, alignItems: "start" }}>
         <div style={col}>
           <KillCard killed={killed} />
@@ -46,13 +47,12 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
           {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         </div>
         <div style={col}>
-          {runsBlock}
+          {runs.length === 0 && runsBlock}
           <PnlCard />
         </div>
         <div style={col}>
           <TelegramCard />
           <GatesCard />
-          <ToolsCard />
         </div>
       </div>
     </div>
@@ -589,36 +589,15 @@ export function HoldingsCard() {
   );
 }
 
-export function ToolsCard() {
-  const tools = [
-    { t: "긴급 청산·헷지 정리", d: "열린 포지션을 즉시 시장가 청산 / 헷지만 정리" },
-    { t: "원화 회수", d: "원화 회수(오프램프) 한도·환전 비용 추적" },
-  ];
-  return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>도구 (추천)</div>
-      <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 10 }}>더 붙이면 좋은 운영 도구들 — 원하는 걸 만들어 드립니다</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {tools.map((x) => (
-          <div key={x.t} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
-            <span style={{ marginTop: 5, width: 5, height: 5, borderRadius: 9, background: "var(--brand)", flex: "0 0 auto" }} />
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{x.t}</div>
-              <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{x.d}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ── Active runs dashboard — background runs, their live progress + controls ────
 
-export function RunsDashboard({ runs, onOpen }: {
+export function RunsDashboard({ runs, onOpen, hero }: {
   runs: RunView[];
   onOpen: (r: RunView) => void;
   onClearDone: () => void;
+  /** 진행 중 실행이 있을 때 풀폭 히어로 — 카드가 크고 그리드로 퍼진다. */
+  hero?: boolean;
 }) {
   const hasDone = runs.some((r) => r.phase === "done");
   const phaseLabel: Record<string, { t: string; c: string }> = {
@@ -628,17 +607,24 @@ export function RunsDashboard({ runs, onOpen }: {
     done: { t: "완료", c: "var(--pos)" },
     idle: { t: "대기", c: "var(--text-mute)" },
   };
+  const active = runs.filter((r) => r.phase === "running" || r.phase === "paused").length;
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>실행 현황 · {runs.length}</span>
+    <div style={{ marginBottom: hero ? 0 : 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 6px" }}>
+        <span style={{ fontSize: hero ? 14 : 12, fontWeight: 700, color: hero ? "var(--text)" : "var(--text-dim)" }}>
+          {hero ? `진행 중인 실행 ${active}건` : `실행 현황 · ${runs.length}`}
+        </span>
+        {hero && <span style={{ width: 7, height: 7, borderRadius: 9, background: "var(--amber)", boxShadow: "0 0 8px var(--amber)" }} />}
+        <span style={{ flex: 1 }} />
         {hasDone && (
           <button type="button" onClick={() => clearFinished()} style={{ background: "transparent", border: "none", color: "var(--text-mute)", fontSize: 11, cursor: "pointer" }}>
             완료 정리
           </button>
         )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={hero
+        ? { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 10 }
+        : { display: "flex", flexDirection: "column", gap: 6 }}>
         {runs.map((r) => {
           const total = r.plan.length;
           const doneCount = r.plan.filter((s) => r.statuses[s.id] === "done").length;
@@ -652,22 +638,22 @@ export function RunsDashboard({ runs, onOpen }: {
               style={{
                 display: "block", width: "100%", textAlign: "left", cursor: "pointer",
                 background: "var(--card)", border: `1px solid ${r.phase === "error" ? "var(--neg)" : r.phase === "paused" ? "var(--brand)" : "var(--border)"}`,
-                borderRadius: "var(--radius)", padding: "10px 12px", color: "var(--text)",
+                borderRadius: "var(--radius)", padding: hero ? "14px 16px" : "10px 12px", color: "var(--text)", boxShadow: hero ? "var(--shadow-sm)" : undefined,
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ width: 6, height: 6, borderRadius: 9, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
-                <span style={{ fontWeight: 700, fontSize: 13.5 }}>{r.base}</span>
+                <span style={{ fontWeight: 700, fontSize: hero ? 16 : 13.5 }}>{r.base}</span>
                 <span style={{ fontSize: 11, color: "var(--text-mute)" }}>{r.route}</span>
                 <span style={{ flex: 1 }} />
                 <span className="tnum" style={{ fontSize: 11, color: "var(--text-dim)" }}>{usd(r.sizeUsd)}</span>
                 <span style={{ fontSize: 11, fontWeight: 600, color: ph.c }}>{ph.t}</span>
               </div>
               {/* progress */}
-              <div style={{ display: "flex", height: 5, borderRadius: 9, overflow: "hidden", background: "var(--bg)", marginTop: 8 }}>
+              <div style={{ display: "flex", height: hero ? 8 : 5, borderRadius: 9, overflow: "hidden", background: "var(--bg)", marginTop: hero ? 10 : 8 }}>
                 <div style={{ width: `${total ? (doneCount / total) * 100 : 0}%`, background: r.phase === "error" ? "var(--neg)" : "var(--brand)", transition: "width 200ms" }} />
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 10.5, color: "var(--text-mute)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: hero ? 6 : 4, fontSize: hero ? 12 : 10.5, color: hero ? "var(--text-dim)" : "var(--text-mute)" }}>
                 <span>{doneCount}/{total} · {cur ? cur.label : "—"}</span>
                 {r.pnlUsd !== 0 && <span className="tnum" style={{ color: r.pnlUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>실현 {r.pnlUsd >= 0 ? "+" : "−"}${Math.abs(r.pnlUsd).toFixed(2)}</span>}
               </div>
