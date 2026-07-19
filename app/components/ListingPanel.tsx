@@ -49,6 +49,12 @@ const CARD: React.CSSProperties = { background: "var(--card)", border: "1px soli
 const BTN: React.CSSProperties = { border: "none", borderRadius: 9, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
 const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
+type PreviewData = {
+  expectedOut: number; pricePerToken: number; minReceive: number; slippagePct: number;
+  priceImpactPct: number | null; tradeFeeUsd: number | null; gasUsd: number | null;
+  route: string[]; honeypot: boolean; taxRatePct: number | null;
+};
+type TxStatusData = { status: "pending" | "success" | "fail" | "unknown"; failReason: string | null };
 const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
 
 // 실행 표 공통 그리드: 처 | 가격 | 내 자금 | 비고 | 액션
@@ -346,6 +352,45 @@ export const TV_SYMBOL: Record<string, (b: string) => string> = {
   bithumb: (b) => `BITHUMB:${b}KRW`,
 };
 
+// 스왑 미리보기 — OKX 견적으로 예상 수령·유효 단가·최소 수령(슬리피지)·
+// 가격임팩트·수수료·가스·라우팅 + 토큰 안전성(허니팟·전송세).
+function SwapPreview({ base, pv }: { base: string; pv: PreviewData | { error: string } }) {
+  if ("error" in pv) {
+    return <div style={{ fontSize: 11, color: "var(--amber)", padding: "6px 10px", background: "var(--card)", borderRadius: 9, border: "1px solid var(--border)" }}>미리보기 실패 · {pv.error}</div>;
+  }
+  const cell = (label: string, val: React.ReactNode, tone?: string) => (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ ...CAP, whiteSpace: "nowrap" }}>{label}</div>
+      <div className="tnum" style={{ fontSize: 12, fontWeight: 700, color: tone ?? "var(--text)", whiteSpace: "nowrap" }}>{val}</div>
+    </div>
+  );
+  const impact = pv.priceImpactPct;
+  return (
+    <div style={{ padding: "8px 11px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 9 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))", gap: "8px 14px" }}>
+        {cell("예상 수령", `${pv.expectedOut.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${base}`)}
+        {cell("유효 단가", `$${fmtPx(pv.pricePerToken)}`)}
+        {cell(`최소 수령 (−${pv.slippagePct}%)`, `${pv.minReceive.toLocaleString(undefined, { maximumFractionDigits: 4 })}`)}
+        {cell("가격 임팩트", impact != null ? `${impact > 0 ? "+" : ""}${impact.toFixed(2)}%` : "—",
+          impact == null ? undefined : Math.abs(impact) > 1 ? "var(--amber)" : "var(--pos)")}
+        {cell("수수료", pv.tradeFeeUsd != null ? `$${pv.tradeFeeUsd.toFixed(2)}` : "—")}
+        {cell("가스", pv.gasUsd != null ? `$${pv.gasUsd.toFixed(2)}` : "—")}
+      </div>
+      {pv.route.length > 0 && (
+        <div style={{ marginTop: 7, fontSize: 10.5, color: "var(--text-mute)", whiteSpace: "nowrap", overflowX: "auto" }}>
+          경로 · {pv.route.join("  →  ")}
+        </div>
+      )}
+      {(pv.honeypot || pv.taxRatePct != null) && (
+        <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: "var(--neg)" }}>
+          {pv.honeypot ? "⚠ 허니팟 의심 — 매수 금지" : ""}
+          {pv.taxRatePct != null ? `${pv.honeypot ? " · " : "⚠ "}전송세 ${pv.taxRatePct.toFixed(1)}%` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: DexRow[] }) {
   type Opt = { key: string; label: string; src?: string; candle?: { chain: string; contract: string } };
   const opts: Opt[] = [
@@ -459,6 +504,10 @@ function DetailPanel({ base }: { base: string }) {
   const [sizeUsd, setSizeUsd] = useState("500");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  // DEX 매수 미리보기(체인별) + 최근 스왑 tx 상태
+  const [preview, setPreview] = useState<Record<string, PreviewData | "loading" | { error: string }>>({});
+  const [lastTx, setLastTx] = useState<{ chain: string; hash: string; url: string | null } | null>(null);
+  const [txStatus, setTxStatus] = useState<TxStatusData | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [refOpen, setRefOpen] = useState(false); // ⑤ 참고(보유량·컨트랙트) 접기
 
@@ -487,14 +536,46 @@ function DetailPanel({ base }: { base: string }) {
     return () => { stop = true; clearInterval(id); };
   }, [base]);
 
+  // 매수 실행 — DEX면 응답 tx를 잡아 상태 추적 시작.
   const act = useCallback(async (key: string, url: string, body: Record<string, unknown>) => {
     setBusy(key); setMsg(null);
     try {
       const j = await (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
       setMsg(`${j.ok ? "✓" : "✗"} ${j.message ?? ""}${j.dryRun ? " (모의)" : ""}`);
+      if (j.ok && j.tx?.hash && typeof body.chain === "string") {
+        setLastTx({ chain: body.chain, hash: j.tx.hash, url: j.tx.url ?? null });
+        setTxStatus({ status: j.tx.hash.startsWith("sim:") ? "success" : "pending", failReason: null });
+      }
     } catch { setMsg("✗ 요청 실패"); }
     finally { setBusy(null); }
   }, []);
+
+  // 미리보기 토글 — 클릭 시 OKX 견적으로 예상 수령·슬리피지·가스·라우팅·안전성.
+  const loadPreview = useCallback(async (chain: string, contract: string, decimals: number, usd: number) => {
+    const cur = preview[chain];
+    if (cur && cur !== "loading" && !("error" in cur)) { setPreview((p) => { const n = { ...p }; delete n[chain]; return n; }); return; }
+    setPreview((p) => ({ ...p, [chain]: "loading" }));
+    try {
+      const j = await (await fetch(`/api/swap-preview?chain=${chain}&token=${contract}&usd=${usd}&decimals=${decimals}`)).json();
+      setPreview((p) => ({ ...p, [chain]: j.error ? { error: j.error } : j }));
+    } catch { setPreview((p) => ({ ...p, [chain]: { error: "요청 실패" } })); }
+  }, [preview]);
+
+  // 스왑 tx 폴링 — 확정/실패까지 6초 간격, 모의는 즉시 성공.
+  useEffect(() => {
+    if (!lastTx || txStatus?.status === "success" || txStatus?.status === "fail") return;
+    if (lastTx.hash.startsWith("sim:")) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const j = await (await fetch(`/api/tx-status?chain=${lastTx.chain}&hash=${lastTx.hash}`)).json();
+        if (alive && !j.error) setTxStatus(j);
+      } catch { /* 다음 틱 */ }
+    };
+    void tick();
+    const iv = setInterval(tick, 6000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [lastTx, txStatus?.status]);
 
   if (err) return <div style={{ padding: "12px 14px", fontSize: 11.5, color: "var(--amber)" }}>{err}</div>;
   if (!d) return <div style={{ padding: "12px 14px", fontSize: 11.5, color: "var(--text-mute)" }}>조회 중…</div>;
@@ -593,6 +674,12 @@ function DetailPanel({ base }: { base: string }) {
               {x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
             </span>
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
+              {x.verified && size > 0 && (
+                <button type="button" style={BTN_GHOST} title="OKX 견적 미리보기"
+                  onClick={() => void loadPreview(x.chain, x.contract, x.decimals, size)}>
+                  {preview[x.chain] === "loading" ? "…" : preview[x.chain] ? "닫기" : "미리보기"}
+                </button>
+              )}
               <button type="button" style={BTN} disabled={busy != null || size <= 0 || !x.verified}
                 onClick={() => void act(`dex:${x.chain}`, "/api/listing-dex-buy", { base, chain: x.chain, sizeUsd: size })}>
                 {busy === `dex:${x.chain}` ? "…" : "매수"}
@@ -604,9 +691,26 @@ function DetailPanel({ base }: { base: string }) {
                 </button>
               )}
             </span>
+            {preview[x.chain] && preview[x.chain] !== "loading" && (
+              <div style={{ gridColumn: "1 / -1", margin: "2px 0 6px" }}>
+                <SwapPreview base={base} pv={preview[x.chain] as PreviewData | { error: string }} />
+              </div>
+            )}
           </Fragment>
         ))}
       </div>
+      {lastTx && txStatus && (
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
+          padding: "7px 10px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--card)" }}>
+          <span style={{ fontWeight: 700,
+            color: txStatus.status === "success" ? "var(--pos)" : txStatus.status === "fail" ? "var(--neg)" : "var(--amber)" }}>
+            스왑 {txStatus.status === "success" ? "✓ 확정" : txStatus.status === "fail" ? "✗ 실패" : txStatus.status === "pending" ? "⏳ 대기" : "· 조회중"}
+          </span>
+          <span className="tnum" style={{ color: "var(--text-dim)" }}>{lastTx.hash.slice(0, 12)}…</span>
+          {lastTx.url && <a href={lastTx.url} target="_blank" rel="noreferrer" style={{ color: "var(--brand-2)", textDecoration: "none" }}>익스플로러 ↗</a>}
+          {txStatus.failReason && <span style={{ color: "var(--neg)" }}>· {txStatus.failReason.slice(0, 60)}</span>}
+        </div>
+      )}
       {!d.dexReady && d.dex.length > 0 && (
         <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-mute)" }}>DEX 실행가·매수는 OKX_WEB3 키 필요{!d.walletReady ? " · 라이브 매수는 지갑 키 필요" : ""}</div>
       )}

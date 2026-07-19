@@ -263,6 +263,89 @@ export async function quoteDex(
   }
 }
 
+// ── 스왑 미리보기 — 견적 응답의 리치 필드까지 전부 ───────────────────────────
+// 가격임팩트·수수료·라우팅 경로에 더해 OKX가 토큰 안전성(허니팟·전송세)도
+// 같이 주므로 상장따리 매수 전 확인용으로 그대로 노출한다.
+export type DexPreview = {
+  toAmount: number;
+  gasUnits: number;
+  priceImpactPct: number | null;
+  tradeFeeUsd: number | null;
+  route: string[]; // hop별 "USDC→PEPE Uniswap V3 100%"
+  honeypot: boolean;
+  taxRatePct: number | null; // 매수 대상 토큰의 전송세 (%)
+};
+
+export async function quoteDexPreview(
+  chainKey: string,
+  from: { address: string; decimals: number },
+  to: { address: string; decimals: number },
+  amountHuman: number,
+): Promise<DexPreview | null> {
+  const chainId = OKX_CHAIN_ID[chainKey];
+  if (!chainId) return null;
+  const amountRaw = BigInt(Math.round(amountHuman * 10 ** Math.min(from.decimals, 12)))
+    * BigInt(10) ** BigInt(Math.max(0, from.decimals - 12));
+  try {
+    const data = await okxGet("/api/v6/dex/aggregator/quote", {
+      chainIndex: chainId,
+      fromTokenAddress: from.address,
+      toTokenAddress: to.address,
+      amount: amountRaw.toString(),
+    });
+    type Hop = {
+      dexProtocol?: { dexName?: string; percent?: string } | { dexName?: string; percent?: string }[];
+      fromToken?: { tokenSymbol?: string };
+      toToken?: { tokenSymbol?: string };
+    };
+    const q = data[0] as {
+      toTokenAmount?: string; estimateGasFee?: string; priceImpactPercent?: string;
+      tradeFee?: string; dexRouterList?: Hop[];
+      toToken?: { isHoneyPot?: boolean; taxRate?: string };
+    } | undefined;
+    if (!q?.toTokenAmount) return null;
+    const route: string[] = [];
+    for (const hop of q.dexRouterList ?? []) {
+      const protos = Array.isArray(hop.dexProtocol) ? hop.dexProtocol : hop.dexProtocol ? [hop.dexProtocol] : [];
+      const via = protos.map((p) => `${p.dexName ?? "?"}${p.percent && p.percent !== "100" ? ` ${p.percent}%` : ""}`).join("+");
+      route.push(`${hop.fromToken?.tokenSymbol ?? "?"}→${hop.toToken?.tokenSymbol ?? "?"} (${via || "?"})`);
+    }
+    const tax = q.toToken?.taxRate != null ? Number(q.toToken.taxRate) * 100 : null;
+    return {
+      toAmount: Number(q.toTokenAmount) / 10 ** to.decimals,
+      gasUnits: Number(q.estimateGasFee ?? 0),
+      priceImpactPct: q.priceImpactPercent != null && q.priceImpactPercent !== "" ? Number(q.priceImpactPercent) : null,
+      tradeFeeUsd: q.tradeFee != null && q.tradeFee !== "" ? Number(q.tradeFee) : null,
+      route,
+      honeypot: !!q.toToken?.isHoneyPot,
+      taxRatePct: tax != null && tax > 0 ? tax : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── 스왑 tx 상태 추적 (post-transaction/orders) ───────────────────────────────
+// 방송 후 OKX가 온체인 확정/실패를 추적해준다. txStatus: 1=대기 2=성공 3=실패.
+export type SwapTxStatus = { status: "pending" | "success" | "fail" | "unknown"; failReason: string | null };
+
+export async function okxSwapTxStatus(chainKey: string, address: string, txHash: string): Promise<SwapTxStatus | null> {
+  const chainId = OKX_CHAIN_ID[chainKey];
+  if (!chainId) return null;
+  try {
+    const data = await okxGet("/api/v6/dex/post-transaction/orders", {
+      chainIndex: chainId, address, txHash, limit: "5",
+    });
+    const orders = (data[0] as { orders?: { txHash?: string; txStatus?: string; failReason?: string }[] })?.orders ?? [];
+    const o = orders.find((x) => x.txHash?.toLowerCase() === txHash.toLowerCase()) ?? orders[0];
+    if (!o) return { status: "unknown", failReason: null };
+    const st = o.txStatus === "2" ? "success" : o.txStatus === "3" ? "fail" : o.txStatus === "1" ? "pending" : "unknown";
+    return { status: st, failReason: o.failReason ? String(o.failReason).slice(0, 200) : null };
+  } catch {
+    return null;
+  }
+}
+
 // ── Gas cost (USD) for an ethereum-family swap ────────────────────────────────
 // gasPrice via the chain RPC + native price in USD (caller supplies ETH price
 // from the already-fetched CEX tickers). Cached 60s.
