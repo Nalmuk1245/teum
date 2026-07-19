@@ -30,7 +30,7 @@ function useIsMobile() {
 
 export default function Cockpit() {
   const [opps, setOpps] = useState<Opportunity[]>([]);
-  const [meta, setMeta] = useState<{ dryRun: boolean; mock: boolean } | null>(null);
+  const [meta, setMeta] = useState<{ dryRun: boolean; mock: boolean; calPct?: number; calSamples?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StrategyKind | "all">("all");
   // 수익만 — hide net≤0 rows (they're the honest-cost-model majority and mostly
@@ -547,7 +547,7 @@ export default function Cockpit() {
         <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
           {funding
             ? "APR = 8h 정규화 펀딩 스프레드의 연환산 (바낸·바이비트는 다음 주기 예측). 정산 시점에만 지급 — 카운트다운 참고. 실행 배선 전, 모니터링 전용."
-            : "순수익 = 총차익 − 예상 왕복비용. 김프·크로스(거래소 갭)는 실데이터 연동, CEX-DEX는 목업 스텁입니다."}
+            : `순수익 = 총차익 − 예상 왕복비용${meta?.calPct ? ` − 자동보정 ${meta.calPct.toFixed(2)}%p (실거래 ${meta.calSamples}건 누수 반영)` : ""}. 김프·크로스(거래소 갭)는 실데이터 연동, CEX-DEX는 목업 스텁입니다.`}
         </p>
         </>)}
       </div>

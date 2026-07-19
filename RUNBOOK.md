@@ -101,3 +101,23 @@ npm run build && npm start   # 프로덕션 모드 (dev보다 안정·빠름)
 ```
 - 재시작해도 히스토리·일일손실·상장 플레이는 `data/state.json`에서 복원됨
 - 브라우저는 꺼도 됨 — 감시·알림은 서버가 함. 폰은 텔레그램으로
+
+### pm2 자동 재시작 (권장)
+
+```bash
+npm i -g pm2
+npm run build
+pm2 start npm --name arb -- start        # 크래시 시 자동 재시작
+pm2 save && pm2 startup                  # 부팅 시 자동 시작 (안내 명령 실행)
+pm2 logs arb                             # 로그 확인
+```
+
+### 헬스체크
+
+```bash
+curl -s localhost:3100/api/health
+# {"ok":true,"scanAgeSec":2,"liveOpps":30,"killed":false,"dryRun":true,"uptimeSec":123}
+# 스캔 60초 이상 멈추면 503 — uptime 모니터(UptimeRobot 등)에 이 URL 등록 가능
+```
+- 크래시 시 텔레그램으로 💥 통보가 감 (pm2가 살려도 "죽었었다"는 건 알림)
+- 스캔 정지·기회 소멸·24h 하트비트는 기존 워치독이 텔레그램으로 알림

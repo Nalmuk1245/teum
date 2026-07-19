@@ -25,6 +25,9 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
   const upBook = useRef(new Map<string, { bid: number; ask: number }>()); // base -> KRW best b/a (orderbook WS)
   const up = useRef(new Map<string, number>()); // base -> KRW
   const bt = useRef(new Map<string, number>()); // base -> KRW
+  // Bithumb depth deltas → price→qty maps per side. No snapshot on this WS, so
+  // the book converges from updates; phantom levels are clamped by last price.
+  const btDepth = useRef(new Map<string, { bids: Map<number, number>; asks: Map<number, number>; ts: number }>());
   const fx = useRef({ upbit: 0, bithumb: 0 }); // USDT/KRW per venue
 
   const [overlay, setOverlay] = useState<Record<string, LiveGap>>({});
@@ -152,6 +155,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       if (!hasNew && btSubbed.size > 0) return;
       for (const s of syms) btSubbed.add(s);
       btWs.send(JSON.stringify({ type: "ticker", symbols: [...btSubbed], tickTypes: ["24H"] }));
+      btWs.send(JSON.stringify({ type: "orderbookdepth", symbols: [...btSubbed] })); // 실호가 (델타)
     };
     const connectBithumb = () => {
       if (closed) return;
@@ -171,6 +175,21 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         try {
           const m = JSON.parse(e.data as string);
           const c = m.content;
+          if (m.type === "orderbookdepth" && c && Array.isArray(c.list)) {
+            lastMsg.current.bithumb = Date.now();
+            for (const d of c.list) {
+              const base = String(d.symbol ?? "").replace("_KRW", "");
+              if (!base) continue;
+              let book = btDepth.current.get(base);
+              if (!book) { book = { bids: new Map(), asks: new Map(), ts: 0 }; btDepth.current.set(base, book); }
+              const side = d.orderType === "bid" ? book.bids : book.asks;
+              const price = Number(d.price), qty = Number(d.quantity);
+              if (!(price > 0)) continue;
+              if (qty > 0) side.set(price, qty); else side.delete(price);
+              book.ts = Date.now();
+            }
+            return;
+          }
           if (m.type === "ticker" && c && c.symbol) {
             const base = String(c.symbol).replace("_KRW", "");
             const px = Number(c.closePrice);
@@ -184,6 +203,18 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
           /* ignore */
         }
       };
+    };
+
+    // 델타북에서 best bid/ask — 스냅샷이 없는 WS라 마지막 체결가 ±5% 밖의
+    // 팬텀 레벨(업데이트가 끊긴 잔재)은 걸러낸다.
+    const btBest = (base: string): { bid: number; ask: number } | undefined => {
+      const book = btDepth.current.get(base);
+      if (!book || Date.now() - book.ts > 15_000) return undefined; // 신선한 것만
+      const last = bt.current.get(base) ?? 0;
+      let bid = 0, ask = Infinity;
+      for (const [p] of book.bids) { if (last > 0 && p > last * 1.05) { book.bids.delete(p); continue; } if (p > bid) bid = p; }
+      for (const [p] of book.asks) { if (last > 0 && p < last * 0.95) { book.asks.delete(p); continue; } if (p < ask) ask = p; }
+      return bid > 0 && Number.isFinite(ask) && ask > bid ? { bid, ask } : undefined;
     };
 
     connectBinance();
@@ -205,7 +236,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         const buyGlobal = o.legs.find((l) => l.side === "buy")?.quote === "USDT";
         // PREFERRED: fully-executable live gross from real best bid/ask on both
         // sides (Upbit orderbook WS + Binance b/a) — same math as the scan.
-        const kb = venue === "upbit" ? upBook.current.get(o.base) : undefined;
+        const kb = venue === "upbit" ? upBook.current.get(o.base) : btBest(o.base);
         const gb = bnBook.current.get(o.base);
         const rate = venue === "upbit" ? fx.current.upbit : fx.current.bithumb;
         if (kb && gb && rate > 0) {

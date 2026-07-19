@@ -271,6 +271,106 @@ export type TradeRec = {
 
 export type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
 
+// ── 손익 시각화 — 누적 곡선 + 전략별 분해 + 시간대 히트맵 ────────────────────
+function PnlViz({ trades }: { trades: TradeRec[] }) {
+  const [heat, setHeat] = useState<{ scans: number; open: number }[] | null>(null);
+  useEffect(() => {
+    const load = () => fetch("/api/stats", { cache: "no-store" }).then((r) => r.json()).then((j) => setHeat(j.heat ?? null)).catch(() => {});
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // 누적 곡선 — 실거래(realized)만, 오래된 것부터.
+  const curve = useMemo(() => {
+    const real = trades.filter((t) => !t.dryRun && t.realizedPnlUsd != null).slice().reverse();
+    let acc = 0;
+    return real.map((t) => (acc += t.realizedPnlUsd!));
+  }, [trades]);
+
+  // 전략별 분해 — 실거래 합계 (없으면 모의 포함 표기).
+  const byKind = useMemo(() => {
+    const m = new Map<string, { pnl: number; n: number; real: boolean }>();
+    for (const t of trades) {
+      const real = !t.dryRun && t.realizedPnlUsd != null;
+      const k = t.kind === "kimchi" ? "김프" : t.kind === "cross-cex" ? "크로스" : t.kind === "listing" ? "상장" : t.kind;
+      const e = m.get(k) ?? { pnl: 0, n: 0, real: false };
+      e.n++;
+      if (real) { e.pnl += t.realizedPnlUsd!; e.real = true; }
+      m.set(k, e);
+    }
+    return [...m.entries()];
+  }, [trades]);
+
+  const maxRatio = heat ? Math.max(...heat.map((h) => (h.scans > 0 ? h.open / h.scans : 0)), 0.01) : 0.01;
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {/* 누적 곡선 */}
+      {curve.length >= 2 ? (
+        (() => {
+          const W = 560, H = 46;
+          const lo = Math.min(...curve, 0), hi = Math.max(...curve, 0);
+          const pad = Math.max((hi - lo) * 0.1, 0.5);
+          const x = (i: number) => (i / (curve.length - 1)) * W;
+          const y = (v: number) => H - ((v - (lo - pad)) / (hi + pad - (lo - pad))) * H;
+          const last = curve[curve.length - 1];
+          return (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: "var(--text-mute)", marginBottom: 2 }}>
+                <span>누적 실현 손익 ({curve.length}건)</span>
+                <span className="tnum" style={{ color: last >= 0 ? "var(--pos)" : "var(--neg)", fontWeight: 700 }}>{last >= 0 ? "+" : "−"}${Math.abs(last).toFixed(2)}</span>
+              </div>
+              <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 46, display: "block" }} preserveAspectRatio="none">
+                <line x1="0" y1={y(0)} x2={W} y2={y(0)} stroke="var(--border-strong)" strokeDasharray="3 3" strokeWidth="1" />
+                <polyline points={curve.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")} fill="none" stroke={last >= 0 ? "var(--pos)" : "var(--neg)"} strokeWidth="1.5" />
+              </svg>
+            </div>
+          );
+        })()
+      ) : (
+        <div style={{ marginBottom: 8, fontSize: 10.5, color: "var(--text-mute)" }}>누적 곡선 — 실거래 2건부터 표시</div>
+      )}
+
+      {/* 전략별 분해 */}
+      {byKind.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          {byKind.map(([k, v]) => (
+            <span key={k} className="tnum" style={{ fontSize: 10.5, border: "1px solid var(--border)", borderRadius: 9, padding: "3px 9px", color: "var(--text-dim)" }}>
+              {k} {v.n}건{v.real ? <b style={{ marginLeft: 5, color: v.pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl).toFixed(2)}</b> : <span style={{ marginLeft: 5, color: "var(--text-mute)" }}>모의</span>}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 시간대 히트맵 (KST) — 언제 수익 갭이 열리나 */}
+      {heat && heat.some((h) => h.scans > 0) && (
+        <div>
+          <div style={{ fontSize: 9.5, color: "var(--text-mute)", marginBottom: 3 }}>수익 갭 열림 시간대 (KST · 열림 스캔 비율)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", gap: 2 }}>
+            {heat.map((h, i) => {
+              const ratio = h.scans > 0 ? h.open / h.scans : 0;
+              return (
+                <div
+                  key={i}
+                  title={`${i}시 — 열림 ${h.open}/${h.scans} 스캔 (${(ratio * 100).toFixed(0)}%)`}
+                  style={{
+                    height: 16, borderRadius: 3,
+                    background: h.scans === 0 ? "var(--card-3)" : `color-mix(in srgb, var(--pos) ${Math.round((ratio / maxRatio) * 85)}%, var(--card-3))`,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "var(--text-mute)", marginTop: 2 }}>
+            <span>0시</span><span>6시</span><span>12시</span><span>18시</span><span>23시</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 거래 목록 — 행 클릭 시 상세(수량·진입/청산가·손익 분해·단계 소요·tx) 펼침.
 function TradeList({ trades }: { trades: TradeRec[] }) {
   const [open, setOpen] = useState<number | null>(null);
@@ -374,6 +474,7 @@ export function PnlCard() {
             <Metric label="히트율" value={`${st.hitRatePct}%`} sub={`${st.wins}/${st.count - st.dryCount || st.count}`} />
             <Metric label="탐지 vs 실현" value={`−${st.avgSlipPct.toFixed(2)}%`} sub="평균 누수" tone={st.avgSlipPct > 0.3 ? "var(--amber)" : "var(--text)"} />
           </div>
+          <PnlViz trades={data.trades} />
           <TradeList trades={data.trades} />
         </>
       )}

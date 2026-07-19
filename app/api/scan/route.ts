@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getScan } from "@/lib/scanCache";
 import { CONFIG } from "@/lib/config";
+import { computeCalibrationPct } from "@/lib/calibration";
 
 export const dynamic = "force-dynamic";
 
@@ -9,9 +10,10 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const { opps, ts } = await getScan();
+    const cal = await computeCalibrationPct();
     return NextResponse.json({
       opportunities: opps,
-      meta: { dryRun: CONFIG.DRY_RUN, mock: CONFIG.USE_MOCK, ts },
+      meta: { dryRun: CONFIG.DRY_RUN, mock: CONFIG.USE_MOCK, ts, calPct: cal.pct, calSamples: cal.samples },
     });
   } catch (e) {
     return NextResponse.json(

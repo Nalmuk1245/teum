@@ -9,10 +9,25 @@
 import { scanAll } from "./scanner";
 import { loadSecretsIntoEnv } from "./secrets";
 loadSecretsIntoEnv(); // 설정창에 저장된 키를 부팅 즉시 주입 (env보다 우선)
+
+// 크래시 통보 — 프로세스가 죽기 직전 텔레그램으로 마지막 비명. pm2가 살리더라도
+// "죽었었다"는 사실은 알아야 한다. (핸들러 중복 등록 방지 가드)
+const gp = globalThis as unknown as { __arbCrashHook?: boolean };
+if (!gp.__arbCrashHook) {
+  gp.__arbCrashHook = true;
+  const scream = (kind: string, err: unknown) => {
+    const msg = err instanceof Error ? `${err.message}\n${(err.stack ?? "").slice(0, 300)}` : String(err);
+    // notify는 쿨다운이 있으니 크래시 전용 키 사용; 실패해도 그냥 죽게 둔다.
+    try { void notify(`crash:${kind}`, `💥 <b>서버 ${kind}</b>\n${msg}`); } catch { /* dying anyway */ }
+  };
+  process.on("uncaughtException", (e) => scream("uncaughtException", e));
+  process.on("unhandledRejection", (e) => scream("unhandledRejection", e));
+}
 import type { Opportunity } from "./types";
 import { notify, telegramConfigured } from "./telegram";
 import { startListingWatch } from "./listings";
 import { startWatchdog } from "./watchdog";
+import { loadSection, saveSection } from "./persist";
 
 // 3s: a full sweep takes ~1.2s (binance bookTicker + parallel upbit chunks),
 // and per-venue call rates stay far below every venue's public limits.
@@ -38,6 +53,7 @@ async function refresh(): Promise<void> {
   try {
     const next = await scanAll();
     if (telegramConfigured()) void alertOnScan(next);
+    recordHourlyHeat(next);
     C.opps = next;
     C.ts = Date.now();
   } catch {
@@ -45,6 +61,23 @@ async function refresh(): Promise<void> {
   } finally {
     C.refreshing = false;
   }
+}
+
+// 시간대별 "수익 갭 열림" 빈도 (KST) — 언제 갭이 열리는지의 장기 패턴.
+// 스캔마다 해당 시간 칸에 [스캔 수, 수익 기회가 있던 스캔 수]를 누적.
+export type HourHeat = { scans: number; open: number };
+function recordHourlyHeat(opps: Opportunity[]) {
+  try {
+    const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Seoul" }).format(new Date()));
+    const heat = loadSection<HourHeat[]>("hourlyHeat") ?? Array.from({ length: 24 }, () => ({ scans: 0, open: 0 }));
+    const h = (heat[hour] ??= { scans: 0, open: 0 });
+    h.scans++;
+    if (opps.some((o) => !o.mock && o.kind !== "funding-basis" && o.netPct > 0)) h.open++;
+    saveSection("hourlyHeat", heat); // 30s 디바운스 저장
+  } catch { /* stats must never break the scan */ }
+}
+export function hourlyHeat(): HourHeat[] {
+  return loadSection<HourHeat[]>("hourlyHeat") ?? Array.from({ length: 24 }, () => ({ scans: 0, open: 0 }));
 }
 
 // Phone alerts from the server loop — fires whether or not the site is open.

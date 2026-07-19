@@ -153,6 +153,10 @@ const kimchi: Strategy = {
 
       const gLeg = { venue: best.gv, symbol: globalSymbol(best.gv, base), price: best.gPrice, quote: "USDT" as const };
       const kLeg = { venue: best.kv, symbol: krSymbol(best.kv, base), price: best.krPrice, quote: "KRW" as const };
+      // 실거래 누수 자동 보정 — 탐지가 실현보다 후하게 나온 만큼 비용에 가산.
+      const cal = ctx.calPct ?? 0;
+      const calCost = best.cost + cal;
+      const calNet = best.net - cal;
       out.push({
         id: id("kimchi", base),
         kind: "kimchi",
@@ -161,12 +165,12 @@ const kimchi: Strategy = {
           ? [{ ...gLeg, side: "buy" }, { ...kLeg, side: "sell" }]
           : [{ ...kLeg, side: "buy" }, { ...gLeg, side: "sell" }],
         grossPct: execGross, // executable (spread-crossed), not mid-price
-        costPct: best.cost,
-        netPct: best.net,
+        costPct: calCost,
+        netPct: calNet,
         notionalCapUsd: null, // TODO: from order-book depth
         // Live: fail-closed (both gates must be CONFIRMED open). DRY keeps the
         // demo usable without keys — the gate panel still shows "키 필요".
-        executable: best.net > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
+        executable: calNet > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
         transfer,
         ...(isReverse ? { note: "역프 — KR 출금 정지(원화입금 후 24-72h)·화이트리스트·한도 확인 필요" } : {}),
         ts: now(),
@@ -246,6 +250,7 @@ const crossCex: Strategy = {
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
       const settleable = transfer.withdraw.enabled === true && transfer.deposit.enabled === true;
 
+      const cal = ctx.calPct ?? 0;
       out.push({
         id: id("cross-cex", base),
         kind: "cross-cex",
@@ -255,10 +260,10 @@ const crossCex: Strategy = {
           { venue: hi.v, side: "sell", symbol: crossSymbol(hi.v, base), price: hi.bid, quote: "USDT" },
         ],
         grossPct: gross,
-        costPct: cost,
-        netPct: net,
+        costPct: cost + cal,
+        netPct: net - cal,
         notionalCapUsd: null,
-        executable: net > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
+        executable: net - cal > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
         transfer,
         ts: now(),
       });

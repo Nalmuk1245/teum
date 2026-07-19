@@ -108,6 +108,8 @@ export type ScanContext = {
   perps?: Set<string>; // bases with a Binance USDT-M perp (hedgeable)
   funding?: FundingMap; // per-coin funding rates across perp venues
   marks?: Map<string, Partial<Record<Venue, number>>>; // perp mark px per venue (entry basis)
+  /** 실거래 누수 기반 비용 자동 보정 (%p) — 김프·크로스 비용에 가산. */
+  calPct?: number;
 };
 
 /** Per-coin funding across perp venues, normalized to an 8h rate (fraction). */
