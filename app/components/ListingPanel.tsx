@@ -306,7 +306,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       </div>
       <div style={{ position: "sticky", top: 60, minWidth: 0 }}>
         {selected ? (
-          <div style={{ ...CARD, padding: 0, overflow: "hidden" }}>
+          <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
               <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
               <span style={CAP}>상세 · 실행</span>

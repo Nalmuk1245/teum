@@ -87,6 +87,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
   return (
     <div
       onClick={guardedClose}
+      className="overlay-in"
       style={{
         position: "fixed", inset: 0, zIndex: 50,
         background: "rgba(6,8,13,0.66)", backdropFilter: "blur(4px)",
@@ -96,6 +97,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="panel-in"
         style={{
           width: isMobile ? "100%" : 480, maxWidth: "100%",
           maxHeight: isMobile ? "92dvh" : "90dvh", overflowY: "auto",
