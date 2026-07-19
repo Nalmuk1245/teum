@@ -36,6 +36,7 @@ export const SECRET_DEFS: SecretDef[] = [
   { name: "OKX_WEB3_KEY", label: "OKX Web3 API Key", group: "DEX (OKX Web3)" },
   { name: "OKX_WEB3_SECRET", label: "OKX Web3 Secret", group: "DEX (OKX Web3)", secret: true },
   { name: "OKX_WEB3_PASSPHRASE", label: "OKX Web3 Passphrase", group: "DEX (OKX Web3)", secret: true },
+  { name: "OKX_WEB3_PROJECT", label: "OKX Web3 Project ID (브로드캐스트 폴백용, 선택)", group: "DEX (OKX Web3)" },
   // 개인지갑
   { name: "WALLET_PRIVATE_KEY", label: "EVM 지갑 프라이빗 키", group: "개인지갑", secret: true, danger: true, placeholder: "0x… (자금 이동 가능 — 전용 지갑만)" },
   { name: "WALLET_ADDR_EVM", label: "EVM 지갑 주소 (키 없이 조회용)", group: "개인지갑", placeholder: "0x…" },

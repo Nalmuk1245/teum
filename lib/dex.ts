@@ -23,6 +23,32 @@ export function dexConfigured(): boolean {
   return !!(k.key && k.secret && k.pass);
 }
 
+function okxHeaders(method: string, requestPath: string, bodyStr = ""): Record<string, string> | null {
+  const { key, secret, pass } = keys();
+  if (!key || !secret || !pass) return null;
+  const ts = new Date().toISOString();
+  const { createHmac } = require("crypto") as typeof import("crypto");
+  const sign = createHmac("sha256", secret).update(ts + method + requestPath + bodyStr).digest("base64");
+  const h: Record<string, string> = {
+    "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sign,
+    "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass,
+  };
+  if (process.env.OKX_WEB3_PROJECT) h["OK-ACCESS-PROJECT"] = process.env.OKX_WEB3_PROJECT;
+  return h;
+}
+
+/** Wallet API 등 POST 계열 (프로젝트 헤더 포함). */
+export async function okxPost(path: string, body: Record<string, unknown>): Promise<{ code: string; data: unknown[]; msg?: string }> {
+  const bodyStr = JSON.stringify(body);
+  const headers = okxHeaders("POST", path, bodyStr);
+  if (!headers) return { code: "-1", data: [], msg: "키 없음" };
+  const res = await fetch(`https://www.okx.com${path}`, {
+    method: "POST", headers: { ...headers, "content-type": "application/json" },
+    body: bodyStr, cache: "no-store", signal: AbortSignal.timeout(8000),
+  });
+  return (await res.json()) as { code: string; data: unknown[]; msg?: string };
+}
+
 export async function okxGet(path: string, params: Record<string, string>): Promise<unknown[]> {
   const { key, secret, pass } = keys();
   if (!key || !secret || !pass) return [];
