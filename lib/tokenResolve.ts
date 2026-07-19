@@ -10,6 +10,7 @@ export type ResolvedToken = {
   priceUsd: number | null;
   volumeUsd: number | null; // 24h, all markets
   marketCapUsd: number | null;
+  priceChange24hPct: number | null;
   /** chainKey → contract (only chains we can query: ethereum / bsc / base) */
   contracts: Partial<Record<"ethereum" | "bsc" | "base", { address: string; decimals: number }>>;
 };
@@ -48,7 +49,7 @@ export async function resolveToken(symbolRaw: string): Promise<ResolvedToken | n
     )).json() as {
       name?: string;
       detail_platforms?: Record<string, { contract_address?: string; decimal_place?: number | null }>;
-      market_data?: { current_price?: { usd?: number }; total_volume?: { usd?: number }; market_cap?: { usd?: number } };
+      market_data?: { current_price?: { usd?: number }; total_volume?: { usd?: number }; market_cap?: { usd?: number }; price_change_percentage_24h?: number | null };
     };
     const contracts: ResolvedToken["contracts"] = {};
     for (const [platform, info] of Object.entries(d.detail_platforms ?? {})) {
@@ -61,6 +62,7 @@ export async function resolveToken(symbolRaw: string): Promise<ResolvedToken | n
       priceUsd: d.market_data?.current_price?.usd ?? null,
       volumeUsd: d.market_data?.total_volume?.usd ?? null,
       marketCapUsd: d.market_data?.market_cap?.usd ?? null,
+      priceChange24hPct: d.market_data?.price_change_percentage_24h ?? null,
       contracts,
     };
     C.set(symbol, { ts: Date.now(), v });

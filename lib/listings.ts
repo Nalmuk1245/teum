@@ -42,10 +42,16 @@ export type ListingPlay = {
   globalPrice?: number; // price at announcement (baseline for peak tracking)
   opened: boolean; // market-diff confirmed trading is live
   openedAt?: number;
+  /** 공지에서 파싱한 거래지원 개시 예정 시각 (KST 명시 텍스트 기반, best-effort). */
+  opensAt?: number;
+  openSoonAlerted?: boolean;
+  /** 모의 드릴 플레이 — 히스토리 제외, 라이브 자동매수 금지. */
+  drill?: boolean;
   title?: string;
   buys?: ListingBuy[]; // my entries (position tracking)
   sells?: ListingBuy[]; // my exits (same shape; usd = proceeds)
   peakPct?: number; // max % above announcement price seen so far
+  peakAt?: number; // when the peak was seen
   surgeAlerted?: boolean; // hot-wallet inflow alert already sent
 };
 
@@ -103,6 +109,10 @@ export function setListingAuto(cfg: Partial<ListingAutoCfg>): ListingAutoCfg {
   return next;
 }
 
+// 자동매수 세이프티 가드 — 저유동성/기펌핑은 무인 집행하지 않는다 (수동은 자유).
+const AUTO_MIN_MCAP_USD = Number(process.env.LISTING_AUTO_MIN_MCAP ?? 10_000_000);
+const AUTO_MAX_PUMP_PCT = Number(process.env.LISTING_AUTO_MAX_PUMP ?? 50);
+
 async function autoBuy(base: string, gVenue: string, gPrice: number) {
   const cfg = getListingAuto();
   if (!cfg.armed) return;
@@ -116,6 +126,20 @@ async function autoBuy(base: string, gVenue: string, gPrice: number) {
   if (isKilled()) return;
   const risk = checkEntry(cfg.sizeUsd);
   if (risk) { void notifyNow(`⏸ 자동매수 차단 — <b>${base}</b>: ${risk}`); return; }
+  // 메타 가드 — CoinGecko가 모르는 코인/저시총/이미 급등은 무인 매수 스킵 (fail-closed).
+  try {
+    const { resolveToken } = await import("./tokenResolve");
+    const t = await resolveToken(base);
+    if (!t) { void notifyNow(`⏸ 자동매수 스킵 — <b>${base}</b>: 토큰 메타 미확인 (CoinGecko 미등록) — 수동 판단 필요`); return; }
+    if (t.marketCapUsd != null && t.marketCapUsd < AUTO_MIN_MCAP_USD) {
+      void notifyNow(`⏸ 자동매수 스킵 — <b>${base}</b>: 시총 $${(t.marketCapUsd / 1e6).toFixed(1)}M < 하한 $${(AUTO_MIN_MCAP_USD / 1e6).toFixed(0)}M (저유동성)`);
+      return;
+    }
+    if (t.priceChange24hPct != null && t.priceChange24hPct > AUTO_MAX_PUMP_PCT) {
+      void notifyNow(`⏸ 자동매수 스킵 — <b>${base}</b>: 24h +${t.priceChange24hPct.toFixed(0)}% 기펌핑 (정보 선반영 의심) — 추격 금지`);
+      return;
+    }
+  } catch { /* resolve 오류 → 아래 주문은 진행하지 않음 */ return; }
   const { binanceSpot, bybitOrder, okxOrder } = await import("./orders");
   const r =
     gVenue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: cfg.sizeUsd })
@@ -130,19 +154,62 @@ async function autoBuy(base: string, gVenue: string, gPrice: number) {
   void notifyNow(`${r.ok ? "🤖✅" : "🤖✗"} 자동매수 — <b>${base}</b> $${cfg.sizeUsd} @ ${gVenue} ${r.dryRun ? "(모의)" : ""}\n${r.message ?? ""}`);
 }
 
-async function registerPlay(base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean) {
+// ── 개장 예정 시각 파싱 (공지/TG 텍스트, KST) ─────────────────────────────────
+// "2026-07-19 18:00", "7월 19일 18:00", "7월 19일 오후 6시" 패턴 대응.
+export function parseOpenTimeKst(text: string): number | null {
+  const now = Date.now();
+  const mk = (y: number, mo: number, d: number, h: number, mi: number) =>
+    Date.UTC(y, mo - 1, d, h - 9, mi); // KST → UTC
+  let m = /(\d{4})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})일?[^0-9]{0,8}(\d{1,2}):(\d{2})/.exec(text);
+  if (m) return mk(+m[1], +m[2], +m[3], +m[4], +m[5]);
+  m = /(\d{1,2})월\s*(\d{1,2})일[^0-9]{0,10}(오전|오후)?\s*(\d{1,2})(?::(\d{2})|시)/.exec(text);
+  if (m) {
+    const y = new Date(now).getUTCFullYear();
+    let h = +m[4];
+    if (m[3] === "오후" && h < 12) h += 12;
+    let ts = mk(y, +m[1], +m[2], h, +(m[5] ?? 0));
+    if (ts < now - 12 * 3600_000) ts = mk(y + 1, +m[1], +m[2], h, +(m[5] ?? 0)); // 연말 걸침
+    return ts;
+  }
+  return null;
+}
+
+// Notice body (KR IP only) — 개장 시각은 보통 본문에 있다. Best-effort.
+async function fetchNoticeOpensAt(noticeId: number): Promise<number | null> {
+  try {
+    const r = await fetch(`https://api-manager.upbit.com/api/v1/announcements/${noticeId}?os=web`, {
+      headers: ANN_HEADERS, cache: "no-store", signal: AbortSignal.timeout(4000),
+    });
+    if (!(r.headers.get("content-type") ?? "").includes("json")) return null;
+    const j = await r.json() as { data?: { content?: string } };
+    const text = (j.data?.content ?? "").replace(/<[^>]+>/g, " ");
+    return text ? parseOpenTimeKst(text) : null;
+  } catch { return null; }
+}
+
+async function registerPlay(
+  base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean,
+  opts?: { opensAt?: number | null; drill?: boolean },
+) {
   const existing = L.plays.get(base);
-  if (existing && fromAnnouncement) return; // announcement already registered it
+  if (existing && fromAnnouncement) {
+    // 공지 재감지 — 개장 시각만 보강.
+    if (opts?.opensAt && !existing.opensAt) { existing.opensAt = opts.opensAt; saveSection("listingPlays", [...L.plays.entries()]); }
+    return;
+  }
   const g2 = await globalVenueFor(base);
   const play: ListingPlay = {
     base, venue, announcedAt: existing?.announcedAt ?? Date.now(),
     overseas: !!g2, globalVenue: g2?.venue, globalPrice: g2?.price,
     opened: existing?.opened ?? false, title,
+    opensAt: opts?.opensAt ?? existing?.opensAt, drill: opts?.drill,
     buys: existing?.buys, sells: existing?.sells,
   };
   L.plays.set(base, play);
   saveSection("listingPlays", [...L.plays.entries()]);
-  if (fromAnnouncement && g2) void autoBuy(base, g2.venue, g2.price);
+  // 드릴은 라이브에서 자동매수 금지 (DRY에선 전체 플로우 리허설).
+  const { CONFIG } = await import("./config");
+  if (fromAnnouncement && g2 && (!opts?.drill || CONFIG.DRY_RUN)) void autoBuy(base, g2.venue, g2.price);
   const head = fromAnnouncement ? "📢 상장 공지" : "🚨 거래 개시";
   void notifyNow(
     `${head} — <b>${base}</b> (${venue === "upbit" ? "업비트" : "빗썸"})\n` +
@@ -190,7 +257,12 @@ async function pollAnnouncements() {
     let m: RegExpExecArray | null;
     TICKER_RE.lastIndex = 0;
     while ((m = TICKER_RE.exec(it.title))) tickers.add(m[1]);
-    for (const t of tickers) void registerPlay(t, "upbit", it.title, true);
+    if (!tickers.size) continue;
+    // 개장 시각: 제목 → 없으면 공지 본문 1회 조회 (알림을 막지 않게 비동기 등록).
+    void (async () => {
+      const opensAt = parseOpenTimeKst(it.title) ?? (await fetchNoticeOpensAt(it.id));
+      for (const t of tickers) void registerPlay(t, "upbit", it.title, true, { opensAt });
+    })();
   }
   L.primedAnn = true;
 }
@@ -232,7 +304,51 @@ async function pollMarkets() {
   if (bt.size > 0) diffMarkets("bithumb", bt);
   L.primedMkt = true;
   const cutoff = Date.now() - FRESH_MS;
-  for (const [b, p] of L.plays) if (p.announcedAt < cutoff) L.plays.delete(b);
+  for (const [b, p] of L.plays) {
+    if (p.announcedAt < cutoff) {
+      archivePlay(p); // 만료 → 성과 히스토리로 (드릴 제외)
+      L.plays.delete(b);
+    }
+  }
+}
+
+// ── 성과 히스토리 — 만료된 플레이를 요약해 영구 보관 (기대값 캘리브레이션) ──────
+export type ListingHistoryRow = {
+  base: string; venue: string; announcedAt: number;
+  openedAt: number | null; opensAt: number | null;
+  peakPct: number | null; peakAfterMin: number | null; // 공지 → 피크까지 분
+  buys: number; buyUsd: number; realizedUsd: number | null; // 실거래만 (dry 제외)
+};
+function archivePlay(p: ListingPlay) {
+  if (p.drill) return;
+  if (!p.overseas && !(p.buys?.length) && p.peakPct == null) return; // 정보가 없는 껍데기
+  const hist = loadSection<ListingHistoryRow[]>("listingHistory") ?? [];
+  const realBuys = (p.buys ?? []).filter((b) => !b.dry);
+  const realSells = (p.sells ?? []).filter((s) => !s.dry);
+  hist.unshift({
+    base: p.base, venue: p.venue, announcedAt: p.announcedAt,
+    openedAt: p.openedAt ?? null, opensAt: p.opensAt ?? null,
+    peakPct: p.peakPct ?? null,
+    peakAfterMin: p.peakAt != null ? Math.round((p.peakAt - p.announcedAt) / 60_000) : null,
+    buys: (p.buys ?? []).length,
+    buyUsd: (p.buys ?? []).reduce((s, b) => s + b.usd, 0),
+    realizedUsd: realBuys.length && realSells.length
+      ? realSells.reduce((s, x) => s + x.usd, 0) - realBuys.reduce((s, x) => s + x.usd, 0)
+      : null,
+  });
+  saveSection("listingHistory", hist.slice(0, 100));
+}
+export function listingHistory(): ListingHistoryRow[] {
+  return loadSection<ListingHistoryRow[]>("listingHistory") ?? [];
+}
+
+/** 모의 상장 드릴 — 가짜 공지를 주입해 전체 플로우(알림→카드→매수)를 리허설. */
+export async function startDrill(base: string): Promise<void> {
+  L.plays.delete(base); // 재드릴 허용
+  void notifyNow(`🥁 [드릴] 상장 공지 시뮬 — <b>${base}</b> (업비트) · 실제 상장 아님`);
+  await registerPlay(base, "upbit", `[드릴] ${base} KRW 마켓 디지털 자산 추가 (모의)`, true, {
+    drill: true, opensAt: Date.now() + 10 * 60_000, // 10분 뒤 개장 가정 → 카운트다운 리허설
+  });
 }
 
 // ── 활성 플레이 추적 (60s): 피크 수익률 + 핫월렛 급증 알림 ─────────────────────
@@ -248,8 +364,13 @@ async function trackPlays() {
       const g2 = await globalVenueFor(p.base).catch(() => null);
       if (g2 && g2.price > 0) {
         const pct = ((g2.price - p.globalPrice) / p.globalPrice) * 100;
-        if (p.peakPct == null || pct > p.peakPct) p.peakPct = pct;
+        if (p.peakPct == null || pct > p.peakPct) { p.peakPct = pct; p.peakAt = now; }
       }
+    }
+    // 개장 임박 알림 (T−5분 이내, 1회).
+    if (p.opensAt && !p.openSoonAlerted && p.opensAt > now && p.opensAt - now <= 5 * 60_000) {
+      p.openSoonAlerted = true;
+      void notifyNow(`⏰ <b>${p.base}</b> ${p.venue === "upbit" ? "업비트" : "빗썸"} 개장 임박 — T−${Math.ceil((p.opensAt - now) / 60_000)}분. 매도 준비.`);
     }
     // Hot-wallet inflow surge — arb sellers loading KR exchanges ⇒ dump soon.
     if (!p.surgeAlerted) {
@@ -307,7 +428,8 @@ async function pollTgChannel() {
       let m: RegExpExecArray | null;
       TICKER_RE.lastIndex = 0;
       while ((m = TICKER_RE.exec(t))) tickers.add(m[1]);
-      for (const tk of tickers) void registerPlay(tk, krVenue, t.slice(0, 80), true);
+      const opensAt = parseOpenTimeKst(t);
+      for (const tk of tickers) void registerPlay(tk, krVenue, t.slice(0, 80), true, { opensAt });
     }
   }
   if (any) { L.srcOk.tg = Date.now(); L.primedTg = true; }

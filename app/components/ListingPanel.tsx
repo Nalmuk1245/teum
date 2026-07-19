@@ -5,15 +5,19 @@
 // 포지션·P&L / 거래소 핫·콜드 보유량. 수동 티커 조회도 같은 패널.
 
 import React from "react";
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { vlabel } from "./cockpit-ui";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { vlabel, beep } from "./cockpit-ui";
 import { HoldingsCard } from "./ControlPanel";
 
 type Buy = { where: string; usd: number; qty: number | null; price: number | null; ts: number; dry: boolean };
 type Listing = {
   base: string; venue: string; announcedAt: number; overseas: boolean; opened: boolean;
-  openedAt?: number; globalVenue?: string; globalPrice?: number; title?: string;
+  openedAt?: number; opensAt?: number; drill?: boolean; globalVenue?: string; globalPrice?: number; title?: string;
   buys?: Buy[]; sells?: Buy[]; peakPct?: number;
+};
+type HistoryRow = {
+  base: string; venue: string; announcedAt: number; openedAt: number | null; opensAt: number | null;
+  peakPct: number | null; peakAfterMin: number | null; buys: number; buyUsd: number; realizedUsd: number | null;
 };
 type Watch = {
   annOkAgoSec: number | null; annBlocked: boolean; mktOkAgoSec: number | null;
@@ -39,6 +43,24 @@ const CARD: React.CSSProperties = { background: "var(--card)", border: "1px soli
 const BTN: React.CSSProperties = { border: "none", borderRadius: 2, padding: "6px 12px", background: "var(--brand)", color: "#10141a", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 2, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
 
+/** 개장 카운트다운 — 1초 틱, 임박(5분)부터 앰버. */
+function Countdown({ opensAt }: { opensAt: number }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const left = opensAt - Date.now();
+  if (left <= 0) return <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--pos)" }}>개장 시각 경과</span>;
+  const h = Math.floor(left / 3600_000), m = Math.floor((left % 3600_000) / 60_000), s = Math.floor((left % 60_000) / 1000);
+  const soon = left <= 5 * 60_000;
+  return (
+    <span className="tnum" style={{ fontSize: 11, fontWeight: 700, color: soon ? "var(--amber)" : "var(--brand-2)" }}>
+      개장 T−{h > 0 ? `${h}h ` : ""}{m}m {h === 0 ? `${s}s` : ""}
+    </span>
+  );
+}
+
 function Chip({ ok, label, text }: { ok: boolean; label: string; text: string }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: "var(--text-mute)", border: "1px solid var(--border)", borderRadius: 2, padding: "2px 7px" }}>
@@ -52,21 +74,63 @@ function Chip({ ok, label, text }: { ok: boolean; label: string; text: string })
 export function ListingPanel({ wide }: { wide?: boolean }) {
   const [rows, setRows] = useState<Listing[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [manual, setManual] = useState("");
   const [auto, setAuto] = useState<AutoCfg | null>(null);
   const [autoLive, setAutoLive] = useState(false);
   const [autoSize, setAutoSize] = useState("500");
+  const [drilling, setDrilling] = useState(false);
+  // 감지 알림 (비프 + 데스크톱) — persisted, 기본 on.
+  const [detectAlert, setDetectAlert] = useState(true);
+  useEffect(() => {
+    try { const v = localStorage.getItem("ac.listingAlert"); if (v != null) setDetectAlert(v === "1"); } catch { /* */ }
+  }, []);
+  const toggleDetectAlert = () => {
+    const v = !detectAlert;
+    setDetectAlert(v);
+    try { localStorage.setItem("ac.listingAlert", v ? "1" : "0"); } catch { /* */ }
+    if (v && "Notification" in window && Notification.permission === "default") void Notification.requestPermission();
+  };
+  // 새 플레이 감지 → 비프 + 데스크톱 알림 + 상세 자동 오픈.
+  const knownRef = useRef<Set<string> | null>(null);
+  const detectAlertRef = useRef(detectAlert);
+  detectAlertRef.current = detectAlert;
+  useEffect(() => {
+    if (knownRef.current == null) { knownRef.current = new Set(rows.map((r) => r.base)); return; }
+    const fresh = rows.filter((r) => !knownRef.current!.has(r.base));
+    if (!fresh.length) return;
+    for (const r of rows) knownRef.current.add(r.base);
+    const top = fresh[0];
+    setSelected(top.base); // 차트·매수 버튼 바로 눈앞에
+    if (detectAlertRef.current) {
+      beep();
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(`${top.drill ? "[드릴] " : ""}상장 감지 — ${top.base}`, {
+          body: `${top.venue === "upbit" ? "업비트" : "빗썸"} · ${top.overseas ? `해외 ${top.globalVenue} 매수 가능` : "해외 미상장"}`,
+          tag: "arb-listing",
+        });
+      }
+    }
+  }, [rows]);
 
   useEffect(() => {
     const load = () => fetch("/api/listings", { cache: "no-store" }).then((r) => r.json())
-      .then((j) => { setRows(j.listings ?? []); setWatch(j.watch ?? null); }).catch(() => {});
+      .then((j) => { setRows(j.listings ?? []); setWatch(j.watch ?? null); setHistory(j.history ?? []); }).catch(() => {});
     load();
     const id = setInterval(load, 4000);
     fetch("/api/listing-auto", { cache: "no-store" }).then((r) => r.json())
       .then((j) => { if (j.cfg) { setAuto(j.cfg); setAutoSize(String(j.cfg.sizeUsd)); setAutoLive(!!j.liveEnabled); } }).catch(() => {});
     return () => clearInterval(id);
   }, []);
+
+  const runDrill = async () => {
+    setDrilling(true);
+    try {
+      await fetch("/api/listing-drill", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ base: manual.trim() || "PEPE" }) });
+    } catch { /* ignore */ }
+    finally { setDrilling(false); }
+  };
 
   const saveAuto = async (p: Partial<AutoCfg>) => {
     try {
@@ -96,6 +160,23 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
             style={{ width: 120, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "5px 9px", fontSize: 12, outline: "none" }}
           />
           <button type="button" style={BTN} disabled={!manual.trim()} onClick={() => setSelected(manual.trim())}>열기</button>
+          <button
+            type="button"
+            onClick={toggleDetectAlert}
+            title="새 상장 감지 시 비프 + 데스크톱 알림"
+            style={{ ...BTN_GHOST, borderColor: detectAlert ? "var(--brand)" : "var(--border-strong)", color: detectAlert ? "var(--brand-2)" : "var(--text-dim)", whiteSpace: "nowrap" }}
+          >
+            알림 {detectAlert ? "ON" : "OFF"}
+          </button>
+          <button
+            type="button"
+            disabled={drilling}
+            onClick={() => void runDrill()}
+            title="가짜 상장 공지를 주입해 감지→알림→매수 플로우를 리허설 (티커 입력값 또는 PEPE)"
+            style={{ ...BTN_GHOST, whiteSpace: "nowrap" }}
+          >
+            {drilling ? "…" : "🥁 드릴"}
+          </button>
         </div>
       </div>
   );
@@ -146,13 +227,15 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
               <button
                 type="button"
                 onClick={() => setSelected(open ? null : l.base)}
-                style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", background: open ? "var(--card-2)" : "transparent", border: "none", padding: "11px 14px", cursor: "pointer", color: "var(--text)" }}
+                style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 9px", width: "100%", textAlign: "left", background: open ? "var(--card-2)" : "transparent", border: "none", padding: "11px 14px", cursor: "pointer", color: "var(--text)" }}
               >
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{l.base}</span>
-                <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>
+                {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 2, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px", whiteSpace: "nowrap" }}>
                   {l.opened ? "거래개시" : "공지"}
                 </span>
                 <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {ago(l.announcedAt)} 전</span>
+                {!l.opened && l.opensAt != null && <Countdown opensAt={l.opensAt} />}
                 {l.overseas
                   ? <span style={{ fontSize: 11, color: "var(--pos)" }}>{l.globalVenue ? `해외 ${l.globalVenue} @ ${fmtPx(l.globalPrice)}` : "해외 상장"}</span>
                   : <span style={{ fontSize: 11, color: "var(--text-mute)" }}>해외 미상장</span>}
@@ -181,12 +264,46 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       </div>
   );
 
+  // ── 성과 히스토리 — 만료된 플레이 요약 (기대값 캘리브레이션 데이터) ──
+  const historyCard = history.length > 0 && (
+    <div style={{ ...CARD, padding: 0 }}>
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>상장 성과 히스토리</span>
+        <span style={CAP}>{history.length}건 · 공지가→피크</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: "4px 12px", padding: "8px 14px 12px", fontSize: 11, alignItems: "baseline" }}>
+        <span style={CAP}>티커</span><span style={CAP}>공지</span>
+        <span style={{ ...CAP, textAlign: "right" }}>피크</span>
+        <span style={{ ...CAP, textAlign: "right" }}>도달</span>
+        <span style={{ ...CAP, textAlign: "right" }}>실현</span>
+        {history.slice(0, 12).map((h) => (
+          <Fragment key={h.base + h.announcedAt}>
+            <span style={{ fontWeight: 700 }}>{h.base}</span>
+            <span className="tnum" style={{ color: "var(--text-mute)" }}>
+              {new Date(h.announcedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </span>
+            <span className="tnum" style={{ textAlign: "right", fontWeight: 700, color: (h.peakPct ?? 0) > 0 ? "var(--pos)" : "var(--text-mute)" }}>
+              {h.peakPct != null ? `+${h.peakPct.toFixed(1)}%` : "—"}
+            </span>
+            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+              {h.peakAfterMin != null ? `${h.peakAfterMin}분` : "—"}
+            </span>
+            <span className="tnum" style={{ textAlign: "right", color: h.realizedUsd == null ? "var(--text-mute)" : h.realizedUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>
+              {h.realizedUsd != null ? `${h.realizedUsd >= 0 ? "+" : "−"}$${Math.abs(h.realizedUsd).toFixed(0)}` : "—"}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+
   if (!wide) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
         {watchCard}
         {autoCard}
         {listCard}
+        {historyCard}
         <HoldingsCard />
       </div>
     );
@@ -199,6 +316,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         {watchCard}
         {autoCard}
         {listCard}
+        {historyCard}
         <HoldingsCard />
       </div>
       <div style={{ position: "sticky", top: 60, minWidth: 0 }}>
