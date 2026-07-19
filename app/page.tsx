@@ -262,7 +262,8 @@ export default function Cockpit() {
           onClick={() => setSettingsOpen(true)}
           title="설정 — API 키·리스크 한도·알림"
           style={{
-            border: "1px solid var(--border-strong)", background: "transparent",
+            border: "1px solid var(--border)", background: "var(--card)",
+            backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)",
             color: "var(--text-dim)", borderRadius: 999, width: 26, height: 26,
             display: "grid", placeItems: "center", fontSize: 13, cursor: "pointer",
           }}

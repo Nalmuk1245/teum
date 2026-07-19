@@ -40,9 +40,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [tgMsg, setTgMsg] = useState<string | null>(null);
 
-  const load = () =>
-    fetch("/api/settings", { cache: "no-store" }).then((r) => r.json())
-      .then((j) => { setFields(j.fields ?? []); setDryRun(!!j.dryRun); }).catch(() => {});
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    return fetch("/api/settings", { cache: "no-store" }).then((r) => r.json())
+      .then((j) => { setFields(j.fields ?? []); setDryRun(!!j.dryRun); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
   useEffect(() => { void load(); }, []);
 
   const groups = useMemo(() => {
@@ -160,6 +165,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 style={{ ...INPUT, marginTop: 6 }}
                 placeholder="EXEC_TOKEN"
               />
+            </div>
+          )}
+
+          {/* 로딩 스켈레톤 — fields fetch 전 빈 화면 대신 (dev 첫 컴파일 체감 개선) */}
+          {loading && fields.length === 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {[0, 1, 2].map((g) => (
+                <div key={g}>
+                  <div style={{ width: 90, height: 13, borderRadius: 6, background: "var(--card-3)", marginBottom: 8, opacity: 0.6 }} />
+                  {[0, 1].map((r) => (
+                    <div key={r} style={{ height: 34, borderRadius: 8, background: "var(--card-2)", marginBottom: 6, opacity: 0.5 }} />
+                  ))}
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: "var(--text-mute)", textAlign: "center", marginTop: 4 }}>설정 불러오는 중…</div>
             </div>
           )}
 
