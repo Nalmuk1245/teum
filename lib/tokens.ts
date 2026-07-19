@@ -61,6 +61,10 @@ async function erc20Decimals(chainKey: string, address: string): Promise<number 
 const OKX_CHAIN_SHORT: Record<string, string> = {
   ethereum: "eth", optimism: "op", bsc: "bsc", polygon: "poly",
   base: "base", arbitrum: "arb", avalanche: "avax",
+  kaia: "kaia", linea: "linea", scroll: "scrl", zksync: "zks",
+  mantle: "mnt", blast: "blast", sonic: "sonic", xlayer: "xlyr",
+  cronos: "cro", fantom: "ftm", manta: "manta", metis: "metis",
+  gnosis: "gno", celo: "celo", ronin: "ronin", wemix: "wemix", monad: "monad",
 };
 
 /** tokenFor의 비동기 확장 — 큐레이션 맵에 없으면 OKX로 자동 해석 (EVM만).

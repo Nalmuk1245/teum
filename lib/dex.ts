@@ -74,6 +74,10 @@ export async function okxGet(path: string, params: Record<string, string>): Prom
 export const OKX_CHAIN_ID: Record<string, string> = {
   ethereum: "1", base: "8453", arbitrum: "42161", optimism: "10",
   bsc: "56", polygon: "137", avalanche: "43114", solana: "501",
+  // DEX 애그리게이터 지원 확인됨 (supported/chain 실측)
+  zksync: "324", linea: "59144", mantle: "5000", scroll: "534352",
+  xlayer: "196", manta: "169", metis: "1088", blast: "81457",
+  sonic: "146", cronos: "25", fantom: "250", monad: "143", hyperevm: "999",
 };
 
 // ── cex-dex universe per chain ────────────────────────────────────────────────
@@ -95,7 +99,9 @@ export async function okxSignInfo(
   chainKey: string, fromAddr: string, toAddr: string, valueWei: bigint, data?: string,
 ): Promise<TxBuild | null> {
   if (!process.env.OKX_WEB3_PROJECT) return null;
-  const chainId = OKX_CHAIN_ID[chainKey];
+  // 지갑 API의 chainIndex = EVM chainId — DEX 미지원 체인(Kaia 등)도 빌드는 가능.
+  const { CHAINS } = await import("./chains");
+  const chainId = CHAINS[chainKey]?.evmChainId != null ? String(CHAINS[chainKey].evmChainId) : OKX_CHAIN_ID[chainKey];
   if (!chainId) return null;
   try {
     const r = await okxPost("/api/v5/wallet/pre-transaction/sign-info", {

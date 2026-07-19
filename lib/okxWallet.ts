@@ -10,8 +10,13 @@ export type OkxCoin = { chain: string; symbol: string; amount: number; usdValue:
 const CHAIN_NAME: Record<string, string> = {
   "1": "eth", "10": "op", "56": "bsc", "137": "poly", "8453": "base",
   "42161": "arb", "43114": "avax", "501": "sol", "195": "tron",
+  "8217": "kaia", "59144": "linea", "534352": "scrl", "324": "zks",
+  "5000": "mnt", "81457": "blast", "146": "sonic", "196": "xlyr",
+  "25": "cro", "250": "ftm", "169": "manta", "1088": "metis",
+  "100": "gno", "42220": "celo", "2020": "ronin", "1111": "wemix", "143": "monad",
 };
-const EVM_CHAINS = "1,10,56,137,8453,42161,43114";
+// 24체인 일괄 조회 실측 OK (한 호출) — 지갑 API supported-chains 교집합
+const EVM_CHAINS = "1,10,56,137,8453,42161,43114,8217,59144,534352,324,5000,81457,146,196,25,250,169,1088,100,42220,2020,1111,143";
 
 async function coinsFor(address: string, chains: string): Promise<OkxCoin[]> {
   const data = await okxGet("/api/v6/dex/balance/all-token-balances-by-address", {
