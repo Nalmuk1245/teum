@@ -12,6 +12,7 @@ import ExecuteModal from "./components/ExecuteModal";
 import ControlPanel from "./components/ControlPanel";
 import { ListingPanel } from "./components/ListingPanel";
 import { GapInspect } from "./components/GapInspect";
+import { DashboardPanel } from "./components/DashboardPanel";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 
 function useIsMobile() {
@@ -45,7 +46,7 @@ export default function Cockpit() {
   const [selected, setSelected] = useState<Opportunity | null>(null);
   // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
   // trades, control = ops (runs dashboard + risk + kill), assets = balances.
-  const [mode, setMode] = useState<"monitor" | "funding" | "listing" | "control" | "assets">("monitor");
+  const [mode, setMode] = useState<"home" | "monitor" | "funding" | "listing" | "control" | "assets">("home");
   // PC: 보드 행 클릭 → 우측 상세(차트·히스토리·실행) 검사창.
   const [inspectId, setInspectId] = useState<string | null>(null);
   // 테마 — 다크 기본(상시 감시 화면), 라이트는 수동 토글 (persisted).
@@ -282,12 +283,13 @@ export default function Cockpit() {
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
-            display: "grid", gridTemplateColumns: "repeat(5, 1fr)",
+            display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
             marginBottom: isMobile ? 10 : 14,
             borderBottom: "1px solid var(--border)",
           }}
         >
           {([
+            { k: "home", label: "대시보드", sub: "요약" },
             { k: "monitor", label: "갭", sub: "차익·실행" },
             { k: "funding", label: "펀딩", sub: "APR" },
             { k: "listing", label: "상장", sub: "따리·물량" },
@@ -332,12 +334,23 @@ export default function Cockpit() {
         {/* ── Assets: one-line summary on trading tabs; full panel on 자산 ── */}
         {mode === "assets" ? (
           <AssetsPanel isMobile={isMobile} />
-        ) : mode === "control" || mode === "listing" ? null : (
+        ) : mode === "control" || mode === "listing" || mode === "home" ? null : (
           <AssetSummary isMobile={isMobile} onOpen={() => setMode("assets")} />
         )}
 
         {/* ── 상장 대시보드: 상장따리 감시 + 온체인 물량 신호 ── */}
         {mode === "listing" && <ListingPanel wide={!isMobile} />}
+
+        {/* ── 대시보드: 시안의 요약 화면을 실데이터로 ── */}
+        {mode === "home" && (
+          <DashboardPanel
+            opps={gapOpps}
+            liveOverlay={liveOverlay}
+            mobile={isMobile}
+            onGoTab={(t) => setMode(t)}
+            onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
+          />
+        )}
 
         {/* ── Control tower: runs dashboard + risk limits + tools ── */}
         {mode === "control" && (
