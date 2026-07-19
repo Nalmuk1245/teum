@@ -1,13 +1,14 @@
 "use client";
 
-// 상장 대시보드 — 자동 탐지된 티커 카드 → 클릭하면 원스톱 실행 패널:
-// 토큰 정보(컨트랙트·교차검증) / CEX 매트릭스(+내 구매력) / DEX 견적·매수 /
-// 포지션·P&L / 거래소 핫·콜드 보유량. 수동 티커 조회도 같은 패널.
+// 상장 대시보드 — 좌: 탐지·설정·기록이 한 카드 / 우: 선택 티커의 실행 패널.
+// 상세 패널은 의사결정 순서대로 흐른다:
+//   ① 신호 (가격·시총·볼륨·김프·덤핑압력)  ② 차트  ③ 매수·매도 (CEX+DEX 통합 표)
+//   ④ 내 포지션  ⑤ 참고 (온체인 보유량·컨트랙트, 접이식)
+// 모든 표는 같은 그리드 문법(처 | 가격 | 내 자금 | 비고 | 액션)을 쓴다.
 
 import React from "react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { vlabel, beep } from "./cockpit-ui";
-import { HoldingsCard } from "./ControlPanel";
 
 type Buy = { where: string; usd: number; qty: number | null; price: number | null; ts: number; dry: boolean };
 type Listing = {
@@ -30,18 +31,28 @@ type Detail = {
   token: { name: string; priceUsd: number | null; volumeUsd: number | null; marketCapUsd: number | null; contractsList: { chain: string; address: string; decimals: number }[] } | null;
   cex: CexRow[]; dex: DexRow[]; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
 };
+type Holdings = {
+  venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null }[];
+  priceUsd: number | null; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string;
+};
 type AutoCfg = { armed: boolean; sizeUsd: number };
 
 const fmtUsd = (n: number | null | undefined, digits = 0): string =>
   n == null ? "—" : n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${(n / 1e3).toFixed(1)}K` : `$${n.toFixed(digits)}`;
 const fmtPx = (n: number | null | undefined): string =>
   n == null ? "—" : n >= 100 ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) : n >= 0.01 ? n.toFixed(4) : n.toPrecision(3);
+const fmtQty = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : n.toFixed(1));
 const ago = (ts: number) => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`; };
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" };
 const BTN: React.CSSProperties = { border: "none", borderRadius: 2, padding: "6px 12px", background: "var(--brand)", color: "#10141a", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
+const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
 const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 2, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
+const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
+
+// 실행 표 공통 그리드: 처 | 가격 | 내 자금 | 비고 | 액션
+const EXEC_COLS = "84px minmax(70px,1fr) minmax(60px,1fr) minmax(80px,1.2fr) auto";
 
 /** 개장 카운트다운 — 1초 틱, 임박(5분)부터 앰버. */
 function Countdown({ opensAt }: { opensAt: number }) {
@@ -65,6 +76,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   const [rows, setRows] = useState<Listing[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [histOpen, setHistOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [manual, setManual] = useState("");
   const [auto, setAuto] = useState<AutoCfg | null>(null);
@@ -92,7 +104,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     if (!fresh.length) return;
     for (const r of rows) knownRef.current.add(r.base);
     const top = fresh[0];
-    setSelected(top.base); // 차트·매수 버튼 바로 눈앞에
+    setSelected(top.base);
     if (detectAlertRef.current) {
       beep();
       if ("Notification" in window && Notification.permission === "granted") {
@@ -129,7 +141,6 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     } catch { /* ignore */ }
   };
 
-  // ── 감시 상태 요약 — 카드 대신 점 하나 + 툴팁 (서버 감시는 항상 돌고 있음) ──
   const watchOk = watch != null && ((!watch.annBlocked && watch.annOkAgoSec != null) || (watch.tgConfigured && watch.tgOkAgoSec != null));
   const watchTitle = watch == null ? "감시 상태 로딩 중"
     : [
@@ -139,171 +150,172 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         "— 공지 2.5s · TG 3s · 마켓 3s 폴링 중",
       ].join("\n");
 
-  const autoCard = (
-      <div style={{ ...CARD, borderColor: auto?.armed ? "var(--amber)" : "var(--border)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>공지 즉시 자동매수</span>
-          <span style={{ fontSize: 10.5, color: auto?.armed ? "var(--amber)" : "var(--text-mute)", fontWeight: 600 }}>{auto?.armed ? "무장됨" : "꺼짐"}</span>
-          <span style={{ flex: 1 }} />
-          <span style={CAP}>규모 $</span>
-          <input
-            value={autoSize}
-            onChange={(e) => setAutoSize(e.target.value.replace(/[^0-9]/g, ""))}
-            onBlur={() => { const n = Number(autoSize); if (n > 0) void saveAuto({ sizeUsd: n }); }}
-            style={{ width: 70, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "5px 8px", fontSize: 12, outline: "none", textAlign: "right" }}
-          />
-          <button
-            type="button"
-            onClick={() => void saveAuto({ armed: !auto?.armed })}
-            style={{ ...BTN, background: auto?.armed ? "var(--neg)" : "var(--brand)", color: auto?.armed ? "#fff" : "#10141a" }}
-          >
-            {auto?.armed ? "해제" : "무장"}
-          </button>
-        </div>
-        <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-mute)", lineHeight: 1.5 }}>
-          공지 감지 → 해외 최저가 CEX에서 즉시 시장가 매수. 킬스위치·리스크 한도 하위.
-          {" "}라이브 집행은 <code>LISTING_AUTO_LIVE=true</code> 필요{autoLive ? " (활성)" : " (현재 미설정 — 모의만)"}.
-        </div>
+  // ── 좌측: 탐지·설정·기록이 한 카드 ──────────────────────────────────────────
+  const mainCard = (
+    <div style={{ ...CARD, padding: 0 }}>
+      {/* 헤더: 상태점 + 수동조회 + 알림 + 드릴 */}
+      <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+        <span title={watchTitle} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}>
+          <span style={{ width: 6, height: 6, borderRadius: 2, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
+          <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
+        </span>
+        <span style={CAP}>{rows.length}건</span>
+        <span style={{ flex: 1 }} />
+        <input
+          value={manual}
+          onChange={(e) => setManual(e.target.value.toUpperCase())}
+          onKeyDown={(e) => { if (e.key === "Enter" && manual.trim()) setSelected(manual.trim()); }}
+          placeholder="티커 조회"
+          style={{ ...INPUT, width: 84 }}
+        />
+        <button type="button" style={BTN} disabled={!manual.trim()} onClick={() => setSelected(manual.trim())}>열기</button>
+        <button
+          type="button" onClick={toggleDetectAlert}
+          title="새 상장 감지 시 비프 + 데스크톱 알림 + 상세 자동 오픈"
+          style={{ ...BTN_GHOST, borderColor: detectAlert ? "var(--brand)" : "var(--border-strong)", color: detectAlert ? "var(--brand-2)" : "var(--text-dim)", whiteSpace: "nowrap" }}
+        >
+          알림 {detectAlert ? "ON" : "OFF"}
+        </button>
+        <button
+          type="button" disabled={drilling} onClick={() => void runDrill()}
+          title="가짜 상장 공지를 주입해 감지→알림→매수 플로우 리허설 (티커 입력값 또는 PEPE)"
+          style={{ ...BTN_GHOST, whiteSpace: "nowrap" }}
+        >
+          {drilling ? "…" : "🥁 드릴"}
+        </button>
       </div>
-  );
 
-  const listCard = (
-      <div style={{ ...CARD, padding: 0 }}>
-        <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span title={watchTitle} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}>
-            <span style={{ width: 6, height: 6, borderRadius: 2, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
-            <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
-          </span>
-          <span style={{ ...CAP }}>{rows.length}건</span>
-          <span style={{ flex: 1 }} />
-          <input
-            value={manual}
-            onChange={(e) => setManual(e.target.value.toUpperCase())}
-            onKeyDown={(e) => { if (e.key === "Enter" && manual.trim()) setSelected(manual.trim()); }}
-            placeholder="티커 수동 조회"
-            style={{ width: 110, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "4px 9px", fontSize: 12, outline: "none" }}
-          />
-          <button type="button" style={BTN} disabled={!manual.trim()} onClick={() => setSelected(manual.trim())}>열기</button>
-          <button
-            type="button"
-            onClick={toggleDetectAlert}
-            title="새 상장 감지 시 비프 + 데스크톱 알림"
-            style={{ ...BTN_GHOST, borderColor: detectAlert ? "var(--brand)" : "var(--border-strong)", color: detectAlert ? "var(--brand-2)" : "var(--text-dim)", whiteSpace: "nowrap" }}
-          >
-            알림 {detectAlert ? "ON" : "OFF"}
-          </button>
-          <button
-            type="button"
-            disabled={drilling}
-            onClick={() => void runDrill()}
-            title="가짜 상장 공지를 주입해 감지→알림→매수 플로우를 리허설 (티커 입력값 또는 PEPE)"
-            style={{ ...BTN_GHOST, whiteSpace: "nowrap" }}
-          >
-            {drilling ? "…" : "🥁"}
-          </button>
+      {/* 자동매수 — 설정도 이 카드의 한 행 */}
+      <div
+        title={`공지 감지 → 해외 최저가 CEX 즉시 시장가 매수.\n킬스위치·리스크 한도 하위 + 시총/기펌핑 가드.\n라이브 집행은 LISTING_AUTO_LIVE=true 필요${autoLive ? " (활성)" : " (미설정 — 모의만)"}.`}
+        style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, background: auto?.armed ? "color-mix(in srgb, var(--amber) 6%, transparent)" : "transparent" }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: 2, background: auto?.armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: auto?.armed ? "var(--amber)" : "var(--text-dim)" }}>공지 즉시 자동매수</span>
+        <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{auto?.armed ? (autoLive ? "무장 · 라이브" : "무장 · 모의") : "꺼짐"}</span>
+        <span style={{ flex: 1 }} />
+        <span style={CAP}>$</span>
+        <input
+          value={autoSize}
+          onChange={(e) => setAutoSize(e.target.value.replace(/[^0-9]/g, ""))}
+          onBlur={() => { const n = Number(autoSize); if (n > 0) void saveAuto({ sizeUsd: n }); }}
+          style={{ ...INPUT, width: 58, textAlign: "right" }}
+        />
+        <button
+          type="button"
+          onClick={() => void saveAuto({ armed: !auto?.armed })}
+          style={{ ...BTN, background: auto?.armed ? "var(--neg)" : "var(--brand)", color: auto?.armed ? "#fff" : "#10141a" }}
+        >
+          {auto?.armed ? "해제" : "무장"}
+        </button>
+      </div>
+
+      {/* 플레이 리스트 */}
+      {rows.length === 0 ? (
+        <div style={{ padding: "16px 14px", fontSize: 11.5, color: "var(--text-mute)" }}>
+          감시 중 — 공지가 뜨면 여기 카드가 생기고 텔레그램(+보유량)이 갑니다.
         </div>
-        {rows.length === 0 ? (
-          <div style={{ padding: "18px 14px", fontSize: 11.5, color: "var(--text-mute)" }}>
-            감시 중 — 공지 API 2.5s · TG 3s · 마켓 diff 3s. 공지가 뜨면 여기 카드가 생기고 텔레그램(+보유량)이 갑니다.
-          </div>
-        ) : rows.map((l) => {
-          const pos = (l.buys ?? []).reduce((s, b) => s + (b.qty ?? 0), 0) - (l.sells ?? []).reduce((s, b) => s + (b.qty ?? 0), 0);
-          const open = selected === l.base;
-          return (
-            <div key={l.base + l.venue} style={{ borderBottom: "1px solid var(--border)" }}>
-              <button
-                type="button"
-                onClick={() => setSelected(open ? null : l.base)}
-                style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 9px", width: "100%", textAlign: "left", background: open ? "var(--card-2)" : "transparent", border: "none", padding: "11px 14px", cursor: "pointer", color: "var(--text)" }}
-              >
+      ) : rows.map((l) => {
+        const pos = (l.buys ?? []).reduce((s, b) => s + (b.qty ?? 0), 0) - (l.sells ?? []).reduce((s, b) => s + (b.qty ?? 0), 0);
+        const open = selected === l.base;
+        return (
+          <div key={l.base + l.venue} style={{ borderBottom: "1px solid var(--border)" }}>
+            <button
+              type="button"
+              onClick={() => setSelected(open ? null : l.base)}
+              style={{ display: "block", width: "100%", textAlign: "left", background: open ? "var(--card-2)" : "transparent", border: "none", padding: "10px 14px", cursor: "pointer", color: "var(--text)", boxShadow: open ? "inset 2px 0 0 var(--brand)" : undefined }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{l.base}</span>
                 {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 2, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
                 <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px", whiteSpace: "nowrap" }}>
                   {l.opened ? "거래개시" : "공지"}
                 </span>
                 <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {ago(l.announcedAt)} 전</span>
-                {!l.opened && l.opensAt != null && <Countdown opensAt={l.opensAt} />}
-                {l.overseas
-                  ? <span style={{ fontSize: 11, color: "var(--pos)" }}>{l.globalVenue ? `해외 ${l.globalVenue} @ ${fmtPx(l.globalPrice)}` : "해외 상장"}</span>
-                  : <span style={{ fontSize: 11, color: "var(--text-mute)" }}>해외 미상장</span>}
-                {l.peakPct != null && <span className="tnum" style={{ fontSize: 11, color: l.peakPct > 0 ? "var(--pos)" : "var(--text-mute)" }}>피크 +{l.peakPct.toFixed(1)}%</span>}
-                {pos > 0 && <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "var(--amber)" }}>보유 {pos.toFixed(3)}</span>}
                 <span style={{ flex: 1 }} />
-                <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{open ? "▲" : "▼"}</span>
-              </button>
-              {/* 모바일: 아코디언 인라인 상세 / PC: 우측 패널에서 표시 */}
-              {!wide && open && <DetailPanel base={l.base} />}
-            </div>
-          );
-        })}
-        {/* 수동 티커가 플레이 목록에 없을 때 (모바일 인라인) */}
-        {!wide && selected && !rows.some((r) => r.base === selected) && (
-          <div style={{ borderTop: "1px solid var(--border)" }}>
-            <div style={{ padding: "9px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700 }}>{selected}</span>
-              <span style={CAP}>수동 조회</span>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
-            </div>
-            <DetailPanel base={selected} />
+                {!l.opened && l.opensAt != null && <Countdown opensAt={l.opensAt} />}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 3, fontSize: 11 }}>
+                {l.overseas
+                  ? <span style={{ color: "var(--pos)" }}>{l.globalVenue ? `해외 ${l.globalVenue} @ ${fmtPx(l.globalPrice)}` : "해외 상장"}</span>
+                  : <span style={{ color: "var(--text-mute)" }}>해외 미상장 · 펌핑만</span>}
+                {l.peakPct != null && <span className="tnum" style={{ color: l.peakPct > 0 ? "var(--pos)" : "var(--text-mute)" }}>피크 +{l.peakPct.toFixed(1)}%</span>}
+                {pos > 0 && <span className="tnum" style={{ fontWeight: 700, color: "var(--amber)" }}>보유 {pos.toFixed(3)}</span>}
+              </div>
+            </button>
+            {/* 모바일: 인라인 상세 / PC: 우측 패널 */}
+            {!wide && open && <DetailPanel base={l.base} />}
           </div>
-        )}
-      </div>
-  );
+        );
+      })}
+      {/* 수동 티커 (모바일 인라인) */}
+      {!wide && selected && !rows.some((r) => r.base === selected) && (
+        <div style={{ borderBottom: "1px solid var(--border)" }}>
+          <div style={{ padding: "9px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 700 }}>{selected}</span>
+            <span style={CAP}>수동 조회</span>
+            <span style={{ flex: 1 }} />
+            <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
+          </div>
+          <DetailPanel base={selected} />
+        </div>
+      )}
 
-  // ── 성과 히스토리 — 만료된 플레이 요약 (기대값 캘리브레이션 데이터) ──
-  const historyCard = history.length > 0 && (
-    <div style={{ ...CARD, padding: 0 }}>
-      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "baseline", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700 }}>상장 성과 히스토리</span>
-        <span style={CAP}>{history.length}건 · 공지가→피크</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: "4px 12px", padding: "8px 14px 12px", fontSize: 11, alignItems: "baseline" }}>
-        <span style={CAP}>티커</span><span style={CAP}>공지</span>
-        <span style={{ ...CAP, textAlign: "right" }}>피크</span>
-        <span style={{ ...CAP, textAlign: "right" }}>도달</span>
-        <span style={{ ...CAP, textAlign: "right" }}>실현</span>
-        {history.slice(0, 12).map((h) => (
-          <Fragment key={h.base + h.announcedAt}>
-            <span style={{ fontWeight: 700 }}>{h.base}</span>
-            <span className="tnum" style={{ color: "var(--text-mute)" }}>
-              {new Date(h.announcedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-            </span>
-            <span className="tnum" style={{ textAlign: "right", fontWeight: 700, color: (h.peakPct ?? 0) > 0 ? "var(--pos)" : "var(--text-mute)" }}>
-              {h.peakPct != null ? `+${h.peakPct.toFixed(1)}%` : "—"}
-            </span>
-            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-              {h.peakAfterMin != null ? `${h.peakAfterMin}분` : "—"}
-            </span>
-            <span className="tnum" style={{ textAlign: "right", color: h.realizedUsd == null ? "var(--text-mute)" : h.realizedUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>
-              {h.realizedUsd != null ? `${h.realizedUsd >= 0 ? "+" : "−"}$${Math.abs(h.realizedUsd).toFixed(0)}` : "—"}
-            </span>
-          </Fragment>
-        ))}
-      </div>
+      {/* 성과 히스토리 — 같은 카드의 접이식 섹션 */}
+      {history.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setHistOpen(!histOpen)}
+            style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "9px 14px", cursor: "pointer", color: "var(--text-dim)" }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 600 }}>성과 히스토리</span>
+            <span style={CAP}>{history.length}건 · 공지가→피크</span>
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{histOpen ? "▲" : "▼"}</span>
+          </button>
+          {histOpen && (
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: "4px 12px", padding: "0 14px 12px", fontSize: 11, alignItems: "baseline" }}>
+              <span style={CAP}>티커</span><span style={CAP}>공지</span>
+              <span style={{ ...CAP, textAlign: "right" }}>피크</span>
+              <span style={{ ...CAP, textAlign: "right" }}>도달</span>
+              <span style={{ ...CAP, textAlign: "right" }}>실현</span>
+              {history.slice(0, 12).map((h) => (
+                <Fragment key={h.base + h.announcedAt}>
+                  <span style={{ fontWeight: 700 }}>{h.base}</span>
+                  <span className="tnum" style={{ color: "var(--text-mute)" }}>
+                    {new Date(h.announcedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <span className="tnum" style={{ textAlign: "right", fontWeight: 700, color: (h.peakPct ?? 0) > 0 ? "var(--pos)" : "var(--text-mute)" }}>
+                    {h.peakPct != null ? `+${h.peakPct.toFixed(1)}%` : "—"}
+                  </span>
+                  <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+                    {h.peakAfterMin != null ? `${h.peakAfterMin}분` : "—"}
+                  </span>
+                  <span className="tnum" style={{ textAlign: "right", color: h.realizedUsd == null ? "var(--text-mute)" : h.realizedUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                    {h.realizedUsd != null ? `${h.realizedUsd >= 0 ? "+" : "−"}$${Math.abs(h.realizedUsd).toFixed(0)}` : "—"}
+                  </span>
+                </Fragment>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 
   if (!wide) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
-        {autoCard}
-        {listCard}
-        {historyCard}
-        <HoldingsCard />
+        {mainCard}
       </div>
     );
   }
 
-  // ── PC: 좌(감시·자동매수·리스트·보유량) / 우(선택 티커 상세·차트) ──
+  // ── PC: 좌(탐지·설정·기록) / 우(선택 티커 실행 패널) ──
   return (
     <div style={{ display: "grid", gridTemplateColumns: "400px minmax(0,1fr)", gap: 14, alignItems: "start", paddingBottom: 40 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-        {autoCard}
-        {listCard}
-        {historyCard}
-        <HoldingsCard />
-      </div>
+      <div style={{ minWidth: 0 }}>{mainCard}</div>
       <div style={{ position: "sticky", top: 60, minWidth: 0 }}>
         {selected ? (
           <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden" }}>
@@ -317,7 +329,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
           </div>
         ) : (
           <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
-            좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 차트·매수처·포지션·보유량이 표시됩니다.
+            좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 신호·차트·매수처·포지션이 표시됩니다.
           </div>
         )}
       </div>
@@ -325,7 +337,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   );
 }
 
-// ── 차트 (PC용) — CEX는 TradingView 임베드, DEX는 DexScreener 임베드 ──────────
+// ── 차트 — CEX는 TradingView, DEX는 DexScreener 임베드 ────────────────────────
 export const TV_SYMBOL: Record<string, (b: string) => string> = {
   binance: (b) => `BINANCE:${b}USDT`,
   bybit: (b) => `BYBIT:${b}USDT`,
@@ -372,7 +384,7 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
           </button>
         ))}
         <span style={{ flex: 1 }} />
-        <button type="button" style={BTN_GHOST} onClick={() => setOpen(!open)}>{open ? "차트 접기" : "차트 펼치기"}</button>
+        <button type="button" style={BTN_GHOST} onClick={() => setOpen(!open)}>{open ? "접기" : "펼치기"}</button>
       </div>
       {open && active && (
         <iframe
@@ -388,14 +400,15 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
   );
 }
 
-// ── 상세·실행 패널 ─────────────────────────────────────────────────────────────
+// ── 상세·실행 패널 — ①신호 ②차트 ③매수·매도 ④포지션 ⑤참고 ────────────────────
 function DetailPanel({ base }: { base: string }) {
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sizeUsd, setSizeUsd] = useState("500");
-  const [busy, setBusy] = useState<string | null>(null); // action key
+  const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [refOpen, setRefOpen] = useState(false); // ⑤ 참고(보유량·컨트랙트) 접기
 
   useEffect(() => {
     let stop = false;
@@ -405,6 +418,20 @@ function DetailPanel({ base }: { base: string }) {
       .catch(() => { if (!stop) setErr("조회 실패"); });
     load();
     const id = setInterval(load, 10_000);
+    return () => { stop = true; clearInterval(id); };
+  }, [base]);
+
+  // 온체인 보유량 — 신호 스트립(덤핑압력)과 ⑤ 상세가 같은 데이터를 쓴다.
+  const [holdings, setHoldings] = useState<Holdings | null>(null);
+  const [holdErr, setHoldErr] = useState<string | null>(null);
+  useEffect(() => {
+    let stop = false;
+    const load = () => fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(base)}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => { if (!stop) { if (j.holdings) { setHoldings(j.holdings); setHoldErr(null); } else setHoldErr(j.error ?? null); } })
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 60_000);
     return () => { stop = true; clearInterval(id); };
   }, [base]);
 
@@ -432,72 +459,53 @@ function DetailPanel({ base }: { base: string }) {
   const unrealized = posQty > 0 && Number.isFinite(curUsd) ? posQty * curUsd - Math.max(0, costUsd) : null;
 
   const sec = (title: string, right?: React.ReactNode) => (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "12px 0 6px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 6px" }}>
       <span style={{ ...CAP, color: "var(--text-dim)" }}>{title}</span>
+      <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
       {right}
-      <span style={{ flex: 1, borderBottom: "1px solid var(--border)", transform: "translateY(-3px)" }} />
+    </div>
+  );
+  const th = (label: string, align: "left" | "right" = "left") => (
+    <span style={{ ...CAP, textAlign: align }}>{label}</span>
+  );
+
+  // ── ① 신호 스트립 — 판단에 필요한 숫자를 균일 셀로 ──
+  const signal = (label: string, value: React.ReactNode, tone?: string) => (
+    <div style={{ padding: "7px 10px", borderRight: "1px solid var(--border)", minWidth: 0 }}>
+      <div className="tnum" style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.1, color: tone ?? "var(--text)", whiteSpace: "nowrap" }}>{value}</div>
+      <div style={{ marginTop: 3, ...CAP, whiteSpace: "nowrap" }}>{label}</div>
     </div>
   );
 
   return (
-    <div style={{ padding: "2px 14px 14px", background: "var(--card-2)", borderTop: "1px solid var(--border)" }}>
-      {/* 토큰 요약 */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", paddingTop: 10, fontSize: 11.5 }}>
-        <span><b>{d.token?.name ?? base}</b></span>
-        <span className="tnum">가격 {d.token?.priceUsd != null ? `$${fmtPx(d.token.priceUsd)}` : "—"}</span>
-        <span className="tnum">시총 {fmtUsd(d.token?.marketCapUsd)}</span>
-        <span className="tnum">24h 볼륨 {fmtUsd(d.token?.volumeUsd)}</span>
-        {d.kimchiPct != null && (
-          <span className="tnum" style={{ fontWeight: 700, color: d.kimchiPct > 0 ? "var(--pos)" : "var(--neg)" }}>
-            김프 {d.kimchiPct > 0 ? "+" : ""}{d.kimchiPct.toFixed(2)}%
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <span style={CAP}>금액 $</span>
-        <input
-          value={sizeUsd}
-          onChange={(e) => setSizeUsd(e.target.value.replace(/[^0-9]/g, ""))}
-          style={{ width: 64, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "4px 7px", fontSize: 12, outline: "none", textAlign: "right" }}
-        />
+    <div style={{ padding: "0 14px 14px", background: "var(--card-2)", borderTop: "1px solid var(--border)" }}>
+      {/* ① 신호 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 2, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
+        {signal("가격", d.token?.priceUsd != null ? `$${fmtPx(d.token.priceUsd)}` : "—")}
+        {signal("시총", fmtUsd(d.token?.marketCapUsd))}
+        {signal("24h 볼륨", fmtUsd(d.token?.volumeUsd))}
+        {signal("김프", d.kimchiPct != null ? `${d.kimchiPct > 0 ? "+" : ""}${d.kimchiPct.toFixed(2)}%` : "—", d.kimchiPct == null ? undefined : d.kimchiPct > 0 ? "var(--pos)" : "var(--neg)")}
+        {signal("즉시유입/24h", holdings?.dumpRatioPct != null ? `${holdings.dumpRatioPct.toFixed(0)}%` : holdErr ? "—" : "…",
+          holdings?.dumpRatioPct == null ? undefined : holdings.dumpRatioPct > 50 ? "var(--amber)" : "var(--pos)")}
+        {signal("24h 피크", play?.peakPct != null ? `+${play.peakPct.toFixed(1)}%` : "—", (play?.peakPct ?? 0) > 0 ? "var(--pos)" : undefined)}
       </div>
 
-      {/* 차트 — CEX(TradingView) / DEX(DexScreener) 전환 */}
+      {/* ② 차트 */}
       <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
 
-      {/* 컨트랙트 */}
-      {d.token && d.token.contractsList.length > 0 && (
-        <>
-          {sec("컨트랙트")}
-          {d.token.contractsList.map((c) => {
-            const dexRow = d.dex.find((x) => x.chain === c.chain);
-            return (
-              <div key={c.chain} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, padding: "2px 0" }}>
-                <span style={{ width: 64, color: "var(--text-dim)", fontWeight: 600 }}>{c.chain}</span>
-                <button
-                  type="button"
-                  title="클릭 = 주소 복사"
-                  onClick={() => { void navigator.clipboard?.writeText(c.address); setCopied(c.chain); setTimeout(() => setCopied(null), 1200); }}
-                  className="tnum"
-                  style={{ background: "none", border: "none", cursor: "pointer", color: copied === c.chain ? "var(--pos)" : "var(--text)", fontSize: 10.5, padding: 0 }}
-                >
-                  {copied === c.chain ? "복사됨 ✓" : `${c.address.slice(0, 10)}…${c.address.slice(-8)}`}
-                </button>
-                {dexRow?.verified && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--pos)", border: "1px solid var(--pos)", borderRadius: 2, padding: "0 4px" }}>OKX 검증</span>}
-                {dexRow?.note && <span style={{ fontSize: 9.5, color: "var(--text-mute)" }}>{dexRow.note}</span>}
-              </div>
-            );
-          })}
-        </>
-      )}
-      {d.token && d.token.contractsList.length === 0 && (
-        <div style={{ marginTop: 8, fontSize: 10.5, color: "var(--text-mute)" }}>EVM 컨트랙트 없음 (비EVM 체인 토큰) — DEX 매수 불가</div>
-      )}
-
-      {/* CEX 매트릭스 */}
-      {sec("CEX")}
-      <div style={{ display: "grid", gridTemplateColumns: "72px 1fr 1fr 1fr auto", gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
-        <span style={CAP}>거래소</span><span style={{ ...CAP, textAlign: "right" }}>가격</span>
-        <span style={{ ...CAP, textAlign: "right" }}>내 현금</span><span style={{ ...CAP, textAlign: "right" }}>내 코인</span><span />
+      {/* ③ 매수·매도 — CEX+DEX 통합 표, 금액 입력은 표 머리에 */}
+      {sec("매수 · 매도", (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={CAP}>금액 $</span>
+          <input
+            value={sizeUsd}
+            onChange={(e) => setSizeUsd(e.target.value.replace(/[^0-9]/g, ""))}
+            style={{ ...INPUT, width: 62, textAlign: "right" }}
+          />
+        </span>
+      ))}
+      <div style={{ display: "grid", gridTemplateColumns: EXEC_COLS, gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
+        {th("매수처")}{th("가격", "right")}{th("내 자금", "right")}{th("비고", "right")}<span />
         {[...globals, ...krs].map((r) => (
           <Fragment key={r.venue}>
             <span style={{ fontWeight: 600, color: r.listed ? "var(--text)" : "var(--text-mute)" }}>{vlabel(r.venue as never) ?? r.venue}</span>
@@ -506,7 +514,7 @@ function DetailPanel({ base }: { base: string }) {
             </span>
             <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : "키없음"}</span>
             <span className="tnum" style={{ textAlign: "right", color: (r.myCoinQty ?? 0) > 0 ? "var(--amber)" : "var(--text-mute)" }}>
-              {r.myCoinQty != null ? r.myCoinQty.toFixed(3) : "—"}
+              {(r.myCoinQty ?? 0) > 0 ? `보유 ${r.myCoinQty!.toFixed(3)}` : ["upbit", "bithumb"].includes(r.venue) ? "개장 후 매도처" : "—"}
             </span>
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
               {r.listed && ["binance", "bybit", "okx"].includes(r.venue) && (
@@ -516,7 +524,7 @@ function DetailPanel({ base }: { base: string }) {
                 </button>
               )}
               {r.listed && (posQty > 0 || (r.myCoinQty ?? 0) > 0) && (
-                <button type="button" style={{ ...BTN, background: "var(--neg)", color: "#fff" }} disabled={busy != null}
+                <button type="button" style={BTN_SELL} disabled={busy != null}
                   onClick={() => void act(`sell:${r.venue}`, "/api/listing-sell", { base, where: r.venue })}>
                   {busy === `sell:${r.venue}` ? "…" : "매도"}
                 </button>
@@ -524,120 +532,124 @@ function DetailPanel({ base }: { base: string }) {
             </span>
           </Fragment>
         ))}
+        {d.dex.map((x) => (
+          <Fragment key={x.chain}>
+            <span style={{ fontWeight: 600, color: x.verified ? "var(--text)" : "var(--text-mute)" }}>DEX·{x.chain === "ethereum" ? "eth" : x.chain}</span>
+            <span className="tnum" style={{ textAlign: "right" }}>{x.execPriceUsd != null ? `$${fmtPx(x.execPriceUsd)}` : "—"}</span>
+            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{d.walletReady ? "지갑" : "키없음"}</span>
+            <span className="tnum" style={{ textAlign: "right", color: x.premiumVsCgPct == null ? "var(--text-mute)" : x.premiumVsCgPct > 1 ? "var(--amber)" : "var(--text-dim)" }}>
+              {x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
+            </span>
+            <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
+              <button type="button" style={BTN} disabled={busy != null || size <= 0 || !x.verified}
+                onClick={() => void act(`dex:${x.chain}`, "/api/listing-dex-buy", { base, chain: x.chain, sizeUsd: size })}>
+                {busy === `dex:${x.chain}` ? "…" : "매수"}
+              </button>
+              {posQty > 0 && x.verified && (
+                <button type="button" style={BTN_SELL} disabled={busy != null}
+                  onClick={() => void act(`dexsell:${x.chain}`, "/api/listing-sell", { base, where: `dex:${x.chain}` })}>
+                  매도
+                </button>
+              )}
+            </span>
+          </Fragment>
+        ))}
       </div>
-
-      {/* DEX */}
-      {d.dex.length > 0 && (
-        <>
-          {sec("DEX (OKX Web3)", !d.dexReady ? <span style={{ fontSize: 9.5, color: "var(--amber)" }}>OKX_WEB3 키 필요 — 견적/실행 불가</span> : !d.walletReady ? <span style={{ fontSize: 9.5, color: "var(--amber)" }}>지갑 키 없음 — 라이브 매수 불가</span> : undefined)}
-          <div style={{ display: "grid", gridTemplateColumns: "72px 1fr 1fr auto", gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
-            <span style={CAP}>체인</span><span style={{ ...CAP, textAlign: "right" }}>실행가($500)</span><span style={{ ...CAP, textAlign: "right" }}>vs 시세</span><span />
-            {d.dex.map((x) => (
-              <Fragment key={x.chain}>
-                <span style={{ fontWeight: 600 }}>{x.chain}</span>
-                <span className="tnum" style={{ textAlign: "right" }}>{x.execPriceUsd != null ? `$${fmtPx(x.execPriceUsd)}` : "—"}</span>
-                <span className="tnum" style={{ textAlign: "right", color: x.premiumVsCgPct == null ? "var(--text-mute)" : x.premiumVsCgPct > 1 ? "var(--amber)" : "var(--text-dim)" }}>
-                  {x.premiumVsCgPct != null ? `${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : "—"}
-                </span>
-                <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
-                  <button type="button" style={BTN} disabled={busy != null || size <= 0 || !x.verified}
-                    onClick={() => void act(`dex:${x.chain}`, "/api/listing-dex-buy", { base, chain: x.chain, sizeUsd: size })}>
-                    {busy === `dex:${x.chain}` ? "…" : "DEX 매수"}
-                  </button>
-                  {posQty > 0 && x.verified && (
-                    <button type="button" style={{ ...BTN, background: "var(--neg)", color: "#fff" }} disabled={busy != null}
-                      onClick={() => void act(`dexsell:${x.chain}`, "/api/listing-sell", { base, where: `dex:${x.chain}` })}>
-                      매도
-                    </button>
-                  )}
-                </span>
-              </Fragment>
-            ))}
-          </div>
-        </>
+      {!d.dexReady && d.dex.length > 0 && (
+        <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-mute)" }}>DEX 실행가·매수는 OKX_WEB3 키 필요{!d.walletReady ? " · 라이브 매수는 지갑 키 필요" : ""}</div>
       )}
+      {msg && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
 
-      {/* 포지션 */}
+      {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (
         <>
-          {sec("내 포지션")}
-          <div style={{ fontSize: 11.5, display: "flex", flexDirection: "column", gap: 3 }}>
-            {buys.map((b, i) => (
-              <div key={`b${i}`} className="tnum" style={{ display: "flex", gap: 10, color: "var(--text-dim)" }}>
-                <span style={{ color: "var(--pos)", fontWeight: 600 }}>매수</span>
-                <span>{b.where}</span><span>${b.usd}</span>
-                <span>{b.qty != null ? `${b.qty.toFixed(4)} @ $${fmtPx(b.price)}` : ""}</span>
-                <span style={{ color: "var(--text-mute)" }}>{ago(b.ts)} 전{b.dry ? " · 모의" : ""}</span>
-              </div>
-            ))}
-            {sells.map((s, i) => (
-              <div key={`s${i}`} className="tnum" style={{ display: "flex", gap: 10, color: "var(--text-dim)" }}>
-                <span style={{ color: "var(--neg)", fontWeight: 600 }}>매도</span>
-                <span>{s.where}</span><span>{s.qty?.toFixed(4)}</span>
-                <span style={{ color: "var(--text-mute)" }}>{ago(s.ts)} 전{s.dry ? " · 모의" : ""}</span>
-              </div>
-            ))}
-            <div className="tnum" style={{ marginTop: 4, paddingTop: 6, borderTop: "1px solid var(--border)", display: "flex", gap: 14 }}>
-              <span>잔여 <b>{posQty.toFixed(4)}</b> {base}</span>
+          {sec("내 포지션", (
+            <span className="tnum" style={{ fontSize: 11.5 }}>
+              잔여 <b>{posQty.toFixed(4)}</b>
               {unrealized != null && (
-                <span style={{ fontWeight: 700, color: unrealized >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                <span style={{ marginLeft: 8, fontWeight: 700, color: unrealized >= 0 ? "var(--pos)" : "var(--neg)" }}>
                   미실현 {unrealized >= 0 ? "+" : "−"}${Math.abs(unrealized).toFixed(2)}
-                </span>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {msg && <div style={{ marginTop: 10, fontSize: 11.5, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
-
-      {/* 보유량 (핫/콜드) */}
-      <DetailHoldings base={base} />
-    </div>
-  );
-}
-
-function DetailHoldings({ base }: { base: string }) {
-  const [h, setH] = useState<{ venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null }[]; priceUsd: number | null; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    let stop = false;
-    const load = () => fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(base)}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => { if (!stop) { if (j.holdings) { setH(j.holdings); setErr(null); } else setErr(j.error ?? null); } })
-      .catch(() => {});
-    load();
-    const id = setInterval(load, 60_000);
-    return () => { stop = true; clearInterval(id); };
-  }, [base]);
-  const fq = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : n.toFixed(1));
-  return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-        <span style={{ ...CAP, color: "var(--text-dim)" }}>거래소 보유량 (온체인)</span>
-        {h?.dumpRatioPct != null && (
-          <span style={{ fontSize: 10, fontWeight: 700, color: h.dumpRatioPct > 50 ? "var(--amber)" : "var(--pos)" }}>
-            즉시유입/24h볼륨 {h.dumpRatioPct.toFixed(0)}%{h.dumpRatioPct > 50 ? " ⚠ 펌핑 짧을 확률" : ""}
-          </span>
-        )}
-        <span style={{ flex: 1, borderBottom: "1px solid var(--border)", transform: "translateY(-3px)" }} />
-      </div>
-      {err && <div style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{err}</div>}
-      {!h && !err && <div style={{ fontSize: 10.5, color: "var(--text-mute)" }}>조회 중… (~10s)</div>}
-      {h && (
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11 }}>
-          {h.venues.filter((v) => v.hot + v.cold > 0).map((v) => (
-            <span key={v.venue} className="tnum" style={{ color: "var(--text-dim)" }}>
-              <b style={{ color: "var(--text)" }}>{v.venue}</b> 핫 {fq(v.hot)}{v.hotUsd ? ` (${fmtUsd(v.hotUsd)})` : ""} · 콜드 {fq(v.cold)}
-              {v.hotDeltaPerMin != null && v.hotDeltaPerMin !== 0 && h.priceUsd != null && (
-                <span style={{ color: v.hotDeltaPerMin > 0 ? "var(--pos)" : "var(--neg)" }}>
-                  {" "}Δ{v.hotDeltaPerMin > 0 ? "+" : "−"}${fq(Math.abs(v.hotDeltaPerMin * h.priceUsd))}/분
                 </span>
               )}
             </span>
           ))}
-        </div>
+          <div style={{ display: "grid", gridTemplateColumns: EXEC_COLS, gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
+            {th("구분")}{th("수량", "right")}{th("금액", "right")}{th("단가", "right")}<span style={{ ...CAP, textAlign: "right" }}>시각</span>
+            {[...buys.map((b) => ({ ...b, kind: "매수" as const })), ...sells.map((s) => ({ ...s, kind: "매도" as const }))]
+              .sort((a, b) => a.ts - b.ts)
+              .map((r, i) => (
+                <Fragment key={i}>
+                  <span style={{ fontWeight: 600, color: r.kind === "매수" ? "var(--pos)" : "var(--neg)" }}>{r.kind} · {r.where}</span>
+                  <span className="tnum" style={{ textAlign: "right" }}>{r.qty != null ? r.qty.toFixed(4) : "—"}</span>
+                  <span className="tnum" style={{ textAlign: "right" }}>${r.usd.toFixed(0)}</span>
+                  <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.price != null ? `$${fmtPx(r.price)}` : "—"}</span>
+                  <span className="tnum" style={{ textAlign: "right", color: "var(--text-mute)" }}>{ago(r.ts)} 전{r.dry ? " · 모의" : ""}</span>
+                </Fragment>
+              ))}
+          </div>
+        </>
       )}
+
+      {/* ⑤ 참고 — 온체인 보유량 상세 + 컨트랙트 (접이식) */}
+      <div style={{ marginTop: 14 }}>
+        <button
+          type="button"
+          onClick={() => setRefOpen(!refOpen)}
+          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "var(--text-dim)" }}
+        >
+          <span style={CAP}>참고 — 온체인 보유량 · 컨트랙트</span>
+          {holdings?.globalHotUsd != null && (
+            <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-mute)" }}>
+              글로벌 핫 {fmtUsd(holdings.globalHotUsd)}
+            </span>
+          )}
+          <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
+          <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{refOpen ? "▲" : "▼"}</span>
+        </button>
+        {refOpen && (
+          <div style={{ marginTop: 8, fontSize: 11 }}>
+            {holdErr && <div style={{ color: "var(--text-mute)" }}>{holdErr}</div>}
+            {!holdings && !holdErr && <div style={{ color: "var(--text-mute)" }}>보유량 조회 중… (~10s)</div>}
+            {holdings && (
+              <div style={{ display: "grid", gridTemplateColumns: "84px 1fr 1fr 1fr", gap: "3px 10px", alignItems: "center", marginBottom: 10 }}>
+                {th("거래소")}{th("핫월렛", "right")}{th("콜드", "right")}{th("핫 Δ/분", "right")}
+                {holdings.venues.filter((v) => v.hot + v.cold > 0).map((v) => (
+                  <Fragment key={v.venue}>
+                    <span style={{ fontWeight: 600 }}>{v.venue}</span>
+                    <span className="tnum" style={{ textAlign: "right" }}>{fmtQty(v.hot)}{v.hotUsd ? ` (${fmtUsd(v.hotUsd)})` : ""}</span>
+                    <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{fmtQty(v.cold)}</span>
+                    <span className="tnum" style={{ textAlign: "right", color: v.hotDeltaPerMin == null || v.hotDeltaPerMin === 0 ? "var(--text-mute)" : v.hotDeltaPerMin > 0 ? "var(--pos)" : "var(--neg)" }}>
+                      {v.hotDeltaPerMin == null ? "—" : v.hotDeltaPerMin === 0 ? "0" : holdings.priceUsd != null
+                        ? `${v.hotDeltaPerMin > 0 ? "+$" : "−$"}${fmtQty(Math.abs(v.hotDeltaPerMin * holdings.priceUsd))}`
+                        : fmtQty(Math.abs(v.hotDeltaPerMin))}
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
+            )}
+            {d.token && d.token.contractsList.length > 0 ? d.token.contractsList.map((c) => {
+              const dexRow = d.dex.find((x) => x.chain === c.chain);
+              return (
+                <div key={c.chain} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
+                  <span style={{ width: 76, color: "var(--text-dim)", fontWeight: 600 }}>{c.chain}</span>
+                  <button
+                    type="button"
+                    title="클릭 = 주소 복사"
+                    onClick={() => { void navigator.clipboard?.writeText(c.address); setCopied(c.chain); setTimeout(() => setCopied(null), 1200); }}
+                    className="tnum"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: copied === c.chain ? "var(--pos)" : "var(--text)", fontSize: 10.5, padding: 0 }}
+                  >
+                    {copied === c.chain ? "복사됨 ✓" : `${c.address.slice(0, 10)}…${c.address.slice(-8)}`}
+                  </button>
+                  {dexRow?.verified && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--pos)", border: "1px solid var(--pos)", borderRadius: 2, padding: "0 4px" }}>OKX 검증</span>}
+                </div>
+              );
+            }) : (
+              <div style={{ color: "var(--text-mute)" }}>EVM 컨트랙트 없음 (비EVM 체인 토큰) — DEX 매수 불가</div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
