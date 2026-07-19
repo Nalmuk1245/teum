@@ -75,7 +75,7 @@ export async function POST(req: Request) {
     if (!res.ok) return NextResponse.json({ ok: false, message: `swap 실패 — ${res.message}` });
 
     const qty = Number(swap.toAmount) / 10 ** to.decimals || null;
-    recordListingBuy(base, { where: `dex:${chain}`, usd: sizeUsd, qty, price: qty ? sizeUsd / qty : null, ts: Date.now(), dry: false });
+    recordListingBuy(base, { where: `dex:${chain}`, usd: sizeUsd, qty, price: qty ? sizeUsd / qty : null, ts: Date.now(), dry: false, tx: res.hash ?? undefined });
     void notifyNow(`✅ 상장따리 DEX 매수 — <b>${base}</b> $${sizeUsd} @ ${CHAINS[chain]?.label ?? chain}\ntx: ${res.hash}`);
     return NextResponse.json({ ok: true, dryRun: false, qty, tx: res.hash, message: `스왑 완료 — 예상 ${qty?.toFixed(4) ?? "?"} ${base}` });
   } catch (e) {

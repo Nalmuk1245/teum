@@ -87,7 +87,8 @@ async function runStep(
   stepId: StepId, opp: Opportunity, sizeUsd: number,
   opts: {
     rollback?: boolean; qty?: number; sinceTs?: number;
-    fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+    fills?: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+    txs?: { step: string; hash: string; url: string | null }[];
     durations?: Record<string, number>;
   },
 ): Promise<StepResult> {
@@ -311,13 +312,19 @@ async function runStep(
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: "USDT" } };
     }
     case "settle": {
-      const logTrade = (realizedNetPct: number | null, realizedPnlUsd: number | null) =>
+      const logTrade = (
+        realizedNetPct: number | null,
+        realizedPnlUsd: number | null,
+        detail?: Partial<Parameters<typeof recordTrade>[0]>,
+      ) =>
         void recordTrade({
           ts: Date.now(), base: opp.base, kind: opp.kind,
           route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
           sizeUsd, detectedNetPct: opp.netPct, realizedNetPct, realizedPnlUsd,
           hedged: !!opp.hasPerp, dryRun: dry, status: "done",
           durationsSec: opts.durations,
+          txs: opts.txs?.length ? opts.txs : undefined,
+          ...detail,
         });
       // Prefer REAL fills threaded from the buy/sell steps; KRW legs convert at
       // the venue's live USDT/KRW. Falls back to the scan-time estimate.
@@ -340,13 +347,29 @@ async function runStep(
           const pnl = sellUsd - buyUsd + perpPnl;
           const pct = (pnl / buyUsd) * 100;
           if (!dry) recordPnl(pnl); // feeds the daily-loss limit — spot+perp together
-          logTrade(pct, pnl);
+          // 상세 기록: 수량·평균 진입/청산가·현물/헷지 분해까지 전부.
+          const bq = f.buyQty ?? qty;
+          const sq = f.sellQty ?? bq;
+          logTrade(pct, pnl, {
+            qty: bq > 0 ? bq : null,
+            entryPriceUsd: bq > 0 ? buyUsd / bq : null,
+            exitPriceUsd: sq > 0 ? sellUsd / sq : null,
+            buyUsd, sellUsd,
+            spotPnlUsd: sellUsd - buyUsd,
+            hedgePnlUsd: perpPnl !== 0 ? perpPnl : null,
+          });
           const perpNote = perpPnl !== 0 ? ` · 헷지 ${perpPnl >= 0 ? "+" : "−"}$${Math.abs(perpPnl).toFixed(2)}` : "";
           return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)})${perpNote} · 실체결 기반` };
         }
       }
       const pnl = (opp.netPct / 100) * sizeUsd;
-      logTrade(null, null); // no real fills → estimate only, don't pollute realized stats
+      // 실체결 없음(모의/수동) → 추정 기록. 스캔가 기준 진입/청산가라도 남긴다.
+      logTrade(null, null, {
+        qty: qty > 0 ? qty : null,
+        entryPriceUsd: buy?.quote === "USDT" ? buy.price : null,
+        exitPriceUsd: sell?.quote === "USDT" ? sell.price : null,
+        note: "추정치 (실체결 없음)",
+      });
       return { ok: true, dryRun: dry, message: `정산 · 순수익 ${opp.netPct >= 0 ? "+" : ""}${opp.netPct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 추정치` };
     }
     default:
@@ -371,7 +394,8 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       stepId?: StepId; opportunity?: Opportunity; sizeUsd?: number;
       rollback?: boolean; qty?: number; sinceTs?: number;
-      fills?: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+      fills?: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+    txs?: { step: string; hash: string; url: string | null }[];
       idempotencyKey?: string;
       durations?: Record<string, number>;
     };
@@ -400,7 +424,7 @@ export async function POST(req: Request) {
       if (hit) return NextResponse.json({ ...hit, message: `${hit.message} · (재전송 방지 — 이전 결과)` });
     }
     const result = await runStep(body.stepId, body.opportunity, body.sizeUsd ?? 0, {
-      rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills, durations: body.durations,
+      rollback: !!body.rollback, qty: body.qty, sinceTs: body.sinceTs, fills: body.fills, durations: body.durations, txs: body.txs,
     });
     if (idem && result.ok) idemSet(idem, result);
     // Live failure on a money step → phone alert (LIVE only; DRY sims fail loudly

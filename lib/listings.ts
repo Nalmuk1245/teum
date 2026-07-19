@@ -31,6 +31,7 @@ export type ListingBuy = {
   price: number | null;
   ts: number;
   dry: boolean;
+  tx?: string; // 온체인 tx (DEX 매수/매도)
 };
 
 export type ListingPlay = {

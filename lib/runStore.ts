@@ -48,7 +48,7 @@ type Engine = {
   confirmed: Set<number>;
   qty?: number;
   startTs: number;
-  fills: { buyQuote?: number; buyCcy?: string; sellQuote?: number; sellCcy?: string; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
+  fills: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
   durations: Record<string, number>; // stepId → seconds actually taken
   opp: Opportunity;
 };
@@ -99,6 +99,10 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
       rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
       fills: stepId === "settle" ? eng.fills : undefined,
       durations: stepId === "settle" ? eng.durations : undefined,
+      // 정산 기록용 — 이 런에서 발생한 온체인/출금 tx 전부.
+      txs: stepId === "settle"
+        ? Object.entries(R.store.runs[id]?.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url }))
+        : undefined,
       // Idempotency: if the network dropped AFTER the server executed, a retry
       // with the same key replays the cached success instead of double-firing.
       idempotencyKey: opts?.rollback ? undefined : `${id}:${stepId}`,
@@ -107,8 +111,8 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
   const j = await res.json();
   if (typeof j.filledQty === "number" && j.filledQty > 0) eng.qty = j.filledQty;
   if (j.fill?.quote && !opts?.rollback) {
-    if (stepId === "buy") { eng.fills.buyQuote = j.fill.quote; eng.fills.buyCcy = j.fill.ccy; }
-    if (stepId === "sell") { eng.fills.sellQuote = j.fill.quote; eng.fills.sellCcy = j.fill.ccy; }
+    if (stepId === "buy") { eng.fills.buyQuote = j.fill.quote; eng.fills.buyCcy = j.fill.ccy; eng.fills.buyQty = j.fill.qty; }
+    if (stepId === "sell") { eng.fills.sellQuote = j.fill.quote; eng.fills.sellCcy = j.fill.ccy; eng.fills.sellQty = j.fill.qty; }
     if (stepId === "hedge") eng.fills.hedgeOpenQuote = j.fill.quote;
     if (stepId === "close") eng.fills.hedgeCloseQuote = j.fill.quote;
   }

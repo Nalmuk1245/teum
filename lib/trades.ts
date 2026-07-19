@@ -24,6 +24,16 @@ export type TradeRecord = {
    *  ETA calibration data. */
   durationsSec?: Record<string, number>;
   note?: string;
+  // ── 상세 (있는 만큼만 기록 — 실체결이면 전부, 추정이면 일부) ──
+  qty?: number | null; // 체결 수량 (코인)
+  entryPriceUsd?: number | null; // 평균 진입가
+  exitPriceUsd?: number | null; // 평균 청산가
+  buyUsd?: number | null; // 매수 체결 금액 (USD 환산)
+  sellUsd?: number | null; // 매도 체결 금액 (USD 환산)
+  spotPnlUsd?: number | null; // 현물 손익
+  hedgePnlUsd?: number | null; // 헷지(선물) 손익
+  /** 출금·전송·입금·스왑 tx — 사후 추적용. */
+  txs?: { step: string; hash: string; url: string | null }[];
 };
 
 export async function recordTrade(t: TradeRecord): Promise<void> {

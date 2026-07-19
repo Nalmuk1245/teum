@@ -69,8 +69,14 @@ export async function POST(req: Request) {
     }
 
     if (ok) {
-      recordListingSell(base, { where, usd: proceeds ?? 0, qty, price: proceeds ? proceeds / qty : null, ts: Date.now(), dry: dryRun });
+      recordListingSell(base, { where, usd: proceeds ?? 0, qty, price: proceeds ? proceeds / qty : null, ts: Date.now(), dry: dryRun, tx: tx ?? undefined });
       const buyUsd = (play?.buys ?? []).reduce((s, b) => s + b.usd, 0);
+      const boughtQty = (play?.buys ?? []).reduce((s, b) => s + (b.qty ?? 0), 0);
+      // tx 이력: 이 플레이의 온체인 매수 + 이번 매도.
+      const txList = [
+        ...(play?.buys ?? []).filter((b) => b.tx).map((b) => ({ step: `매수 ${b.where}`, hash: b.tx!, url: null })),
+        ...(tx ? [{ step: `매도 ${where}`, hash: tx, url: null }] : []),
+      ];
       void recordTrade({
         ts: Date.now(), base, kind: "listing", route: `${play?.buys?.[0]?.where ?? "?"} → ${where}`,
         sizeUsd: buyUsd || qty * (proceeds && qty ? proceeds / qty : 0),
@@ -80,6 +86,13 @@ export async function POST(req: Request) {
         realizedPnlUsd: !dryRun && proceeds != null && buyUsd > 0 && !["upbit", "bithumb"].includes(where)
           ? proceeds - buyUsd : null,
         hedged: false, dryRun, status: "done", note: "상장따리",
+        qty: qty > 0 ? qty : null,
+        entryPriceUsd: boughtQty > 0 && buyUsd > 0 ? buyUsd / boughtQty : null,
+        exitPriceUsd: proceeds != null && qty > 0 ? proceeds / qty : null,
+        buyUsd: buyUsd > 0 ? buyUsd : null,
+        sellUsd: proceeds,
+        spotPnlUsd: proceeds != null && buyUsd > 0 ? proceeds - buyUsd : null,
+        txs: txList.length ? txList : undefined,
       });
       if (!dryRun) void notifyNow(`💰 상장따리 매도 — <b>${base}</b> ${qty} @ ${where}${tx ? `\ntx: ${tx}` : ""}`);
     }

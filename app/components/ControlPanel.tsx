@@ -263,9 +263,94 @@ export function GatesCard() {
   );
 }
 
-export type TradeRec = { ts: number; base: string; route: string; sizeUsd: number; detectedNetPct: number; realizedNetPct: number | null; realizedPnlUsd: number | null; dryRun: boolean; kind: string };
+export type TradeRec = {
+  ts: number; base: string; route: string; sizeUsd: number; detectedNetPct: number;
+  realizedNetPct: number | null; realizedPnlUsd: number | null; dryRun: boolean; kind: string;
+  qty?: number | null; entryPriceUsd?: number | null; exitPriceUsd?: number | null;
+  buyUsd?: number | null; sellUsd?: number | null; spotPnlUsd?: number | null; hedgePnlUsd?: number | null;
+  durationsSec?: Record<string, number>; txs?: { step: string; hash: string; url: string | null }[]; note?: string;
+};
 
 export type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
+
+// 거래 목록 — 행 클릭 시 상세(수량·진입/청산가·손익 분해·단계 소요·tx) 펼침.
+function TradeList({ trades }: { trades: TradeRec[] }) {
+  const [open, setOpen] = useState<number | null>(null);
+  const px = (n: number | null | undefined) =>
+    n == null ? "—" : n >= 100 ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 1 })}` : n >= 0.01 ? `$${n.toFixed(4)}` : `$${n.toPrecision(3)}`;
+  const money = (n: number | null | undefined) =>
+    n == null ? "—" : `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+  const dLine = (label: string, value: React.ReactNode, tone?: string) => (
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2.5px 0" }}>
+      <span style={{ color: "var(--text-mute)" }}>{label}</span>
+      <span className="tnum" style={{ color: tone ?? "var(--text-dim)", fontWeight: 600 }}>{value}</span>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {trades.slice(0, 10).map((t, i) => (
+        <div key={i} style={{ borderTop: "1px solid var(--border)" }}>
+          <div
+            onClick={() => setOpen(open === i ? null : i)}
+            style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", padding: "5px 0", fontSize: 11.5, cursor: "pointer" }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <b>{t.base}</b> <span style={{ color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>
+            </span>
+            <span className="tnum" style={{ color: "var(--text-mute)" }}>{usd(t.sizeUsd)}</span>
+            <span className="tnum" style={{ minWidth: 60, textAlign: "right", color: (t.realizedNetPct ?? t.detectedNetPct) >= 0 ? "var(--pos)" : "var(--neg)" }}>
+              {t.realizedNetPct != null ? `${t.realizedNetPct >= 0 ? "+" : ""}${t.realizedNetPct.toFixed(2)}%` : `~${t.detectedNetPct.toFixed(2)}%`}
+            </span>
+          </div>
+          {open === i && (
+            <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
+              {dLine("시각", new Date(t.ts).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }))}
+              {t.qty != null && dLine("수량", `${t.qty.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${t.base}`)}
+              {t.entryPriceUsd != null && dLine("평균 진입가", px(t.entryPriceUsd))}
+              {t.exitPriceUsd != null && dLine(
+                "평균 청산가",
+                <>{px(t.exitPriceUsd)}{t.entryPriceUsd ? <span style={{ color: (t.exitPriceUsd - t.entryPriceUsd) >= 0 ? "var(--pos)" : "var(--neg)", marginLeft: 6 }}>({(((t.exitPriceUsd - t.entryPriceUsd) / t.entryPriceUsd) * 100).toFixed(2)}%)</span> : null}</>,
+              )}
+              {t.buyUsd != null && dLine("매수 체결", `$${t.buyUsd.toFixed(2)}`)}
+              {t.sellUsd != null && dLine("매도 체결", `$${t.sellUsd.toFixed(2)}`)}
+              {t.spotPnlUsd != null && dLine("현물 손익", money(t.spotPnlUsd), t.spotPnlUsd >= 0 ? "var(--pos)" : "var(--neg)")}
+              {t.hedgePnlUsd != null && dLine("헷지 손익", money(t.hedgePnlUsd), t.hedgePnlUsd >= 0 ? "var(--pos)" : "var(--neg)")}
+              {t.realizedPnlUsd != null && dLine("합계", money(t.realizedPnlUsd), t.realizedPnlUsd >= 0 ? "var(--pos)" : "var(--neg)")}
+              {t.durationsSec && Object.keys(t.durationsSec).length > 0 && dLine(
+                "단계 소요",
+                Object.entries(t.durationsSec).map(([k, v]) => `${k} ${v}s`).join(" · "),
+              )}
+              {t.txs && t.txs.length > 0 && (
+                <div style={{ marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border)" }}>
+                  {t.txs.map((x, j) => (
+                    <div key={j} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10.5, padding: "2px 0" }}>
+                      <span style={{ color: "var(--text-mute)", flex: "0 0 auto" }}>{x.step}</span>
+                      {x.url ? (
+                        <a href={x.url} target="_blank" rel="noreferrer" className="tnum" style={{ color: "var(--brand-2)", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {x.hash.slice(0, 14)}…{x.hash.slice(-8)} ↗
+                        </a>
+                      ) : (
+                        <span
+                          className="tnum"
+                          title="클릭 = 복사"
+                          onClick={() => void navigator.clipboard?.writeText(x.hash)}
+                          style={{ color: "var(--text-dim)", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        >
+                          {x.hash.slice(0, 14)}…{x.hash.length > 22 ? x.hash.slice(-8) : ""}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {t.note && <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-mute)" }}>{t.note}</div>}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function PnlCard() {
   const [data, setData] = useState<{ trades: TradeRec[]; stats: TradeStats } | null>(null);
@@ -291,19 +376,7 @@ export function PnlCard() {
             <Metric label="히트율" value={`${st.hitRatePct}%`} sub={`${st.wins}/${st.count - st.dryCount || st.count}`} />
             <Metric label="탐지 vs 실현" value={`−${st.avgSlipPct.toFixed(2)}%`} sub="평균 누수" tone={st.avgSlipPct > 0.3 ? "var(--amber)" : "var(--text)"} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {data.trades.slice(0, 8).map((t, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", padding: "4px 0", borderTop: "1px solid var(--border)", fontSize: 11.5 }}>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  <b>{t.base}</b> <span style={{ color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>
-                </span>
-                <span className="tnum" style={{ color: "var(--text-mute)" }}>{usd(t.sizeUsd)}</span>
-                <span className="tnum" style={{ minWidth: 60, textAlign: "right", color: (t.realizedNetPct ?? t.detectedNetPct) >= 0 ? "var(--pos)" : "var(--neg)" }}>
-                  {t.realizedNetPct != null ? `${t.realizedNetPct >= 0 ? "+" : ""}${t.realizedNetPct.toFixed(2)}%` : `~${t.detectedNetPct.toFixed(2)}%`}
-                </span>
-              </div>
-            ))}
-          </div>
+          <TradeList trades={data.trades} />
         </>
       )}
     </div>
