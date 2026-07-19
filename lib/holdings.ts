@@ -25,6 +25,15 @@ export type VenueHolding = {
   coldUsd: number | null;
   addresses: number; // how many were queried (coverage indicator)
   hotDeltaPerMin: number | null; // token units/min since last snapshot
+  breakdown?: WalletBreak[]; // 주소별 잔고 드릴다운 (0 초과만, USD순)
+};
+
+export type WalletBreak = {
+  address: string;
+  tag: string | null; // 라벨 (예: "Binance 14"), 없으면 null
+  type: "hot" | "cold";
+  amount: number;
+  usd: number | null;
 };
 
 export type HoldingsResult = {
@@ -70,13 +79,15 @@ export async function fetchHoldings(symbolRaw: string): Promise<HoldingsResult |
 
   const book = loadWalletBook();
   // Flatten to one call list; remember (venue, type) per index.
-  const flat: { venue: string; type: "hot" | "cold"; address: string }[] = [];
+  const flat: { venue: string; type: "hot" | "cold"; address: string; tag: string | null }[] = [];
   for (const [venue, list] of Object.entries(book)) {
-    for (const e of list) flat.push({ venue, type: e.type, address: e.address });
+    for (const e of list) flat.push({ venue, type: e.type, address: e.address, tag: e.tag ?? null });
   }
   if (!flat.length) return { error: "주소록 비어있음 — 운영 탭에서 라벨 가져오기 먼저" };
 
   const sums = new Map<string, { hot: number; cold: number; n: number }>();
+  // 주소별 잔고(여러 체인 합산) — 드릴다운용. key = 주소.
+  const byAddr = new Map<string, { venue: string; type: "hot" | "cold"; tag: string | null; amount: number }>();
   const bump = (venue: string, type: "hot" | "cold", amt: number) => {
     const s = sums.get(venue) ?? { hot: 0, cold: 0, n: 0 };
     s[type] += amt;
@@ -110,7 +121,12 @@ export async function fetchHoldings(symbolRaw: string): Promise<HoldingsResult |
               if (!r.success || r.returnData === "0x") return;
               try {
                 const raw = ERC20.decodeFunctionResult("balanceOf", r.returnData)[0] as bigint;
-                bump(flat[base + i].venue, flat[base + i].type, Number(raw) / 10 ** c.decimals);
+                const f = flat[base + i];
+                const amt = Number(raw) / 10 ** c.decimals;
+                bump(f.venue, f.type, amt);
+                const a = byAddr.get(f.address) ?? { venue: f.venue, type: f.type, tag: f.tag, amount: 0 };
+                a.amount += amt; // 같은 주소의 여러 체인 잔고 합산
+                byAddr.set(f.address, a);
               } catch { /* bad return */ }
             });
           });
@@ -135,11 +151,16 @@ export async function fetchHoldings(symbolRaw: string): Promise<HoldingsResult |
       const delta = prev && dtMin > 0.3 && dtMin < 30 && prev.hotByVenue[venue] != null
         ? (s.hot - prev.hotByVenue[venue]) / dtMin
         : null;
+      const breakdown: WalletBreak[] = [...byAddr.entries()]
+        .filter(([, a]) => a.venue === venue && a.amount > 0)
+        .map(([address, a]) => ({ address, tag: a.tag, type: a.type, amount: a.amount, usd: px != null ? a.amount * px : null }))
+        .sort((x, y) => (y.usd ?? y.amount) - (x.usd ?? x.amount))
+        .slice(0, 15);
       return {
         venue, hot: s.hot, cold: s.cold,
         hotUsd: px != null ? s.hot * px : null,
         coldUsd: px != null ? s.cold * px : null,
-        addresses: s.n, hotDeltaPerMin: delta,
+        addresses: s.n, hotDeltaPerMin: delta, breakdown,
       };
     })
     .sort((a, b) => (b.hot + b.cold) - (a.hot + a.cold));

@@ -31,8 +31,9 @@ type Detail = {
   token: { name: string; priceUsd: number | null; volumeUsd: number | null; marketCapUsd: number | null; contractsList: { chain: string; address: string; decimals: number }[] } | null;
   cex: CexRow[]; dex: DexRow[]; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
 };
+type WalletBreak = { address: string; tag: string | null; type: "hot" | "cold"; amount: number; usd: number | null };
 type Holdings = {
-  venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null }[];
+  venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null; breakdown?: WalletBreak[] }[];
   priceUsd: number | null; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string;
 };
 type AutoCfg = { armed: boolean; sizeUsd: number };
@@ -525,6 +526,7 @@ function DetailPanel({ base }: { base: string }) {
   const [txStatus, setTxStatus] = useState<TxStatusData | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [refOpen, setRefOpen] = useState(false); // ⑤ 참고(보유량·컨트랙트) 접기
+  const [hotOpen, setHotOpen] = useState<string | null>(null); // 핫월렛 드릴다운 (거래소별 주소 잔고)
 
   useEffect(() => {
     let stop = false;
@@ -759,9 +761,17 @@ function DetailPanel({ base }: { base: string }) {
             {rows.map((v) => {
               const barPct = v.hotUsd != null ? Math.max(3, (v.hotUsd / maxHotUsd) * 100) : 0;
               const dumping = (v.hotDeltaPerMin ?? 0) > 0;
+              const canDrill = (v.breakdown?.length ?? 0) > 0;
+              const opened = hotOpen === v.venue;
               return (
                 <Fragment key={v.venue}>
-                  <span style={{ fontWeight: 700 }}>{v.venue}</span>
+                  <button type="button" disabled={!canDrill}
+                    onClick={() => setHotOpen(opened ? null : v.venue)}
+                    style={{ background: "none", border: "none", padding: 0, textAlign: "left", cursor: canDrill ? "pointer" : "default",
+                      fontWeight: 700, color: "var(--text)", display: "flex", alignItems: "center", gap: 4 }}>
+                    {canDrill && <span style={{ fontSize: 8, color: "var(--text-mute)" }}>{opened ? "▼" : "▶"}</span>}
+                    {v.venue}
+                  </button>
                   <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
                     <span className="tnum" style={{ fontWeight: 700 }}>{v.hotUsd != null ? fmtUsd(v.hotUsd) : fmtQty(v.hot)}</span>
                     <span style={{ width: "100%", height: 3, background: "var(--card-3)", borderRadius: 2, overflow: "hidden" }}>
@@ -775,6 +785,19 @@ function DetailPanel({ base }: { base: string }) {
                       : `${v.hotDeltaPerMin > 0 ? "▲ +" : "▼ −"}${holdings.priceUsd != null ? "$" + fmtQty(Math.abs(v.hotDeltaPerMin * holdings.priceUsd)) : fmtQty(Math.abs(v.hotDeltaPerMin))}`}
                     {dumping ? "/분" : ""}
                   </span>
+                  {opened && v.breakdown && (
+                    <div style={{ gridColumn: "1 / -1", margin: "1px 0 6px", padding: "6px 10px 6px 20px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                      <div style={{ ...CAP, marginBottom: 4 }}>{v.venue} 지갑별 잔고 — 상위 {v.breakdown.length} (라벨된 주소만)</div>
+                      {v.breakdown.map((w) => (
+                        <div key={w.address} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: "2px 10px", alignItems: "center", padding: "1px 0", fontSize: 11 }}>
+                          <span style={{ fontSize: 8.5, fontWeight: 700, padding: "0 4px", borderRadius: 6, color: w.type === "hot" ? "var(--amber)" : "var(--text-mute)", border: `1px solid ${w.type === "hot" ? "var(--amber)" : "var(--border-strong)"}` }}>{w.type === "hot" ? "핫" : "콜드"}</span>
+                          <span style={{ color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.tag ?? "라벨 없음"}</span>
+                          <a href={`https://etherscan.io/address/${w.address}`} target="_blank" rel="noreferrer" className="tnum" style={{ color: "var(--text-mute)", fontSize: 10, textDecoration: "none" }}>{w.address.slice(0, 8)}…{w.address.slice(-4)} ↗</a>
+                          <span className="tnum" style={{ textAlign: "right", fontWeight: 600 }}>{w.usd != null ? fmtUsd(w.usd) : fmtQty(w.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </Fragment>
               );
             })}
