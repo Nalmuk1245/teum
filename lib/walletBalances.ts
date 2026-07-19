@@ -91,13 +91,27 @@ export async function fetchWalletBalance(px: Map<string, number>): Promise<Venue
   const sol = process.env.WALLET_ADDR_SOL;
   if (!evm && !xrp && !tron && !sol) return null; // no address → nothing to read
 
+  // OKX Web3 잔고 API가 있으면 EVM 쪽은 전 토큰 자동 발견(가격 포함) — DEX로 산
+  // 잡코인까지 잡힌다. 없으면 기존 네이티브 RPC 폴백.
+  let evmCoins: CoinBal[] | null = null;
+  if (evm) {
+    try {
+      const { okxWalletCoins } = await import("./okxWallet");
+      const okx = await okxWalletCoins(evm);
+      if (okx && okx.length) {
+        evmCoins = okx.map((c) => ({ asset: c.symbol, amount: c.amount, usdValue: c.usdValue }));
+      }
+    } catch { /* fallback below */ }
+  }
+
   const jobs: Promise<CoinBal | null>[] = [];
-  if (evm) for (const c of EVM_READ) jobs.push(evmNative(c, evm, px));
+  if (evm && !evmCoins) for (const c of EVM_READ) jobs.push(evmNative(c, evm, px));
   if (xrp) jobs.push(xrpNative(xrp, px));
   if (tron) jobs.push(tronNative(tron, px));
   if (sol) jobs.push(solNative(sol, px));
 
-  const coins = (await Promise.all(jobs)).filter((c): c is CoinBal => !!c && c.usdValue >= 0.5).sort((a, b) => b.usdValue - a.usdValue);
+  const rest = (await Promise.all(jobs)).filter((c): c is CoinBal => !!c && c.usdValue >= 0.5);
+  const coins = [...(evmCoins ?? []), ...rest].sort((a, b) => b.usdValue - a.usdValue);
   const totalUsd = coins.reduce((s, c) => s + c.usdValue, 0);
   return { venue: "wallet", connected: true, cashLabel: "", cashRaw: 0, cashUsd: 0, coins, totalUsd };
 }

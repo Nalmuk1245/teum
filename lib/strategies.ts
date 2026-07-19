@@ -13,7 +13,7 @@ import {
 } from "./config";
 import { walletStatus } from "./transfers";
 import { coinNetwork, withdrawFeeCoin } from "./networks";
-import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS } from "./dex";
+import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS, allTokens, type DexToken } from "./dex";
 
 export interface Strategy {
   kind: StrategyKind;
@@ -397,7 +397,34 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
     if (!gasWei) continue;
     const quoteTok = { address: uni.quote.address, decimals: uni.quote.decimals };
 
-    for (const [base, token] of Object.entries(uni.bases)) {
+    // 유니버스 = 하드코딩 + (OKX 토큰리스트 ∩ 바낸 상장, 볼륨 상위) 로테이션.
+    // 전 종목을 매 스윕 견적하면 레이트 리밋이 터지므로 동적 후보는 회전창으로
+    // 사이클당 6개만 — 하드코딩 코어는 항상 포함.
+    const universe: Record<string, DexToken> = { ...uni.bases };
+    if (dexConfigured()) {
+      try {
+        const dyn = await allTokens(uni.chain);
+        const cand: [string, DexToken][] = [];
+        for (const [sym, tok] of dyn) {
+          if (!tok || universe[sym]) continue;
+          if (sym === uni.quote.symbol || sym === "USDT" || sym === "USDC" || sym === "DAI") continue;
+          const t = bnb.get(sym);
+          if (!t?.bid || !t?.ask || t.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD * 5) continue;
+          cand.push([sym, tok]);
+        }
+        cand.sort((a, b) => (bnb.get(b[0])?.quoteVolumeUsd ?? 0) - (bnb.get(a[0])?.quoteVolumeUsd ?? 0));
+        const gRot = globalThis as unknown as { __cexdexRot?: Record<string, number> };
+        gRot.__cexdexRot ??= {};
+        const ptr = gRot.__cexdexRot[uni.chain] ?? 0;
+        for (let k = 0; k < Math.min(6, cand.length); k++) {
+          const [sym, tok] = cand[(ptr + k) % cand.length];
+          universe[sym] = tok;
+        }
+        gRot.__cexdexRot[uni.chain] = cand.length ? (ptr + 6) % cand.length : 0;
+      } catch { /* 리스트 실패 → 코어만 */ }
+    }
+
+    for (const [base, token] of Object.entries(universe)) {
       const cex = bnb.get(base);
       if (!cex?.bid || !cex?.ask) continue; // CEX doesn't list it (or no book) — skip
       if (cex.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;

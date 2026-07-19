@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { CONFIG } from "@/lib/config";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry } from "@/lib/risk";
-import { CEXDEX_CHAINS, approveDex, swapDex, quoteDex, dexConfigured } from "@/lib/dex";
-import { sendRawEvmTx, walletAddress } from "@/lib/wallet";
+import { QUOTE_STABLES, approveDex, swapDex, quoteDex, dexConfigured } from "@/lib/dex";
+import { sendRawEvmTx, sendSolRawTx, walletAddress } from "@/lib/wallet";
 import { recordListingBuy } from "@/lib/listings";
 import { resolveToken } from "@/lib/tokenResolve";
 import { notifyNow } from "@/lib/telegram";
@@ -34,18 +34,18 @@ export async function POST(req: Request) {
       }
     }
 
-    const uni = CEXDEX_CHAINS.find((u) => u.chain === chain);
-    if (!uni) return NextResponse.json({ ok: false, message: `미지원 체인: ${chain}` }, { status: 400 });
+    const stable = QUOTE_STABLES[chain];
+    if (!stable) return NextResponse.json({ ok: false, message: `미지원 체인: ${chain}` }, { status: 400 });
 
     // Server-side contract resolution — never trust a client-supplied address.
     const t = await resolveToken(base);
-    const c = t?.contracts[chain as "ethereum" | "bsc" | "base"];
+    const c = t?.contracts[chain as "ethereum" | "bsc" | "base" | "solana"];
     if (!c) return NextResponse.json({ ok: false, message: `${base}: ${chain} 컨트랙트 해석 실패` }, { status: 400 });
     const to = { address: c.address, decimals: c.decimals };
 
     if (CONFIG.DRY_RUN) {
       // Simulate with a real quote when keys allow — honest expected fill.
-      const q = dexConfigured() ? await quoteDex(chain, uni.quote, to, sizeUsd) : null;
+      const q = dexConfigured() ? await quoteDex(chain, stable, to, sizeUsd) : null;
       // No OKX keys in rehearsal → estimate from CoinGecko spot so the position
       // (and sell path) still threads through.
       const qty = q?.toAmount ?? (t?.priceUsd ? sizeUsd / t.priceUsd : null);
@@ -59,17 +59,32 @@ export async function POST(req: Request) {
     }
 
     if (!dexConfigured()) return NextResponse.json({ ok: false, message: "OKX_WEB3 키 없음 — DEX 실행 불가" });
+
+    // 솔라나: approve 불필요, OKX가 완성 tx를 주면 서명·전송만.
+    if (chain === "solana") {
+      const solAddr = process.env.WALLET_ADDR_SOL;
+      if (!process.env.WALLET_SOL_KEY || !solAddr) return NextResponse.json({ ok: false, message: "SOL 지갑 키/주소 없음 (WALLET_SOL_KEY·WALLET_ADDR_SOL)" });
+      const swapS = await swapDex(chain, stable, to, sizeUsd, CONFIG.MAX_SLIPPAGE_PCT / 100, solAddr);
+      if (!swapS) return NextResponse.json({ ok: false, message: "SOL swap 캘리데이터 조회 실패" });
+      const resS = await sendSolRawTx(swapS.data);
+      if (!resS.ok) return NextResponse.json({ ok: false, message: `SOL swap 실패 — ${resS.message}` });
+      const qtyS = Number(swapS.toAmount) / 10 ** to.decimals || null;
+      recordListingBuy(base, { where: `dex:${chain}`, usd: sizeUsd, qty: qtyS, price: qtyS ? sizeUsd / qtyS : null, ts: Date.now(), dry: false, tx: resS.hash ?? undefined });
+      void notifyNow(`✅ 상장따리 DEX 매수 — <b>${base}</b> $${sizeUsd} @ Solana\ntx: ${resS.hash}`);
+      return NextResponse.json({ ok: true, dryRun: false, qty: qtyS, tx: resS.hash, message: `스왑 완료 — 예상 ${qtyS?.toFixed(4) ?? "?"} ${base}` });
+    }
+
     const walletAddr = walletAddress();
     if (!walletAddr) return NextResponse.json({ ok: false, message: "개인지갑 키 없음 — 스왑 차단" });
 
     // 1) one-time approve for the stable we spend (idempotent; cheap if already set)
-    const ap = await approveDex(chain, uni.quote.address, MAX_UINT);
+    const ap = await approveDex(chain, stable.address, MAX_UINT);
     if (!ap) return NextResponse.json({ ok: false, message: "approve 캘리데이터 조회 실패" });
     const apRes = await sendRawEvmTx({ chain, to: ap.to, data: ap.data }, [ap.to]);
     if (!apRes.ok) return NextResponse.json({ ok: false, message: `approve 실패 — ${apRes.message}` });
 
     // 2) swap stable → token
-    const swap = await swapDex(chain, uni.quote, to, sizeUsd, CONFIG.MAX_SLIPPAGE_PCT / 100, walletAddr);
+    const swap = await swapDex(chain, stable, to, sizeUsd, CONFIG.MAX_SLIPPAGE_PCT / 100, walletAddr);
     if (!swap) return NextResponse.json({ ok: false, message: "swap 캘리데이터 조회 실패" });
     const res = await sendRawEvmTx({ chain, to: swap.to, data: swap.data, value: swap.value, gas: swap.gas }, [swap.to]);
     if (!res.ok) return NextResponse.json({ ok: false, message: `swap 실패 — ${res.message}` });

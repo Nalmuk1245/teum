@@ -23,7 +23,7 @@ export function dexConfigured(): boolean {
   return !!(k.key && k.secret && k.pass);
 }
 
-async function okxGet(path: string, params: Record<string, string>): Promise<unknown[]> {
+export async function okxGet(path: string, params: Record<string, string>): Promise<unknown[]> {
   const { key, secret, pass } = keys();
   if (!key || !secret || !pass) return [];
   const query = new URLSearchParams(params).toString();
@@ -61,6 +61,38 @@ export type DexChainUniverse = {
   quote: { symbol: string; address: string; decimals: number }; // stable we quote against
   bases: Record<string, DexToken>;
 };
+
+// 체인별 견적 스테이블 — 상장 상세·DEX 매수·브릿지가 공용으로 쓴다.
+// (CEXDEX_CHAINS는 cex-dex 전략 전용 EVM 유니버스 — 솔라나는 여기만)
+export const QUOTE_STABLES: Record<string, { symbol: string; address: string; decimals: number }> = {
+  ethereum: { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+  base: { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
+  bsc: { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
+  solana: { symbol: "USDC", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6 },
+};
+
+// OKX 토큰리스트 (체인당 1시간 캐시) — cex-dex 유니버스 자동 확장의 원천.
+// 같은 심볼이 여러 컨트랙트면 모호 → null 마킹(스캠 충돌 방지, 스킵).
+const gTok = globalThis as unknown as { __okxTokens?: Map<string, { ts: number; map: Map<string, DexToken | null> }> };
+gTok.__okxTokens ??= new Map();
+export async function allTokens(chainKey: string): Promise<Map<string, DexToken | null>> {
+  const chainId = OKX_CHAIN_ID[chainKey];
+  if (!chainId) return new Map();
+  const hit = gTok.__okxTokens!.get(chainKey);
+  if (hit && Date.now() - hit.ts < 60 * 60_000) return hit.map;
+  const map = new Map<string, DexToken | null>();
+  try {
+    const data = await okxGet("/api/v6/dex/aggregator/all-tokens", { chainIndex: chainId });
+    for (const t of data as { tokenSymbol?: string; tokenContractAddress?: string; decimals?: string }[]) {
+      const sym = t.tokenSymbol?.toUpperCase();
+      if (!sym || !t.tokenContractAddress) continue;
+      if (map.has(sym)) { map.set(sym, null); continue; } // 중복 심볼 = 모호
+      map.set(sym, { address: t.tokenContractAddress, decimals: Number(t.decimals ?? 18) });
+    }
+    gTok.__okxTokens!.set(chainKey, { ts: Date.now(), map });
+  } catch { /* 리스트 실패 → 빈 맵 (하드코딩 유니버스만) */ }
+  return map;
+}
 
 export const CEXDEX_CHAINS: DexChainUniverse[] = [
   {

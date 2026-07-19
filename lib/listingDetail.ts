@@ -4,7 +4,7 @@
 // and my current position. The UI's detail panel is a straight render of this.
 
 import { resolveToken, type ResolvedToken } from "./tokenResolve";
-import { CEXDEX_CHAINS, quoteDex, dexConfigured } from "./dex";
+import { QUOTE_STABLES, quoteDex, dexConfigured } from "./dex";
 import { fetchPortfolio } from "./balances";
 import { swr } from "./ttlCache";
 import { recentListings, type ListingPlay } from "./listings";
@@ -113,11 +113,11 @@ export async function buildListingDetail(baseRaw: string): Promise<ListingDetail
   if (token) {
     await Promise.all(
       (Object.entries(token.contracts) as [string, { address: string; decimals: number }][]).map(async ([chain, c]) => {
-        const uni = CEXDEX_CHAINS.find((u) => u.chain === chain);
+        const stable = QUOTE_STABLES[chain];
         const row: DexRow = { chain, contract: c.address, decimals: c.decimals, verified: false, execPriceUsd: null, premiumVsCgPct: null };
-        if (!uni) { row.note = "미지원 체인"; dex.push(row); return; }
+        if (!stable) { row.note = "미지원 체인"; dex.push(row); return; }
         if (!dexReady) { row.note = "OKX_WEB3 키 필요"; dex.push(row); return; }
-        const q = await quoteDex(chain, uni.quote, { address: c.address, decimals: c.decimals }, 500);
+        const q = await quoteDex(chain, stable, { address: c.address, decimals: c.decimals }, 500);
         if (q && q.toAmount > 0) {
           row.verified = true;
           row.execPriceUsd = 500 / q.toAmount;
@@ -125,6 +125,7 @@ export async function buildListingDetail(baseRaw: string): Promise<ListingDetail
         } else {
           row.note = "OKX 라우트 없음 (유동성/컨트랙트 확인)";
         }
+        if (chain === "solana" && row.verified && !process.env.WALLET_SOL_KEY) row.note = "라이브 매수엔 SOL 지갑 키 필요";
         dex.push(row);
       }),
     );

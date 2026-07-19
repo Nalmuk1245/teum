@@ -11,14 +11,15 @@ export type ResolvedToken = {
   volumeUsd: number | null; // 24h, all markets
   marketCapUsd: number | null;
   priceChange24hPct: number | null;
-  /** chainKey → contract (only chains we can query: ethereum / bsc / base) */
-  contracts: Partial<Record<"ethereum" | "bsc" | "base", { address: string; decimals: number }>>;
+  /** chainKey → contract (ethereum / bsc / base / solana) */
+  contracts: Partial<Record<"ethereum" | "bsc" | "base" | "solana", { address: string; decimals: number }>>;
 };
 
-const PLATFORM_TO_CHAIN: Record<string, "ethereum" | "bsc" | "base"> = {
+const PLATFORM_TO_CHAIN: Record<string, "ethereum" | "bsc" | "base" | "solana"> = {
   ethereum: "ethereum",
   "binance-smart-chain": "bsc",
   base: "base",
+  solana: "solana",
 };
 
 type CacheT = Map<string, { ts: number; v: ResolvedToken | null }>;

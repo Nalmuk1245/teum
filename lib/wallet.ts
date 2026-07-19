@@ -156,6 +156,27 @@ async function sendSolana(req: SendReq, key: string): Promise<SendResult> {
 export type RawTx = { chain: string; to: string; data: string; value?: string; gas?: string };
 export type RawTxResult = { ok: boolean; dryRun: boolean; hash: string | null; message: string };
 
+/** OKX v6 솔라나 스왑 tx(base58 직렬화) 서명 + 전송. DRY는 시뮬. */
+export async function sendSolRawTx(base58Data: string): Promise<RawTxResult> {
+  if (CONFIG.DRY_RUN) return { ok: true, dryRun: true, message: "SOL 스왑 (모의)", hash: "sim:sol:swap" };
+  const keyStr = process.env.WALLET_SOL_KEY;
+  if (!keyStr) return { ok: false, dryRun: false, message: "WALLET_SOL_KEY 없음", hash: null };
+  try {
+    const web3 = await import("@solana/web3.js");
+    const bs58 = (await import("bs58")).default;
+    const secret = bs58.decode(keyStr.trim());
+    const kp = web3.Keypair.fromSecretKey(secret);
+    const conn = new web3.Connection(CHAINS.solana.rpc, "confirmed");
+    const raw = bs58.decode(base58Data);
+    const tx = web3.VersionedTransaction.deserialize(raw);
+    tx.sign([kp]);
+    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+    return { ok: true, dryRun: false, message: "SOL 스왑 전송됨", hash: sig };
+  } catch (e) {
+    return { ok: false, dryRun: false, message: e instanceof Error ? e.message : "SOL 전송 실패", hash: null };
+  }
+}
+
 export async function sendRawEvmTx(tx: RawTx, allowList: string[], maxValueWei = 0n): Promise<RawTxResult> {
   const chain = CHAINS[tx.chain];
   if (!chain || chain.family !== "evm") return { ok: false, dryRun: false, hash: null, message: `EVM 체인 아님: ${tx.chain}` };

@@ -170,6 +170,105 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
       {allVenues.map((v) => (
         <VenueCard key={v.venue} v={v} isMobile={isMobile} totalUsd={pf.totalUsd} />
       ))}
+
+      {/* ── 지갑 도구: 크로스체인 브릿지 + 온체인 히스토리 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+        <BridgeCard />
+        <WalletHistoryCard />
+      </div>
+    </div>
+  );
+}
+
+// ── 크로스체인 브릿지 (OKX v6 cross-chain) — 지갑 스테이블 리밸런싱 ───────────
+function BridgeCard() {
+  const CHAINS_OPT = ["ethereum", "base", "bsc"];
+  const [from, setFrom] = useState("ethereum");
+  const [to, setTo] = useState("base");
+  const [amt, setAmt] = useState("500");
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState<{ bridge?: string; outUsd?: number; feeUsd?: number; etaMin?: number; error?: string } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const sel: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "6px 8px", fontSize: 12, outline: "none" };
+  const getQuote = async () => {
+    setBusy(true); setQ(null); setMsg(null);
+    try { setQ(await (await fetch(`/api/bridge?from=${from}&to=${to}&amountUsd=${Number(amt) || 0}`, { cache: "no-store" })).json()); }
+    catch { setQ({ error: "요청 실패" }); }
+    finally { setBusy(false); }
+  };
+  const exec = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const j = await (await fetch("/api/bridge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from, to, amountUsd: Number(amt) || 0 }) })).json();
+      setMsg(`${j.ok ? "✓" : "✗"} ${j.message ?? ""}${j.tx ? ` · tx ${String(j.tx).slice(0, 14)}…` : ""}`);
+    } catch { setMsg("✗ 요청 실패"); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>크로스체인 브릿지</div>
+      <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginBottom: 9 }}>지갑 스테이블(USDC/USDT)을 체인 간 이동 — OKX 라우팅</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+        <select value={from} onChange={(e) => setFrom(e.target.value)} style={sel}>{CHAINS_OPT.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+        <span style={{ color: "var(--text-mute)", fontSize: 12 }}>→</span>
+        <select value={to} onChange={(e) => setTo(e.target.value)} style={sel}>{CHAINS_OPT.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+        <span style={{ color: "var(--text-mute)", fontSize: 11 }}>$</span>
+        <input value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^0-9]/g, ""))} style={{ ...sel, width: 70, textAlign: "right" }} />
+        <button type="button" disabled={busy || from === to} onClick={() => void getQuote()}
+          style={{ border: "none", borderRadius: 9, padding: "6px 13px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" }}>
+          {busy ? "…" : "견적"}
+        </button>
+      </div>
+      {q && (
+        q.error ? <div style={{ marginTop: 8, fontSize: 11, color: "var(--amber)" }}>{q.error}</div> : (
+          <div className="tnum" style={{ marginTop: 9, fontSize: 12, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+            <span>{q.bridge}</span>
+            <span>수취 <b>${q.outUsd?.toFixed(2)}</b></span>
+            <span style={{ color: "var(--text-dim)" }}>수수료 ${q.feeUsd?.toFixed(2)}</span>
+            <span style={{ color: "var(--text-dim)" }}>ETA {q.etaMin}분</span>
+            <button type="button" disabled={busy} onClick={() => void exec()}
+              style={{ marginLeft: "auto", border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 12px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" }}>
+              실행
+            </button>
+          </div>
+        )
+      )}
+      {msg && <div style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
+    </div>
+  );
+}
+
+// ── 개인지갑 온체인 히스토리 (OKX 지갑 API) ──────────────────────────────────
+function WalletHistoryCard() {
+  const [data, setData] = useState<{ txs?: { chain: string; hash: string; timeMs: number; symbol: string; amount: string; direction: string }[]; error?: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/wallet-history", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => setData({ error: "요청 실패" }));
+  }, []);
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>지갑 온체인 히스토리</div>
+      <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginBottom: 9 }}>개인지갑 최근 전송 (ETH·BSC·Base)</div>
+      {!data ? <div style={{ fontSize: 11, color: "var(--text-mute)" }}>조회 중…</div>
+        : data.error ? <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{data.error}</div>
+        : !data.txs?.length ? <div style={{ fontSize: 11, color: "var(--text-mute)" }}>기록 없음</div>
+        : (
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            {data.txs.slice(0, 12).map((t) => (
+              <div key={t.hash} className="tnum" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderTop: "1px solid var(--border)", fontSize: 11 }}>
+                <span style={{ fontWeight: 700, color: t.direction === "in" ? "var(--pos)" : t.direction === "out" ? "var(--neg)" : "var(--text-dim)" }}>
+                  {t.direction === "in" ? "수신" : t.direction === "out" ? "송신" : "—"}
+                </span>
+                <span>{t.amount ? `${Number(t.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })} ` : ""}{t.symbol}</span>
+                <span style={{ color: "var(--text-mute)" }}>{t.chain}</span>
+                <span style={{ flex: 1 }} />
+                <span style={{ color: "var(--text-mute)" }}>{new Date(t.timeMs).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                <span title="클릭 = 해시 복사" onClick={() => void navigator.clipboard?.writeText(t.hash)} style={{ color: "var(--text-dim)", cursor: "pointer" }}>
+                  {t.hash.slice(0, 8)}…
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
     </div>
   );
 }
