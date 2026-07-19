@@ -61,16 +61,6 @@ function Countdown({ opensAt }: { opensAt: number }) {
   );
 }
 
-function Chip({ ok, label, text }: { ok: boolean; label: string; text: string }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: "var(--text-mute)", border: "1px solid var(--border)", borderRadius: 2, padding: "2px 7px" }}>
-      <span style={{ width: 5, height: 5, borderRadius: 2, background: ok ? "var(--pos)" : "var(--amber)" }} />
-      <span style={{ fontWeight: 600, color: "var(--text-dim)" }}>{label}</span>
-      <span className="tnum">{text}</span>
-    </span>
-  );
-}
-
 export function ListingPanel({ wide }: { wide?: boolean }) {
   const [rows, setRows] = useState<Listing[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
@@ -139,47 +129,15 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     } catch { /* ignore */ }
   };
 
-  // ── 공용 블록들 (모바일: 세로 스택 / PC: 좌 리스트 + 우 상세) ──
-  const watchCard = (
-      <div style={CARD}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>상장 감시</span>
-          {watch && (
-            <>
-              <Chip label="공지 API" ok={!watch.annBlocked && watch.annOkAgoSec != null} text={watch.annBlocked ? "차단(비KR)" : watch.annOkAgoSec != null ? `${watch.annOkAgoSec}s` : "대기"} />
-              <Chip label="TG" ok={watch.tgConfigured && watch.tgOkAgoSec != null} text={!watch.tgConfigured ? "미설정" : watch.tgOkAgoSec != null ? `${watch.tgOkAgoSec}s` : "대기"} />
-              <Chip label="마켓 diff" ok={watch.mktOkAgoSec != null} text={watch.mktOkAgoSec != null ? `${watch.mktOkAgoSec}s` : "대기"} />
-            </>
-          )}
-          <span style={{ flex: 1 }} />
-          <input
-            value={manual}
-            onChange={(e) => setManual(e.target.value.toUpperCase())}
-            onKeyDown={(e) => { if (e.key === "Enter" && manual.trim()) setSelected(manual.trim()); }}
-            placeholder="티커 수동 조회"
-            style={{ width: 120, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "5px 9px", fontSize: 12, outline: "none" }}
-          />
-          <button type="button" style={BTN} disabled={!manual.trim()} onClick={() => setSelected(manual.trim())}>열기</button>
-          <button
-            type="button"
-            onClick={toggleDetectAlert}
-            title="새 상장 감지 시 비프 + 데스크톱 알림"
-            style={{ ...BTN_GHOST, borderColor: detectAlert ? "var(--brand)" : "var(--border-strong)", color: detectAlert ? "var(--brand-2)" : "var(--text-dim)", whiteSpace: "nowrap" }}
-          >
-            알림 {detectAlert ? "ON" : "OFF"}
-          </button>
-          <button
-            type="button"
-            disabled={drilling}
-            onClick={() => void runDrill()}
-            title="가짜 상장 공지를 주입해 감지→알림→매수 플로우를 리허설 (티커 입력값 또는 PEPE)"
-            style={{ ...BTN_GHOST, whiteSpace: "nowrap" }}
-          >
-            {drilling ? "…" : "🥁 드릴"}
-          </button>
-        </div>
-      </div>
-  );
+  // ── 감시 상태 요약 — 카드 대신 점 하나 + 툴팁 (서버 감시는 항상 돌고 있음) ──
+  const watchOk = watch != null && ((!watch.annBlocked && watch.annOkAgoSec != null) || (watch.tgConfigured && watch.tgOkAgoSec != null));
+  const watchTitle = watch == null ? "감시 상태 로딩 중"
+    : [
+        `공지 API: ${watch.annBlocked ? "차단(비KR IP)" : watch.annOkAgoSec != null ? `정상 (${watch.annOkAgoSec}s 전)` : "대기"}`,
+        `TG 채널: ${!watch.tgConfigured ? "미설정" : watch.tgOkAgoSec != null ? `정상 (${watch.tgOkAgoSec}s 전)` : "대기"}`,
+        `마켓 diff: ${watch.mktOkAgoSec != null ? `정상 (${watch.mktOkAgoSec}s 전)` : "대기"}`,
+        "— 공지 2.5s · TG 3s · 마켓 3s 폴링 중",
+      ].join("\n");
 
   const autoCard = (
       <div style={{ ...CARD, borderColor: auto?.armed ? "var(--amber)" : "var(--border)" }}>
@@ -211,9 +169,38 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
 
   const listCard = (
       <div style={{ ...CARD, padding: 0 }}>
-        <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
-          <span style={{ ...CAP }}>{rows.length}건 · 카드 클릭 → 상세·실행</span>
+        <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span title={watchTitle} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}>
+            <span style={{ width: 6, height: 6, borderRadius: 2, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
+            <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
+          </span>
+          <span style={{ ...CAP }}>{rows.length}건</span>
+          <span style={{ flex: 1 }} />
+          <input
+            value={manual}
+            onChange={(e) => setManual(e.target.value.toUpperCase())}
+            onKeyDown={(e) => { if (e.key === "Enter" && manual.trim()) setSelected(manual.trim()); }}
+            placeholder="티커 수동 조회"
+            style={{ width: 110, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "4px 9px", fontSize: 12, outline: "none" }}
+          />
+          <button type="button" style={BTN} disabled={!manual.trim()} onClick={() => setSelected(manual.trim())}>열기</button>
+          <button
+            type="button"
+            onClick={toggleDetectAlert}
+            title="새 상장 감지 시 비프 + 데스크톱 알림"
+            style={{ ...BTN_GHOST, borderColor: detectAlert ? "var(--brand)" : "var(--border-strong)", color: detectAlert ? "var(--brand-2)" : "var(--text-dim)", whiteSpace: "nowrap" }}
+          >
+            알림 {detectAlert ? "ON" : "OFF"}
+          </button>
+          <button
+            type="button"
+            disabled={drilling}
+            onClick={() => void runDrill()}
+            title="가짜 상장 공지를 주입해 감지→알림→매수 플로우를 리허설 (티커 입력값 또는 PEPE)"
+            style={{ ...BTN_GHOST, whiteSpace: "nowrap" }}
+          >
+            {drilling ? "…" : "🥁"}
+          </button>
         </div>
         {rows.length === 0 ? (
           <div style={{ padding: "18px 14px", fontSize: 11.5, color: "var(--text-mute)" }}>
@@ -300,7 +287,6 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   if (!wide) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
-        {watchCard}
         {autoCard}
         {listCard}
         {historyCard}
@@ -313,7 +299,6 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "400px minmax(0,1fr)", gap: 14, alignItems: "start", paddingBottom: 40 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-        {watchCard}
         {autoCard}
         {listCard}
         {historyCard}
