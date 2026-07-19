@@ -82,6 +82,8 @@ export type Opportunity = {
   /** Funding: gross APR is an outlier spike (new listing / thin OI) — likely
    *  not capturable at size; ranked below normal rows. */
   suspectApr?: boolean;
+  /** cex-dex 동적 유니버스: 심볼만 일치, 컨트랙트 미검증 — 실행 금지·강등 */
+  unverified?: boolean;
   ts: number;
 };
 

@@ -60,7 +60,13 @@ export async function scanAll(): Promise<Opportunity[]> {
   const ctx = await buildContext();
   const batches = await Promise.all(STRATEGIES.map((s) => s.scan(ctx)));
   const opps = batches.flat();
-  if (CONFIG.USE_MOCK) opps.push(...MOCK_OPPS());
+  // 목업은 "라이브 데이터가 없는 전략"의 빈자리만 채운다 — 실측 행과 가짜
+  // 행이 같은 보드에 섞이면(예: 목업 PEPE +6.9% vs 실측 PEPE −0.4%) 보드
+  // 전체의 신뢰가 무너진다.
+  if (CONFIG.USE_MOCK) {
+    const liveKinds = new Set(opps.map((o) => o.kind));
+    opps.push(...MOCK_OPPS().filter((m) => !liveKinds.has(m.kind)));
+  }
   if (ctx.perps) for (const o of opps) o.hasPerp = ctx.perps.has(o.base);
 
   // Hedge round-trip cost (perp taker open+close) — charged once hasPerp is

@@ -401,6 +401,7 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
     // 전 종목을 매 스윕 견적하면 레이트 리밋이 터지므로 동적 후보는 회전창으로
     // 사이클당 6개만 — 하드코딩 코어는 항상 포함.
     const universe: Record<string, DexToken> = { ...uni.bases };
+    const dynUnverified = new Set<string>();
     if (dexConfigured()) {
       try {
         const dyn = await allTokens(uni.chain);
@@ -416,9 +417,20 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
         const gRot = globalThis as unknown as { __cexdexRot?: Record<string, number> };
         gRot.__cexdexRot ??= {};
         const ptr = gRot.__cexdexRot[uni.chain] ?? 0;
+        // 심볼 일치만으로는 바낸의 코인과 DEX 토큰이 같다는 보장이 없다(동명
+        // 이토큰 함정). CoinGecko 컨트랙트와 교차확인: 불일치 = 다른 토큰 →
+        // 제외, CG 미확인(레이트리밋 등) = 포함하되 unverified 강등.
         for (let k = 0; k < Math.min(6, cand.length); k++) {
           const [sym, tok] = cand[(ptr + k) % cand.length];
-          universe[sym] = tok;
+          try {
+            const { resolveToken } = await import("./tokenResolve");
+            const rv = await resolveToken(sym);
+            const exp = rv?.contracts?.[uni.chain as "ethereum" | "bsc" | "base"];
+            if (exp && exp.address.toLowerCase() !== tok.address.toLowerCase()) continue; // 다른 토큰 확정
+            universe[sym] = tok;
+            if (!exp) dynUnverified.add(sym);
+          } catch { universe[sym] = tok; dynUnverified.add(sym); }
+          await sleepMs(300); // CG 레이트리밋 완화
         }
         gRot.__cexdexRot[uni.chain] = cand.length ? (ptr + 6) % cand.length : 0;
       } catch { /* 리스트 실패 → 코어만 */ }
@@ -439,6 +451,10 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
 
       const cexTaker = FEES.takerPct.binance ?? 0.1;
       const mk = (dir: "buyDex" | "sellDex", grossPct: number, gasUnits: number, dexPrice: number) => {
+        // ±8% 넘는 "갭"은 차익이 아니라 죽은 풀이거나 다른 토큰이다 — 행 자체를
+        // 만들지 않는다 (메이저 $2000 기준 실제 괴리는 수 % 안에서 소멸).
+        if (Math.abs(grossPct) > 8) return;
+        const unverified = dynUnverified.has(base);
         const gasUsd = gasCostUsd(gasUnits, gasWei, nativeUsd);
         const gasPct = (gasUsd / DEXDEX_REF_USD) * 100;
         const cost = gasPct + cexTaker + CEXDEX_MEV_PCT;
@@ -458,11 +474,12 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
           notionalCapUsd: DEXDEX_REF_USD,
           // Executable once net clears AND OKX Web3 keys are set (DEX swap wired);
           // inventory-style so no transfer gate. DRY keeps the demo runnable.
-          executable: net > 0 && (CONFIG.DRY_RUN || dexConfigured()),
+          executable: net > 0 && !unverified && (CONFIG.DRY_RUN || dexConfigured()),
+          unverified: unverified || undefined,
           // Stale-quote warning: OKX DEX quote is up to CEXDEX_TTL_MS + sweep old
           // vs ~12s blocks — real dislocations close within 1-2 blocks, so the
           // board edge is indicative only. Age shown so it's never mistaken live.
-          note: `${uni.chain} · OKX 라우팅 · 가스 $${gasUsd.toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준 · 견적 최대 ${Math.round(CEXDEX_TTL_MS / 1000)}s 지연(블록당 소멸, 참고용)`,
+          note: `${uni.chain} · OKX 라우팅 · 가스 $${gasUsd.toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준 · 견적 최대 ${Math.round(CEXDEX_TTL_MS / 1000)}s 지연(블록당 소멸, 참고용)${unverified ? " · ⚠ 심볼일치만(컨트랙트 미검증) — 수동확인 필요" : ""}`,
           ts: now(),
         });
       };
@@ -484,7 +501,9 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
     const cur = bestPer.get(key);
     if (!cur || o.netPct > cur.netPct) bestPer.set(key, o);
   }
-  return [...bestPer.values()].sort((a, b) => b.netPct - a.netPct).slice(0, 15);
+  return [...bestPer.values()]
+    .sort((a, b) => (a.unverified ? 1 : 0) - (b.unverified ? 1 : 0) || b.netPct - a.netPct)
+    .slice(0, 15);
 }
 
 const cexDex: Strategy = {
@@ -495,16 +514,17 @@ const cexDex: Strategy = {
     const C = gcd.__arbCexDex!;
     // Own TTL: the two-quotes-per-coin sweep is rate-limited (~5s) — refresh at
     // most once a minute, serve the cached batch to every scan in between.
+    // 스윕(코인당 0.5s+, CG 검증 포함 수십 초)은 백그라운드로 — 스캔 사이클을
+    // 절대 막지 않는다. 그동안은 직전 배치를 서빙. ts는 견적 생성 시각 유지
+    // (재도장하면 60s 묵은 견적이 매 스캔 "방금"처럼 보인다).
     if (Date.now() - C.ts > CEXDEX_TTL_MS && !C.busy) {
       C.busy = true;
-      try {
-        C.opps = await scanCexDex(ctx);
-        C.ts = Date.now();
-      } finally {
-        C.busy = false;
-      }
+      scanCexDex(ctx)
+        .then((o) => { C.opps = o; C.ts = Date.now(); })
+        .catch(() => { /* 다음 주기 재시도 */ })
+        .finally(() => { C.busy = false; });
     }
-    return C.opps.map((o) => ({ ...o, ts: now() }));
+    return C.opps.map((o) => ({ ...o }));
   },
 };
 
