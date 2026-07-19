@@ -53,6 +53,7 @@ type PreviewData = {
   expectedOut: number; pricePerToken: number; minReceive: number; slippagePct: number;
   priceImpactPct: number | null; tradeFeeUsd: number | null; gasUsd: number | null;
   route: string[]; honeypot: boolean; taxRatePct: number | null;
+  liquidity: "deep" | "ok" | "thin"; probeUsd: number; probeImpactPct: number | null;
 };
 type TxStatusData = { status: "pending" | "success" | "fail" | "unknown"; failReason: string | null };
 const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
@@ -365,8 +366,22 @@ function SwapPreview({ base, pv }: { base: string; pv: PreviewData | { error: st
     </div>
   );
   const impact = pv.priceImpactPct;
+  const liq = pv.liquidity;
+  const liqColor = liq === "deep" ? "var(--pos)" : liq === "ok" ? "var(--amber)" : "var(--neg)";
+  const liqLabel = liq === "deep" ? "깊음" : liq === "ok" ? "보통" : "얕음";
+  const liqDesc = pv.probeImpactPct != null
+    ? `$${(pv.probeUsd / 1000).toFixed(0)}k 매수 시 임팩트 ${pv.probeImpactPct > 0 ? "+" : ""}${pv.probeImpactPct.toFixed(2)}%`
+    : `$${(pv.probeUsd / 1000).toFixed(0)}k 규모는 못 삼킴 — 소액만 가능`;
   return (
-    <div style={{ padding: "8px 11px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 9 }}>
+    <div style={{ padding: "8px 11px", background: "var(--card)", border: `1px solid ${liq === "thin" ? "var(--neg)" : "var(--border)"}`, borderRadius: 9 }}>
+      {/* 유동성 강조 헤더 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 11.5, fontWeight: 800, color: liqColor, padding: "2px 9px", borderRadius: 7, border: `1.5px solid ${liqColor}`, whiteSpace: "nowrap" }}>
+          유동성 {liqLabel}
+        </span>
+        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{liqDesc}</span>
+        {liq === "thin" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--neg)", marginLeft: "auto" }}>⚠ 큰 물량 진입 주의</span>}
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))", gap: "8px 14px" }}>
         {cell("예상 수령", `${pv.expectedOut.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${base}`)}
         {cell("유효 단가", `$${fmtPx(pv.pricePerToken)}`)}
@@ -616,7 +631,7 @@ function DetailPanel({ base }: { base: string }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
         {signal("가격", d.token?.priceUsd != null ? `$${fmtPx(d.token.priceUsd)}` : "—")}
         {signal("시총", fmtUsd(d.token?.marketCapUsd))}
-        {signal("24h 볼륨", fmtUsd(d.token?.volumeUsd))}
+        {signal("24h 볼륨", fmtUsd(d.token?.volumeUsd), d.token?.volumeUsd == null ? undefined : d.token.volumeUsd < 1_000_000 ? "var(--amber)" : undefined)}
         {signal("김프", d.kimchiPct != null ? `${d.kimchiPct > 0 ? "+" : ""}${d.kimchiPct.toFixed(2)}%` : "—", d.kimchiPct == null ? undefined : d.kimchiPct > 0 ? "var(--pos)" : "var(--neg)")}
         {signal("즉시유입/24h", holdings?.dumpRatioPct != null ? `${holdings.dumpRatioPct.toFixed(0)}%` : holdErr ? "—" : "…",
           holdings?.dumpRatioPct == null ? undefined : holdings.dumpRatioPct > 50 ? "var(--amber)" : "var(--pos)")}

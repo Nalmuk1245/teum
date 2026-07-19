@@ -35,6 +35,18 @@ export async function GET(req: Request) {
   const pv = await quoteDexPreview(chain, stable, { address: token, decimals }, usd);
   if (!pv) return NextResponse.json({ error: "견적 실패 (유동성 없음?)" });
 
+  // 유동성 깊이 — 내 규모의 20배(최소 $50k)로 한 번 더 견적해 임팩트 증가로
+  // 풀 깊이를 가늠한다. 큰 규모 임팩트가 낮으면 깊은 풀. 실패=그 규모 못 삼킴.
+  const probeUsd = Math.max(usd * 20, 50_000);
+  const probe = probeUsd > usd ? await quoteDexPreview(chain, stable, { address: token, decimals }, probeUsd) : pv;
+  const deepImpact = probe?.priceImpactPct ?? null;
+  // 등급: 큰 규모에서도 임팩트 작으면 deep, 견적조차 안 되면 thin.
+  const liquidity: "deep" | "ok" | "thin" =
+    !probe ? "thin"
+    : deepImpact != null && Math.abs(deepImpact) <= 1 ? "deep"
+    : deepImpact != null && Math.abs(deepImpact) <= 4 ? "ok"
+    : "thin";
+
   // 가스 USD — 네이티브 시세는 바낸 공개 시세로
   let gasUsd: number | null = null;
   try {
@@ -59,5 +71,8 @@ export async function GET(req: Request) {
     route: pv.route,
     honeypot: pv.honeypot,
     taxRatePct: pv.taxRatePct,
+    liquidity,           // deep | ok | thin
+    probeUsd,            // 깊이 프로브 규모
+    probeImpactPct: deepImpact,
   });
 }
