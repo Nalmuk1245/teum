@@ -115,8 +115,8 @@ export async function quoteDex(
   const amountRaw = BigInt(Math.round(amountHuman * 10 ** Math.min(from.decimals, 12)))
     * BigInt(10) ** BigInt(Math.max(0, from.decimals - 12));
   try {
-    const data = await okxGet("/api/v5/dex/aggregator/quote", {
-      chainId,
+    const data = await okxGet("/api/v6/dex/aggregator/quote", {
+      chainIndex: chainId,
       fromTokenAddress: from.address,
       toTokenAddress: to.address,
       amount: amountRaw.toString(),
@@ -194,12 +194,12 @@ export async function swapDex(
   const amountRaw = BigInt(Math.round(amountHuman * 10 ** Math.min(from.decimals, 12)))
     * BigInt(10) ** BigInt(Math.max(0, from.decimals - 12));
   try {
-    const data = await okxGet("/api/v5/dex/aggregator/swap", {
-      chainId,
+    const data = await okxGet("/api/v6/dex/aggregator/swap", {
+      chainIndex: chainId,
       fromTokenAddress: from.address,
       toTokenAddress: to.address,
       amount: amountRaw.toString(),
-      slippage: String(slippage),
+      slippagePercent: String(slippage * 100), // v6는 % 단위 (v5는 소수)
       userWalletAddress: walletAddr,
     });
     const d = data[0] as { tx?: { to: string; data: string; value: string; gas: string; minReceiveAmount: string }; routerResult?: { toTokenAmount: string } } | undefined;
@@ -218,8 +218,8 @@ export async function approveDex(chainKey: string, tokenAddress: string, amountR
   const chainId = OKX_CHAIN_ID[chainKey];
   if (!chainId) return null;
   try {
-    const data = await okxGet("/api/v5/dex/aggregator/approve-transaction", {
-      chainId, tokenContractAddress: tokenAddress, approveAmount: amountRaw,
+    const data = await okxGet("/api/v6/dex/aggregator/approve-transaction", {
+      chainIndex: chainId, tokenContractAddress: tokenAddress, approveAmount: amountRaw,
     });
     const d = data[0] as { dexContractAddress?: string; data?: string } | undefined;
     if (!d?.dexContractAddress || !d.data) return null;
