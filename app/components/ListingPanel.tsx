@@ -319,26 +319,26 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     );
   }
 
-  // ── PC: 좌(탐지·설정·기록) / 우(선택 티커 실행 패널) ──
+  // ── PC: 종목 미선택 = 좌 목록 + 우 안내 / 선택 = 상세 풀스크린(목록 접힘) ──
+  if (selected) {
+    return (
+      <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden", marginBottom: 40 }}>
+        <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
+          <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)} title="목록으로">← 목록</button>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
+          <span style={CAP}>상세 · 실행</span>
+          <span style={{ flex: 1 }} />
+          <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
+        </div>
+        <DetailPanel base={selected} />
+      </div>
+    );
+  }
   return (
     <div style={{ display: "grid", gridTemplateColumns: "400px minmax(0,1fr)", gap: 14, alignItems: "start", paddingBottom: 40 }}>
       <div style={{ minWidth: 0 }}>{mainCard}</div>
-      <div style={{ position: "sticky", top: 60, minWidth: 0 }}>
-        {selected ? (
-          <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden" }}>
-            <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
-              <span style={CAP}>상세 · 실행</span>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
-            </div>
-            <DetailPanel base={selected} />
-          </div>
-        ) : (
-          <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
-            좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 신호·차트·매수처·포지션이 표시됩니다.
-          </div>
-        )}
+      <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
+        좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 신호·차트·매수처·포지션이 전체 화면으로 표시됩니다.
       </div>
     </div>
   );
@@ -731,6 +731,50 @@ function DetailPanel({ base }: { base: string }) {
       )}
       {msg && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
 
+      {/* ③.5 거래소 핫월렛 잔고 — 상장 시 덤프 압력 (온체인 라벨 기반) */}
+      {sec("거래소 핫월렛 잔고", holdings?.globalHotUsd != null ? (
+        <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>글로벌 핫 합계 <b style={{ color: "var(--text)" }}>{fmtUsd(holdings.globalHotUsd)}</b></span>
+      ) : undefined)}
+      {holdErr ? (
+        <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{holdErr}</div>
+      ) : !holdings ? (
+        <div style={{ fontSize: 11, color: "var(--text-mute)" }}>온체인 라벨로 조회 중… (~10s)</div>
+      ) : (() => {
+        const rows = holdings.venues.filter((v) => v.hot + v.cold > 0);
+        if (!rows.length) return <div style={{ fontSize: 11, color: "var(--text-mute)" }}>라벨된 거래소 지갑 잔고 없음 (신규·비주류 토큰)</div>;
+        const maxHotUsd = Math.max(...rows.map((v) => v.hotUsd ?? 0), 1);
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "96px minmax(90px,1.4fr) 1fr 1fr", gap: "5px 12px", fontSize: 11.5, alignItems: "center" }}>
+            {th("거래소")}{th("핫월렛", "right")}{th("콜드", "right")}{th("핫 유입 Δ/분", "right")}
+            {rows.map((v) => {
+              const barPct = v.hotUsd != null ? Math.max(3, (v.hotUsd / maxHotUsd) * 100) : 0;
+              const dumping = (v.hotDeltaPerMin ?? 0) > 0;
+              return (
+                <Fragment key={v.venue}>
+                  <span style={{ fontWeight: 700 }}>{v.venue}</span>
+                  <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                    <span className="tnum" style={{ fontWeight: 700 }}>{v.hotUsd != null ? fmtUsd(v.hotUsd) : fmtQty(v.hot)}</span>
+                    <span style={{ width: "100%", height: 3, background: "var(--card-3)", borderRadius: 2, overflow: "hidden" }}>
+                      <span style={{ display: "block", height: "100%", width: `${barPct}%`, background: dumping ? "var(--amber)" : "var(--brand)", borderRadius: 2 }} />
+                    </span>
+                  </span>
+                  <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{fmtQty(v.cold)}</span>
+                  <span className="tnum" style={{ textAlign: "right", fontWeight: dumping ? 700 : 400,
+                    color: v.hotDeltaPerMin == null || v.hotDeltaPerMin === 0 ? "var(--text-mute)" : v.hotDeltaPerMin > 0 ? "var(--amber)" : "var(--pos)" }}>
+                    {v.hotDeltaPerMin == null ? "—" : v.hotDeltaPerMin === 0 ? "0"
+                      : `${v.hotDeltaPerMin > 0 ? "▲ +" : "▼ −"}${holdings.priceUsd != null ? "$" + fmtQty(Math.abs(v.hotDeltaPerMin * holdings.priceUsd)) : fmtQty(Math.abs(v.hotDeltaPerMin))}`}
+                    {dumping ? "/분" : ""}
+                  </span>
+                </Fragment>
+              );
+            })}
+          </div>
+        );
+      })()}
+      {holdings && holdings.venues.some((v) => (v.hotDeltaPerMin ?? 0) > 0) && (
+        <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--amber)" }}>▲ 핫월렛 유입 = 거래소가 매도 물량을 준비 중일 수 있음 (덤프 경계)</div>
+      )}
+
       {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (
         <>
@@ -768,7 +812,7 @@ function DetailPanel({ base }: { base: string }) {
           onClick={() => setRefOpen(!refOpen)}
           style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "var(--text-dim)" }}
         >
-          <span style={CAP}>참고 — 온체인 보유량 · 컨트랙트</span>
+          <span style={CAP}>참고 — 컨트랙트 주소</span>
           {holdings?.globalHotUsd != null && (
             <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-mute)" }}>
               글로벌 핫 {fmtUsd(holdings.globalHotUsd)}
@@ -779,25 +823,6 @@ function DetailPanel({ base }: { base: string }) {
         </button>
         {refOpen && (
           <div style={{ marginTop: 8, fontSize: 11 }}>
-            {holdErr && <div style={{ color: "var(--text-mute)" }}>{holdErr}</div>}
-            {!holdings && !holdErr && <div style={{ color: "var(--text-mute)" }}>보유량 조회 중… (~10s)</div>}
-            {holdings && (
-              <div style={{ display: "grid", gridTemplateColumns: "84px 1fr 1fr 1fr", gap: "3px 10px", alignItems: "center", marginBottom: 10 }}>
-                {th("거래소")}{th("핫월렛", "right")}{th("콜드", "right")}{th("핫 Δ/분", "right")}
-                {holdings.venues.filter((v) => v.hot + v.cold > 0).map((v) => (
-                  <Fragment key={v.venue}>
-                    <span style={{ fontWeight: 600 }}>{v.venue}</span>
-                    <span className="tnum" style={{ textAlign: "right" }}>{fmtQty(v.hot)}{v.hotUsd ? ` (${fmtUsd(v.hotUsd)})` : ""}</span>
-                    <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{fmtQty(v.cold)}</span>
-                    <span className="tnum" style={{ textAlign: "right", color: v.hotDeltaPerMin == null || v.hotDeltaPerMin === 0 ? "var(--text-mute)" : v.hotDeltaPerMin > 0 ? "var(--pos)" : "var(--neg)" }}>
-                      {v.hotDeltaPerMin == null ? "—" : v.hotDeltaPerMin === 0 ? "0" : holdings.priceUsd != null
-                        ? `${v.hotDeltaPerMin > 0 ? "+$" : "−$"}${fmtQty(Math.abs(v.hotDeltaPerMin * holdings.priceUsd))}`
-                        : fmtQty(Math.abs(v.hotDeltaPerMin))}
-                    </span>
-                  </Fragment>
-                ))}
-              </div>
-            )}
             {d.token && d.token.contractsList.length > 0 ? d.token.contractsList.map((c) => {
               const dexRow = d.dex.find((x) => x.chain === c.chain);
               return (
