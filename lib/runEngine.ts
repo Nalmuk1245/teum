@@ -64,10 +64,29 @@ type Engine = {
 };
 
 const g = globalThis as unknown as {
-  __arbRunEngine?: { runs: Record<string, RunView>; engines: Map<string, Engine>; seq: number; booted: boolean; saveTimer: ReturnType<typeof setTimeout> | null };
+  __arbRunEngine?: { runs: Record<string, RunView>; engines: Map<string, Engine>; seq: number; booted: boolean; saveTimer: ReturnType<typeof setTimeout> | null; fails: number[] };
 };
-g.__arbRunEngine ??= { runs: {}, engines: new Map(), seq: 0, booted: false, saveTimer: null };
+g.__arbRunEngine ??= { runs: {}, engines: new Map(), seq: 0, booted: false, saveTimer: null, fails: [] };
 const E = g.__arbRunEngine;
+E.fails ??= [];
+
+// ── 서킷 브레이커 ─────────────────────────────────────────────────────────────
+// 실행 단계가 연속 실패하면(거래소 장애·키 문제·버그) 같은 실수를 반복하며
+// 수수료·슬리피지를 흘린다. 최근 CB_WINDOW분 내 실행 실패가 CB_MAX회 쌓이면
+// 킬 스위치를 자동으로 켜고 알린다. 재검증 실패(엣지 소멸)는 정상 방어라
+// 세지 않는다 — 오직 주문/출금/전송의 실집행 실패만.
+const CB_WINDOW_MS = Number(process.env.CIRCUIT_FAIL_WINDOW_MIN ?? 10) * 60_000;
+const CB_MAX = Number(process.env.CIRCUIT_FAIL_MAX ?? 3);
+function recordExecFailure(base: string, stepLabel: string) {
+  const now = Date.now();
+  E.fails = E.fails.filter((t) => now - t < CB_WINDOW_MS);
+  E.fails.push(now);
+  if (E.fails.length >= CB_MAX && !isKilled()) {
+    setKilled(true);
+    for (const eng of E.engines.values()) eng.cancelled = true;
+    void notify("circuit", `🛑 서킷 브레이커 — 최근 ${Math.round(CB_WINDOW_MS / 60_000)}분 내 실행 실패 ${E.fails.length}회 (마지막: ${base} ${stepLabel}). 킬 스위치 자동 활성 — 원인 확인 후 운영 탭에서 해제.`);
+  }
+}
 
 // ── persist (서버 파일) ───────────────────────────────────────────────────────
 function persistRuns() {
@@ -234,6 +253,7 @@ async function loop(id: string) {
       } else {
         patch(id, { statuses, messages, txs: upd.txs ?? run().txs, error: `${r.message ?? "단계 실패"} — 출금 이후: 헷지 유지, 수동 처리 필요`, pauseAt: i, phase: "error" });
       }
+      recordExecFailure(run().base, step.label); // 서킷 브레이커 — 실집행 실패만
       eng.busy = false;
       return;
     }
@@ -258,6 +278,12 @@ export type StartResult = { id: string } | { error: string };
 export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }): StartResult {
   if (isKilled()) return { error: "킬 스위치 활성 — 신규 실행 차단" };
   if (cfg.opp.mock && !CONFIG.DRY_RUN) return { error: "목업 기회는 실행 불가" };
+  // 같은 코인으로 활성 런이 이미 있으면 거부 — 동시 진행은 헷지 수량·재고를
+  // 꼬이게 한다. (error 런은 사용자가 인지·정리하는 상태라 허용.)
+  const dup = Object.values(E.runs).find(
+    (r) => r.base === cfg.opp.base && (r.phase === "running" || r.phase === "paused"),
+  );
+  if (dup) return { error: `${cfg.opp.base} 이미 실행 중 — 중복 실행 차단 (진행 중 런을 먼저 처리)` };
   const cap = getLimits().maxInFlightUsd;
   if (Number.isFinite(cap) && cap > 0 && inFlightUsd() + cfg.sizeUsd > cap) {
     return { error: `총 노출 한도 초과 (진행 중 $${inFlightUsd().toFixed(0)} + $${cfg.sizeUsd.toFixed(0)} > $${cap.toFixed(0)})` };
