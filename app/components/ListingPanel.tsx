@@ -49,7 +49,7 @@ function Chip({ ok, label, text }: { ok: boolean; label: string; text: string })
   );
 }
 
-export function ListingPanel() {
+export function ListingPanel({ wide }: { wide?: boolean }) {
   const [rows, setRows] = useState<Listing[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -75,9 +75,8 @@ export function ListingPanel() {
     } catch { /* ignore */ }
   };
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
-      {/* ── 감시 상태 + 수동 조회 ── */}
+  // ── 공용 블록들 (모바일: 세로 스택 / PC: 좌 리스트 + 우 상세) ──
+  const watchCard = (
       <div style={CARD}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>상장 감시</span>
@@ -99,8 +98,9 @@ export function ListingPanel() {
           <button type="button" style={BTN} disabled={!manual.trim()} onClick={() => setSelected(manual.trim())}>열기</button>
         </div>
       </div>
+  );
 
-      {/* ── 자동매수 ── */}
+  const autoCard = (
       <div style={{ ...CARD, borderColor: auto?.armed ? "var(--amber)" : "var(--border)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>공지 즉시 자동매수</span>
@@ -126,8 +126,9 @@ export function ListingPanel() {
           {" "}라이브 집행은 <code>LISTING_AUTO_LIVE=true</code> 필요{autoLive ? " (활성)" : " (현재 미설정 — 모의만)"}.
         </div>
       </div>
+  );
 
-      {/* ── 플레이 카드 리스트 ── */}
+  const listCard = (
       <div style={{ ...CARD, padding: 0 }}>
         <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "baseline", gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
@@ -160,12 +161,13 @@ export function ListingPanel() {
                 <span style={{ flex: 1 }} />
                 <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{open ? "▲" : "▼"}</span>
               </button>
-              {open && <DetailPanel base={l.base} />}
+              {/* 모바일: 아코디언 인라인 상세 / PC: 우측 패널에서 표시 */}
+              {!wide && open && <DetailPanel base={l.base} />}
             </div>
           );
         })}
-        {/* 수동 티커가 플레이 목록에 없을 때도 상세 열기 */}
-        {selected && !rows.some((r) => r.base === selected) && (
+        {/* 수동 티커가 플레이 목록에 없을 때 (모바일 인라인) */}
+        {!wide && selected && !rows.some((r) => r.base === selected) && (
           <div style={{ borderTop: "1px solid var(--border)" }}>
             <div style={{ padding: "9px 14px", display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontWeight: 700 }}>{selected}</span>
@@ -177,8 +179,45 @@ export function ListingPanel() {
           </div>
         )}
       </div>
+  );
 
-      <HoldingsCard />
+  if (!wide) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
+        {watchCard}
+        {autoCard}
+        {listCard}
+        <HoldingsCard />
+      </div>
+    );
+  }
+
+  // ── PC: 좌(감시·자동매수·리스트·보유량) / 우(선택 티커 상세·차트) ──
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "400px minmax(0,1fr)", gap: 14, alignItems: "start", paddingBottom: 40 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+        {watchCard}
+        {autoCard}
+        {listCard}
+        <HoldingsCard />
+      </div>
+      <div style={{ position: "sticky", top: 60, minWidth: 0 }}>
+        {selected ? (
+          <div style={{ ...CARD, padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
+              <span style={CAP}>상세 · 실행</span>
+              <span style={{ flex: 1 }} />
+              <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
+            </div>
+            <DetailPanel base={selected} />
+          </div>
+        ) : (
+          <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
+            좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 차트·매수처·포지션·보유량이 표시됩니다.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -244,7 +244,7 @@ export default function Cockpit() {
         )}
       </header>
 
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: isMobile ? "10px 10px" : "16px" }}>
+      <div style={{ maxWidth: 1560, margin: "0 auto", padding: isMobile ? "10px 10px" : "18px 24px" }}>
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
@@ -304,7 +304,7 @@ export default function Cockpit() {
         )}
 
         {/* ── 상장 대시보드: 상장따리 감시 + 온체인 물량 신호 ── */}
-        {mode === "listing" && <ListingPanel />}
+        {mode === "listing" && <ListingPanel wide={!isMobile} />}
 
         {/* ── Control tower: runs dashboard + risk limits + tools ── */}
         {mode === "control" && (
@@ -314,6 +314,7 @@ export default function Cockpit() {
             onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); setMode("execute"); }}
             autoEntry={autoEntry}
             onAutoEntry={setAutoEntry}
+            wide={!isMobile}
           />
         )}
 

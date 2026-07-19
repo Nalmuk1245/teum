@@ -12,21 +12,47 @@ import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON,
 export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number };
 
 export type AutoEntryCfg = { armed: boolean; minNet: number; minHeld: number; sizeUsd: number };
-export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; autoEntry?: AutoEntryCfg; onAutoEntry?: (v: AutoEntryCfg) => void }) {
+export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wide }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; autoEntry?: AutoEntryCfg; onAutoEntry?: (v: AutoEntryCfg) => void; wide?: boolean }) {
   const inFlight = inFlightUsd();
+  const runsBlock = runs.length > 0
+    ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
+    : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>;
+  const col: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 12, minWidth: 0 };
+  if (!wide) {
+    return (
+      <div style={{ ...col, paddingBottom: 40 }}>
+        <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
+        <KillCard killed={killed} />
+        <RiskCard inFlight={inFlight} />
+        {runsBlock}
+        {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
+        <PnlCard />
+        <TelegramCard />
+        <GatesCard />
+        <ToolsCard />
+      </div>
+    );
+  }
+  // PC: 현황 풀폭 + 3컬럼 — 좌: 실행 흐름(런·자동진입), 중: 안전장치(킬·리스크·손익), 우: 인프라(TG·게이트·도구)
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
       <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
-      <KillCard killed={killed} />
-      <RiskCard inFlight={inFlight} />
-      {runs.length > 0
-        ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
-        : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>}
-      {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
-      <PnlCard />
-      <TelegramCard />
-      <GatesCard />
-      <ToolsCard />
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 12, alignItems: "start" }}>
+        <div style={col}>
+          {runsBlock}
+          {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
+        </div>
+        <div style={col}>
+          <KillCard killed={killed} />
+          <RiskCard inFlight={inFlight} />
+          <PnlCard />
+        </div>
+        <div style={col}>
+          <TelegramCard />
+          <GatesCard />
+          <ToolsCard />
+        </div>
+      </div>
     </div>
   );
 }
@@ -140,7 +166,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>리스크 한도</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
         {field("1회 최대", "perTrade")}
         {field("총 노출", "inFlight")}
         {field("일일 손실", "dailyLoss")}
@@ -260,7 +286,7 @@ export function PnlCard() {
         <div style={{ color: "var(--text-mute)", fontSize: 12 }}>기록된 거래 없음 — 실행이 정산되면 여기에 쌓입니다</div>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 10 }}>
             <Metric label="실현 손익" value={`${st.realizedPnlUsd >= 0 ? "+" : "−"}$${Math.abs(st.realizedPnlUsd).toFixed(2)}`} tone={st.realizedPnlUsd >= 0 ? "var(--pos)" : "var(--neg)"} />
             <Metric label="히트율" value={`${st.hitRatePct}%`} sub={`${st.wins}/${st.count - st.dryCount || st.count}`} />
             <Metric label="탐지 vs 실현" value={`−${st.avgSlipPct.toFixed(2)}%`} sub="평균 누수" tone={st.avgSlipPct > 0.3 ? "var(--amber)" : "var(--text)"} />
@@ -346,7 +372,7 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
           {cfg.armed ? "해제" : "무장"}
         </button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginTop: 10 }}>
         {field("최소 순수익", "minNet", "%")}
         {field("최소 지속", "minHeld", "s")}
         {field("규모", "sizeUsd", "$")}
@@ -410,13 +436,13 @@ export function HoldingsCard() {
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700 }}>거래소 온체인 보유량</span>
+        <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>거래소 온체인 보유량</span>
         <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>상장따리 물량 신호 · ETH/BSC/Base</span>
         <span style={{ flex: 1 }} />
         <button
           type="button" disabled={importing} onClick={() => void runImport()}
           title="Etherscan 공개 라벨 덤프에서 거래소 지갑 주소를 가져옵니다 (1회, ~22MB)"
-          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "0 0 auto" }}
         >
           {importing ? "임포트 중…" : `라벨 임포트${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
         </button>
