@@ -75,7 +75,8 @@ export async function scanAll(): Promise<Opportunity[]> {
   // risk shown by transferRisk instead.
   const hedgeRt = (FEES.perpTakerPct.binance ?? 0.045) * 2;
   for (const o of opps) {
-    if (o.mock || o.kind !== "kimchi" || !o.hasPerp) continue;
+    // 전송형 kinds(kimchi, cex-dex)만 — 전송 중 노출을 헷지한다는 전제의 비용.
+    if (o.mock || !o.hasPerp || (o.kind !== "kimchi" && o.kind !== "cex-dex")) continue;
     o.costPct += hedgeRt;
     o.netPct -= hedgeRt;
     if (o.netPct <= 0) o.executable = false;
@@ -106,7 +107,7 @@ export async function scanAll(): Promise<Opportunity[]> {
     // one-sided jump tail; even hedged, the USDT/KRW drift is uncovered. Hedge
     // is advised whenever price risk approaches the edge OR the transfer is
     // slow (ETA > 5min) — a coin can gap on a headline regardless of quiet vol.
-    if (o.transfer && o.kind === "kimchi") {
+    if (o.transfer && (o.kind === "kimchi" || o.kind === "cex-dex")) {
       const etaMin = o.transfer.etaMin;
       const drift = (o.persistence?.volPctPerMin ?? 0) * Math.sqrt(Math.max(1, etaMin));
       const jump = o.persistence?.jumpPct ?? 0;

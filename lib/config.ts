@@ -97,6 +97,7 @@ export const TRANSFER_ETA_DEFAULT_MIN = 10;
 // `/sapi/v1/capital/config/getall` (needs key) once wired.
 export const COIN_NETWORK: Record<string, { chain: string; confirms: number }> = {
   BTC: { chain: "Bitcoin", confirms: 1 },
+  BNB: { chain: "BNB Chain (BEP20)", confirms: 1 },
   ETH: { chain: "Ethereum (ERC20)", confirms: 12 },
   XRP: { chain: "XRP Ledger", confirms: 1 },
   TRX: { chain: "Tron (TRC20)", confirms: 20 },

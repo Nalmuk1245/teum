@@ -6,7 +6,7 @@ import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "@/lib/
 import { fetchDepositAddress } from "@/lib/deposits";
 import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "@/lib/orders";
 import { resolveWalletAsset } from "@/lib/tokens";
-import { dexConfigured, approveDex, swapDex, CEXDEX_CHAINS } from "@/lib/dex";
+import { dexConfigured, approveDex, swapDex, CEXDEX_CHAINS, allTokens, QUOTE_STABLES } from "@/lib/dex";
 import { sendRawEvmTx } from "@/lib/wallet";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry, recordPnl } from "@/lib/risk";
@@ -48,12 +48,17 @@ function destAddr(chainKey: string): string | null {
 
 // cex-dex: resolve the DEX chain + token/stable contracts from the opp's dex
 // leg symbol ("BASE/QUOTE@chain"). Uses the detection universe (CEXDEX_CHAINS).
-function dexTarget(opp: Opportunity, dexLeg?: { symbol: string }) {
+async function dexTarget(opp: Opportunity, dexLeg?: { symbol: string }) {
   const chainKey = dexLeg?.symbol?.split("@")[1];
   const uni = CEXDEX_CHAINS.find((u) => u.chain === chainKey);
-  const token = uni?.bases[opp.base];
-  const stable = uni?.quote;
-  return { chainKey: uni ? chainKey : undefined, token, stable };
+  let token = uni?.bases[opp.base];
+  const stable = uni?.quote ?? (chainKey ? QUOTE_STABLES[chainKey] : undefined);
+  // 동적 유니버스(코어 밖) 토큰: 검출과 같은 소스(OKX 토큰리스트, 심볼 유일)로
+  // 재해석 — 검출은 됐는데 실행만 안 되는 비대칭 방지.
+  if (!token && chainKey) {
+    try { token = (await allTokens(chainKey)).get(opp.base) ?? undefined; } catch { /* 아래서 차단 */ }
+  }
+  return { chainKey: token && stable ? chainKey : undefined, token, stable };
 }
 const chainLabelOf = (chainKey: string) => getChain(chainKey)?.label ?? chainKey;
 
@@ -137,7 +142,7 @@ async function runStep(
       if (dry) return { ok: true, dryRun: true, message: "DEX 승인 (모의)" };
       if (!dexConfigured()) return fail("OKX_WEB3 키 없음 — DEX 실행 불가");
       const dexLeg = opp.legs.find((l) => l.venue === "dex");
-      const { chainKey, token } = dexTarget(opp, dexLeg);
+      const { chainKey, token } = await dexTarget(opp, dexLeg);
       if (!chainKey || !token) return fail("DEX 토큰/체인 미확인 — 승인 차단");
       const ap = await approveDex(chainKey, token.address, "115792089237316195423570985008687907853269984665640564039457584007913129639935");
       if (!ap) return fail("approve 캘리데이터 조회 실패");
@@ -152,7 +157,7 @@ async function runStep(
       const dexLeg = opp.legs.find((l) => l.venue === "dex");
       const walletAddr = walletAddress();
       if (!walletAddr) return fail("개인지갑 주소 없음 — 스왑 차단");
-      const { chainKey, token, stable } = dexTarget(opp, dexLeg);
+      const { chainKey, token, stable } = await dexTarget(opp, dexLeg);
       if (!chainKey || !token || !stable) return fail("DEX 경로 미확인 — 스왑 차단");
       // buy on DEX = stable→token; sell on DEX = token→stable.
       const dexBuys = dexLeg?.side === "buy";
@@ -203,11 +208,14 @@ async function runStep(
       // deposit side). KR → overseas and global ↔ global withdraw DIRECT to the
       // destination exchange; non-EVM chains are direct in every direction.
       const hop = evm && isGlobal(buy?.venue) && isKr(destVenue);
+      // cex-dex sellDex: 매도 다리가 DEX = 코인을 "내 지갑"으로 빼서 온체인 매도.
+      const toWallet = destVenue === "dex";
       let dest: string | null;
       let tag: string | null = null;
       let note = "";
-      if (hop) {
-        dest = destAddr(chain); // personal-wallet hop
+      if (hop || toWallet) {
+        dest = destAddr(chain); // personal wallet
+        if (toWallet) note = " → 개인지갑(DEX 매도용)";
       } else {
         // Direct exchange→exchange: use the destination's real deposit address+tag.
         const fetched = await fetchDepositAddress(destVenue, opp.base, net);
@@ -283,6 +291,30 @@ async function runStep(
       };
     }
     case "deposit": {
+      // cex-dex sellDex: "입금 확인" = 개인지갑 온체인 수신 확인.
+      if (sell?.venue === "dex") {
+        const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
+        if (dry) return { ok: true, dryRun: true, message: "지갑 수신 확인 (모의)", tx: { hash: `sim:${chain || "chain"}:recv:${opp.base}`, url: null } };
+        if (!chain) return fail("체인 미상 — 수신 확인 불가");
+        const addr = destAddr(chain);
+        if (!addr) return fail("지갑 주소 없음");
+        try {
+          const { JsonRpcProvider, Contract, formatUnits, formatEther } = await import("ethers");
+          const provider = new JsonRpcProvider(getChain(chain)!.rpc);
+          const asset = await resolveWalletAsset(opp.base, chain);
+          let bal = 0;
+          if (asset.kind === "token") {
+            const c = new Contract(asset.address, ["function balanceOf(address) view returns (uint256)"], provider);
+            bal = Number(formatUnits(await c.balanceOf(addr), asset.decimals));
+          } else if (asset.kind === "native") {
+            bal = Number(formatEther(await provider.getBalance(addr)));
+          } else return fail(`${opp.base} 컨트랙트 미확인 — 수신 확인 불가`);
+          const ok = bal >= qty * 0.9; // 출금 수수료 차감 여유
+          return { ok, dryRun: false, message: ok ? `지갑 수신 확인 · ${bal.toFixed(6)} ${opp.base}` : `수신 대기 중 (현재 ${bal.toFixed(6)} / 기대 ${qty.toFixed(6)})` };
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : "지갑 잔고 조회 실패");
+        }
+      }
       const r = await checkDeposit(sell?.venue ?? "upbit", opp.base, opts.sinceTs ?? Date.now() - 60 * 60 * 1000);
       // DRY → sim chip; LIVE → real credited txid from the deposit record.
       const dtx = r.dryRun

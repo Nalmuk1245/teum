@@ -11,7 +11,7 @@ import { chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 
 export type StepId =
   | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle"
-  | "approve" | "swap"; // cex-dex (inventory-style): DEX approve + swap, fired with the CEX leg
+  | "approve" | "swap"; // cex-dex (transfer-style): DEX approve + swap legs
 
 export type ExecStep = { id: StepId; label: string; desc: string };
 export type StepPhase = "pending" | "running" | "done" | "error" | "rolledback";
@@ -39,19 +39,34 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
   const bv = vlabel(buy?.venue);
   const sv = vlabel(sell?.venue);
 
-  // cex-dex is INVENTORY-style: both sides pre-funded, no transfer in the
-  // critical path. Approve (one-time) → DEX swap + CEX order (fired together) →
-  // settle. The DEX leg is whichever side is venue "dex".
+  // cex-dex is TRANSFER-style: buy the cheap side, move the coin, sell the
+  // expensive side. buyDex = DEX 매수 → 지갑→CEX 전송 → 매도 / sellDex = CEX
+  // 매수 → 출금 → DEX 매도. In-flight exposure is hedged like kimchi.
   if (opp.kind === "cex-dex") {
     const dexLeg = opp.legs.find((l) => l.venue === "dex");
     const cexLeg = opp.legs.find((l) => l.venue !== "dex");
+    const cv = vlabel(cexLeg?.venue);
     const dexBuys = dexLeg?.side === "buy";
-    const steps: ExecStep[] = [
-      { id: "approve", label: "DEX 토큰 승인", desc: "1회 approve (필요 시)" },
-      { id: "swap", label: `DEX ${dexBuys ? "매수" : "매도"} (스왑)`, desc: `${opp.base} · 온체인 · minReceive 보호` },
-      { id: dexBuys ? "sell" : "buy", label: `${vlabel(cexLeg?.venue)} ${dexBuys ? "매도" : "매수"}`, desc: "동시 발사 · 델타 상쇄" },
-      { id: "settle", label: "정산", desc: "P&L 확정 · 재고 리밸런스 별도" },
-    ];
+    const eta = opp.transfer?.etaMin;
+    const steps: ExecStep[] = [];
+    if (dexBuys) {
+      steps.push({ id: "approve", label: "스테이블 승인", desc: "1회 approve (필요 시)" });
+      steps.push({ id: "swap", label: "DEX 매수 (스왑)", desc: `${opp.base} · 온체인 · minReceive 보호` });
+      if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "전송 구간 가격 잠금" });
+      steps.push({ id: "transfer", label: `개인지갑 → ${cv} 입금 전송`, desc: "온체인 · 되돌릴 수 없음" });
+      steps.push({ id: "deposit", label: `${cv} 입금 확인`, desc: `컨펌 대기${eta ? ` · ~${eta}분` : ""}` });
+      steps.push({ id: "sell", label: `${cv} 현물 매도`, desc: `${opp.base} → USDT` });
+      if (hedge) steps.push({ id: "close", label: "선물 청산", desc: "매도와 동시 · 헷지 해제" });
+    } else {
+      steps.push({ id: "buy", label: `${cv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
+      if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "전송 구간 가격 잠금" });
+      steps.push({ id: "withdraw", label: `${cv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음" });
+      steps.push({ id: "deposit", label: "지갑 수신 확인", desc: `컨펌 대기${eta ? ` · ~${eta}분` : ""}` });
+      steps.push({ id: "approve", label: `${opp.base} 승인`, desc: "1회 approve (필요 시)" });
+      steps.push({ id: "swap", label: "DEX 매도 (스왑)", desc: "온체인 · minReceive 보호" });
+      if (hedge) steps.push({ id: "close", label: "선물 청산", desc: "스왑과 동시 · 헷지 해제" });
+    }
+    steps.push({ id: "settle", label: "정산", desc: "P&L 확정" });
     return steps;
   }
   // Personal-wallet hop is ONLY for overseas → KR deposits (direct Binance→Upbit

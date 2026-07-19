@@ -13,6 +13,7 @@ import {
 } from "./config";
 import { walletStatus } from "./transfers";
 import { coinNetwork, withdrawFeeCoin } from "./networks";
+import { chainKeyFromLabel } from "./chains";
 import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS, allTokens, type DexToken } from "./dex";
 
 export interface Strategy {
@@ -367,15 +368,18 @@ const fundingBasis: Strategy = {
 };
 
 // ── CEX-DEX — CEX price vs on-chain DEX (OKX aggregator routing) ───────────────
-// Inventory-style arb: hold both sides, fire DEX swap + CEX order together —
-// no transfer in the critical path. Detection compares OKX DEX best-route
-// quotes (routing/pool fees baked into the executable amountOut) against the
-// CEX top-of-book, with REAL gas priced in (gas dominates small sizes and is
-// why most naive cex-dex "opportunities" are fake). Monitoring-only until the
-// swap execution phase is wired. Dormant without OKX_WEB3_* keys.
+// TRANSFER-style arb: buy the cheap side, move the coin, sell the expensive
+// side — buyDex = DEX 매수 → 지갑→바낸 전송 → 매도 / sellDex = 바낸 매수 →
+// 출금 → DEX 매도. Costs therefore include the transfer leg (token-send gas or
+// CEX withdraw fee) and the edge carries in-flight price risk (ETA + hedge,
+// applied by the scanner like kimchi). Hard gates: Binance deposit/withdraw
+// open for THIS coin on THIS chain, and the Binance transfer network must be
+// the same chain we quoted on. Dormant without OKX_WEB3_* keys.
 const DEXDEX_REF_USD = 2000; // quote size — gas% and depth are size-dependent
 const CEXDEX_TTL_MS = 60_000; // OKX web3 rate limits — refresh once a minute
 const CEXDEX_MEV_PCT = 0.1; // sandwich/re-quote buffer
+const CEXDEX_SEND_GAS = 65_000; // ERC20 transfer 가스 (지갑→거래소 입금 전송)
+const CHAIN_ETA_MIN: Record<string, number> = { ethereum: 5, base: 2, bsc: 2 };
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type CexDexCache = { opps: Opportunity[]; ts: number; busy: boolean };
@@ -450,15 +454,43 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
       await sleepMs(250);
 
       const cexTaker = FEES.takerPct.binance ?? 0.1;
+      // 전송형 공통 게이트 재료: 바낸의 이 코인 입출금 네트워크가 견적 체인과
+      // 같아야 루트가 성립한다 (다르면 산 코인을 그 체인으로 못 보낸다).
+      const netInfo = coinNetwork(base); // live(바낸 networkList) 우선, 없으면 큐레이션
+      const netChainKey = chainKeyFromLabel(netInfo.chain);
+      const chainMatch: boolean | null = netChainKey ? netChainKey === uni.chain : null; // null = 미상
+      const wStat = walletStatus(ctx.transfers, "binance", base); // null = 키 없음/미상장
+      const etaMin = TRANSFER_ETA_MIN[base] ?? CHAIN_ETA_MIN[uni.chain] ?? TRANSFER_ETA_DEFAULT_MIN;
       const mk = (dir: "buyDex" | "sellDex", grossPct: number, gasUnits: number, dexPrice: number) => {
         // ±8% 넘는 "갭"은 차익이 아니라 죽은 풀이거나 다른 토큰이다 — 행 자체를
         // 만들지 않는다 (메이저 $2000 기준 실제 괴리는 수 % 안에서 소멸).
         if (Math.abs(grossPct) > 8) return;
         const unverified = dynUnverified.has(base);
-        const gasUsd = gasCostUsd(gasUnits, gasWei, nativeUsd);
-        const gasPct = (gasUsd / DEXDEX_REF_USD) * 100;
-        const cost = gasPct + cexTaker + CEXDEX_MEV_PCT;
+        const swapGasUsd = gasCostUsd(gasUnits, gasWei, nativeUsd);
+        // 전송 다리 비용 — buyDex: 지갑→바낸 토큰 전송 가스 / sellDex: 바낸 출금
+        // 수수료(코인 단위 × 가격). 수수료 미상이면 보수적 0.05%p.
+        const sendGasUsd = gasCostUsd(CEXDEX_SEND_GAS, gasWei, nativeUsd);
+        const wFeeCoin = withdrawFeeCoin(base);
+        const wFeePct = wFeeCoin != null ? ((wFeeCoin * mid) / DEXDEX_REF_USD) * 100 : null;
+        const transferPct = dir === "buyDex"
+          ? (sendGasUsd / DEXDEX_REF_USD) * 100
+          : (wFeePct ?? 0.05);
+        const gasPct = (swapGasUsd / DEXDEX_REF_USD) * 100;
+        const cost = gasPct + transferPct + cexTaker + CEXDEX_MEV_PCT;
         const net = grossPct - cost;
+        // 방향별 하드 게이트: buyDex는 바낸 "입금" 열림, sellDex는 "출금" 열림.
+        const gateOpen: boolean | null = wStat ? (dir === "buyDex" ? wStat.deposit : wStat.withdraw) : null;
+        const blocked = gateOpen === false || chainMatch === false;
+        const transfer: TransferGate = {
+          withdraw: dir === "buyDex"
+            ? { venue: "dex" as Venue, enabled: true } // 온체인 매수분은 항상 내 지갑에 있음
+            : { venue: "binance" as Venue, enabled: wStat ? wStat.withdraw : null },
+          deposit: dir === "buyDex"
+            ? { venue: "binance" as Venue, enabled: wStat ? wStat.deposit : null }
+            : { venue: "dex" as Venue, enabled: true },
+          etaMin, blocked,
+          network: { chain: uni.chain, confirms: netInfo.confirms },
+        };
         const dexLeg = { venue: "dex" as const, symbol: `${base}/${uni.quote.symbol}@${uni.chain}`, price: dexPrice, quote: "USDT" };
         const cexLeg = { venue: "binance" as const, symbol: `${base}USDT`, price: dir === "buyDex" ? cex.bid! : cex.ask!, quote: "USDT" };
         out.push({
@@ -472,14 +504,24 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
           costPct: cost,
           netPct: net,
           notionalCapUsd: DEXDEX_REF_USD,
-          // Executable once net clears AND OKX Web3 keys are set (DEX swap wired);
-          // inventory-style so no transfer gate. DRY keeps the demo runnable.
-          executable: net > 0 && !unverified && (CONFIG.DRY_RUN || dexConfigured()),
+          transfer,
+          // 라이브 실행은 게이트가 "확인된 열림"일 때만 (미상=차단). DRY는 게이트
+          // 미상이어도 시뮬 가능하되, 확인된 차단은 DRY에서도 막는다.
+          executable: net > 0 && !unverified && !blocked
+            && (CONFIG.DRY_RUN || (dexConfigured() && gateOpen === true && chainMatch === true)),
           unverified: unverified || undefined,
           // Stale-quote warning: OKX DEX quote is up to CEXDEX_TTL_MS + sweep old
           // vs ~12s blocks — real dislocations close within 1-2 blocks, so the
           // board edge is indicative only. Age shown so it's never mistaken live.
-          note: `${uni.chain} · OKX 라우팅 · 가스 $${gasUsd.toFixed(2)} (${gasPct.toFixed(2)}%) · $${DEXDEX_REF_USD} 기준 · 견적 최대 ${Math.round(CEXDEX_TTL_MS / 1000)}s 지연(블록당 소멸, 참고용)${unverified ? " · ⚠ 심볼일치만(컨트랙트 미검증) — 수동확인 필요" : ""}`,
+          note: [
+            `${uni.chain} · 전송형 ${dir === "buyDex" ? "DEX매수→바낸입금→매도" : "바낸매수→출금→DEX매도"}`,
+            `스왑가스 $${swapGasUsd.toFixed(2)} + ${dir === "buyDex" ? `전송가스 $${sendGasUsd.toFixed(2)}` : `출금수수료 ${wFeePct != null ? wFeePct.toFixed(2) + "%" : "미상(0.05% 가정)"}`}`,
+            `ETA ~${etaMin}분(전송 중 가격 노출)`,
+            chainMatch === false ? `⚠ 바낸 입출금 체인(${netInfo.chain})과 불일치 — 이 루트 불가` : null,
+            gateOpen === false ? `⚠ 바낸 ${dir === "buyDex" ? "입금" : "출금"} 정지` : gateOpen === null ? "입출금 미확인(바낸 키 필요)" : null,
+            `$${DEXDEX_REF_USD} 기준 · 견적 최대 ${Math.round(CEXDEX_TTL_MS / 1000)}s 지연`,
+            unverified ? "⚠ 심볼일치만(컨트랙트 미검증) — 수동확인 필요" : null,
+          ].filter(Boolean).join(" · "),
           ts: now(),
         });
       };
