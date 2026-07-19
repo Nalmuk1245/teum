@@ -183,6 +183,69 @@ export function ListingPanel() {
   );
 }
 
+// ── 차트 (PC용) — CEX는 TradingView 임베드, DEX는 DexScreener 임베드 ──────────
+const TV_SYMBOL: Record<string, (b: string) => string> = {
+  binance: (b) => `BINANCE:${b}USDT`,
+  bybit: (b) => `BYBIT:${b}USDT`,
+  okx: (b) => `OKX:${b}USDT`,
+  upbit: (b) => `UPBIT:${b}KRW`,
+  bithumb: (b) => `BITHUMB:${b}KRW`,
+};
+
+function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: DexRow[] }) {
+  type Opt = { key: string; label: string; src: string };
+  const opts: Opt[] = [
+    ...cex.filter((r) => r.listed && TV_SYMBOL[r.venue]).map((r) => ({
+      key: `cex:${r.venue}`,
+      label: vlabel(r.venue as never) ?? r.venue,
+      src: `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(TV_SYMBOL[r.venue](base))}&interval=5&theme=dark&style=1&locale=kr&hide_side_toolbar=1&allow_symbol_change=0&save_image=0&withdateranges=0`,
+    })),
+    ...dex.map((x) => ({
+      key: `dex:${x.chain}`,
+      label: `DEX·${x.chain}`,
+      src: `https://dexscreener.com/${x.chain}/${x.contract}?embed=1&theme=dark&trades=0&info=0`,
+    })),
+  ];
+  const [sel, setSel] = useState<string | null>(null);
+  const [open, setOpen] = useState(true);
+  const active = opts.find((o) => o.key === sel) ?? opts[0];
+  if (!opts.length) return null;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ ...CAP, color: "var(--text-dim)" }}>차트</span>
+        {open && opts.map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => setSel(o.key)}
+            style={{
+              border: "1px solid " + (active?.key === o.key ? "var(--brand)" : "var(--border)"),
+              background: active?.key === o.key ? "var(--brand-soft)" : "transparent",
+              color: active?.key === o.key ? "var(--brand-2)" : "var(--text-dim)",
+              borderRadius: 2, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            {o.label}
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        <button type="button" style={BTN_GHOST} onClick={() => setOpen(!open)}>{open ? "차트 접기" : "차트 펼치기"}</button>
+      </div>
+      {open && active && (
+        <iframe
+          key={active.key /* venue 전환 시 강제 재로드 */}
+          src={active.src}
+          title={`${base} chart — ${active.label}`}
+          style={{ width: "100%", height: 440, border: "1px solid var(--border)", borderRadius: 2, background: "#0e0f12" }}
+          allow="clipboard-write"
+          loading="lazy"
+        />
+      )}
+    </div>
+  );
+}
+
 // ── 상세·실행 패널 ─────────────────────────────────────────────────────────────
 function DetailPanel({ base }: { base: string }) {
   const [d, setD] = useState<Detail | null>(null);
@@ -255,6 +318,9 @@ function DetailPanel({ base }: { base: string }) {
           style={{ width: 64, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "4px 7px", fontSize: 12, outline: "none", textAlign: "right" }}
         />
       </div>
+
+      {/* 차트 — CEX(TradingView) / DEX(DexScreener) 전환 */}
+      <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
 
       {/* 컨트랙트 */}
       {d.token && d.token.contractsList.length > 0 && (
