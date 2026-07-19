@@ -48,6 +48,23 @@ export default function Cockpit() {
   const [mode, setMode] = useState<"monitor" | "funding" | "listing" | "control" | "assets">("monitor");
   // PC: 보드 행 클릭 → 우측 상세(차트·히스토리·실행) 검사창.
   const [inspectId, setInspectId] = useState<string | null>(null);
+  // 테마 — 다크 기본(상시 감시 화면), 라이트는 수동 토글 (persisted).
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("ac.theme") === "light") {
+        setTheme("light");
+        document.documentElement.dataset.theme = "light";
+      }
+    } catch { /* private mode */ }
+  }, []);
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    if (next === "light") document.documentElement.dataset.theme = "light";
+    else delete document.documentElement.dataset.theme;
+    try { localStorage.setItem("ac.theme", next); } catch { /* */ }
+  };
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -206,7 +223,7 @@ export default function Cockpit() {
           display: "flex", alignItems: "center", gap: isMobile ? 10 : 14,
           padding: isMobile ? "9px 12px" : "9px 16px",
           borderBottom: "1px solid var(--border)",
-          background: "rgba(21,23,27,0.9)",
+          background: "var(--header-bg)",
           backdropFilter: "blur(12px)",
         }}
       >
@@ -231,11 +248,23 @@ export default function Cockpit() {
             border: `1px solid ${runsStore.killed ? "var(--neg)" : "var(--border-strong)"}`,
             background: runsStore.killed ? "var(--neg-soft)" : "transparent",
             color: runsStore.killed ? "var(--neg)" : "var(--text-dim)",
-            borderRadius: 2, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+            borderRadius: 9, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 2, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
           {runsStore.killed ? "중단됨" : "STOP"}
+        </button>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          title={theme === "dark" ? "라이트 모드" : "다크 모드"}
+          style={{
+            border: "1px solid var(--border-strong)", background: "transparent",
+            color: "var(--text-dim)", borderRadius: 999, width: 26, height: 26,
+            display: "grid", placeItems: "center", fontSize: 12, cursor: "pointer",
+          }}
+        >
+          {theme === "dark" ? "☾" : "☀"}
         </button>
         <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
         {meta?.mock && !isMobile && <Pill text="목업" tone="var(--sky)" soft />}
@@ -287,7 +316,7 @@ export default function Cockpit() {
                 <span style={{ fontSize: 13.5, fontWeight: active ? 700 : 500, color: active ? "var(--text)" : "var(--text-mute)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {m.label}
                   {m.k === "control" && activeRuns > 0 && (
-                    <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "#181a20", background: "var(--brand)", borderRadius: 2, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
+                    <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "var(--brand-ink)", background: "var(--brand)", borderRadius: 9, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
                       {activeRuns}
                     </span>
                   )}
@@ -363,7 +392,7 @@ export default function Cockpit() {
           style={{
             display: "inline-flex", gap: 4, padding: 4,
             background: "var(--card)", border: "1px solid var(--border)",
-            borderRadius: 2,
+            borderRadius: 9,
           }}
         >
           {(["all", ...GAP_KINDS] as const).map((k) => {
@@ -376,7 +405,7 @@ export default function Cockpit() {
                 type="button"
                 onClick={() => setFilter(k)}
                 style={{
-                  border: "none", cursor: "pointer", borderRadius: 2,
+                  border: "none", cursor: "pointer", borderRadius: 9,
                   padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
                   background: active ? "var(--brand-soft)" : "transparent",
                   color: active ? "var(--brand-2)" : "var(--text-dim)",
@@ -399,7 +428,7 @@ export default function Cockpit() {
           title="순수익 마이너스(비용 못 넘는) 갭 숨기기"
           style={{
             border: `1px solid ${plusOnly ? "var(--pos)" : "var(--border)"}`,
-            cursor: "pointer", borderRadius: 2, flex: "0 0 auto",
+            cursor: "pointer", borderRadius: 9, flex: "0 0 auto",
             padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
             background: plusOnly ? "var(--pos-soft)" : "transparent",
             color: plusOnly ? "var(--pos)" : "var(--text-dim)",
@@ -444,10 +473,10 @@ export default function Cockpit() {
                   background: alertsOn ? "var(--brand-soft)" : "transparent",
                   border: `1px solid ${alertsOn ? "var(--brand)" : "var(--border)"}`,
                   color: alertsOn ? "var(--brand-2)" : "var(--text-mute)",
-                  borderRadius: 2, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+                  borderRadius: 9, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
                 }}
               >
-                <span style={{ width: 5, height: 5, borderRadius: 2, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
+                <span style={{ width: 5, height: 5, borderRadius: 9, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
                 알림 {alertsOn ? "ON" : "OFF"}
               </button>
             )}
@@ -503,11 +532,11 @@ export default function Cockpit() {
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30,
             display: "flex", alignItems: "center", gap: 10,
             padding: "9px 14px",
-            background: "rgba(11,14,17,0.92)", backdropFilter: "blur(10px)",
+            background: "var(--header-bg)", backdropFilter: "blur(10px)",
             borderTop: "1px solid var(--border)",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 2, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 9, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
           <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
             최고 <b style={{ color: "var(--text)" }}>{best.o.base}</b>
           </span>
@@ -527,7 +556,7 @@ export default function Cockpit() {
               onClick={() => setSelected(best.o)}
               style={{
                 border: "none", borderRadius: "var(--radius-sm)", padding: "6px 14px",
-                background: "var(--brand-grad)", color: "#0b0e11",
+                background: "var(--brand-grad)", color: "var(--brand-ink)",
                 fontWeight: 700, fontSize: 12, cursor: "pointer",
               }}
             >

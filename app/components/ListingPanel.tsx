@@ -46,10 +46,10 @@ const ago = (ts: number) => { const s = Math.round((Date.now() - ts) / 1000); re
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" };
-const BTN: React.CSSProperties = { border: "none", borderRadius: 2, padding: "6px 12px", background: "var(--brand)", color: "#10141a", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
+const BTN: React.CSSProperties = { border: "none", borderRadius: 9, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
-const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 2, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
-const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
+const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
+const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
 
 // 실행 표 공통 그리드: 처 | 가격 | 내 자금 | 비고 | 액션
 const EXEC_COLS = "84px minmax(70px,1fr) minmax(60px,1fr) minmax(80px,1.2fr) auto";
@@ -156,7 +156,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       {/* 헤더: 상태점 + 수동조회 + 알림 + 드릴 */}
       <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
         <span title={watchTitle} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}>
-          <span style={{ width: 6, height: 6, borderRadius: 2, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 9, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
           <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
         </span>
         <span style={CAP}>{rows.length}건</span>
@@ -190,7 +190,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         title={`공지 감지 → 해외 최저가 CEX 즉시 시장가 매수.\n킬스위치·리스크 한도 하위 + 시총/기펌핑 가드.\n라이브 집행은 LISTING_AUTO_LIVE=true 필요${autoLive ? " (활성)" : " (미설정 — 모의만)"}.`}
         style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, background: auto?.armed ? "color-mix(in srgb, var(--amber) 6%, transparent)" : "transparent" }}
       >
-        <span style={{ width: 6, height: 6, borderRadius: 2, background: auto?.armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 9, background: auto?.armed ? "var(--amber)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 12, fontWeight: 600, color: auto?.armed ? "var(--amber)" : "var(--text-dim)" }}>공지 즉시 자동매수</span>
         <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{auto?.armed ? (autoLive ? "무장 · 라이브" : "무장 · 모의") : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
@@ -204,7 +204,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         <button
           type="button"
           onClick={() => void saveAuto({ armed: !auto?.armed })}
-          style={{ ...BTN, background: auto?.armed ? "var(--neg)" : "var(--brand)", color: auto?.armed ? "#fff" : "#10141a" }}
+          style={{ ...BTN, background: auto?.armed ? "var(--neg)" : "var(--brand)", color: auto?.armed ? "#fff" : "var(--brand-ink)" }}
         >
           {auto?.armed ? "해제" : "무장"}
         </button>
@@ -227,8 +227,8 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{l.base}</span>
-                {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 2, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
-                <span style={{ fontSize: 9.5, fontWeight: 700, color: "#181a20", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px", whiteSpace: "nowrap" }}>
+                {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 9, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-ink)", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px", whiteSpace: "nowrap" }}>
                   {l.opened ? "거래개시" : "공지"}
                 </span>
                 <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {ago(l.announcedAt)} 전</span>
@@ -377,7 +377,7 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
               border: "1px solid " + (active?.key === o.key ? "var(--brand)" : "var(--border)"),
               background: active?.key === o.key ? "var(--brand-soft)" : "transparent",
               color: active?.key === o.key ? "var(--brand-2)" : "var(--text-dim)",
-              borderRadius: 2, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
+              borderRadius: 9, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
             }}
           >
             {o.label}
@@ -391,7 +391,7 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
           key={active.key /* venue 전환 시 강제 재로드 */}
           src={active.src}
           title={`${base} chart — ${active.label}`}
-          style={{ width: "100%", height: 440, border: "1px solid var(--border)", borderRadius: 2, background: "#0e0f12" }}
+          style={{ width: "100%", height: 440, border: "1px solid var(--border)", borderRadius: 9, background: "#0e0f12" }}
           allow="clipboard-write"
           loading="lazy"
         />
@@ -480,7 +480,7 @@ function DetailPanel({ base }: { base: string }) {
   return (
     <div style={{ padding: "0 14px 14px", background: "var(--card-2)", borderTop: "1px solid var(--border)" }}>
       {/* ① 신호 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 2, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
         {signal("가격", d.token?.priceUsd != null ? `$${fmtPx(d.token.priceUsd)}` : "—")}
         {signal("시총", fmtUsd(d.token?.marketCapUsd))}
         {signal("24h 볼륨", fmtUsd(d.token?.volumeUsd))}
@@ -641,7 +641,7 @@ function DetailPanel({ base }: { base: string }) {
                   >
                     {copied === c.chain ? "복사됨 ✓" : `${c.address.slice(0, 10)}…${c.address.slice(-8)}`}
                   </button>
-                  {dexRow?.verified && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--pos)", border: "1px solid var(--pos)", borderRadius: 2, padding: "0 4px" }}>OKX 검증</span>}
+                  {dexRow?.verified && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--pos)", border: "1px solid var(--pos)", borderRadius: 9, padding: "0 4px" }}>OKX 검증</span>}
                 </div>
               );
             }) : (

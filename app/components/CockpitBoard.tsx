@@ -86,8 +86,8 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
           <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
             {km.label}
           </span>
-          {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 2, padding: "0 3px" }}>mock</span>}
-          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
+          {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 9, padding: "0 3px" }}>mock</span>}
+          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         </span>
         <span style={{ textAlign: "right", flex: "0 0 auto" }}>
           <span
@@ -139,11 +139,11 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
             disabled={!o.executable}
             onClick={() => onExecute(o)}
             style={{
-              borderRadius: 2, padding: "8px 16px", fontSize: 13, fontWeight: 600,
+              borderRadius: 9, padding: "8px 16px", fontSize: 13, fontWeight: 600,
               cursor: o.executable ? "pointer" : "not-allowed",
               border: o.executable ? "none" : "1px solid var(--border-strong)",
               background: o.executable ? "var(--brand)" : "transparent",
-              color: o.executable ? "#10141a" : "var(--text-mute)",
+              color: o.executable ? "var(--brand-ink)" : "var(--text-mute)",
               boxShadow: "none",
               flex: "0 0 auto",
             }}
@@ -194,13 +194,13 @@ export function Row({ o, onExecute, showExecute, live, flashing, onInspect, insp
       <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
         <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{o.base}</span>
         {o.suspectApr && (
-          <span title="APR 스파이크 — 신규상장/얇은 OI로 실체결 용량이 없을 확률이 높음" style={{ fontSize: 9, fontWeight: 700, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 2, padding: "0 4px" }}>
+          <span title="APR 스파이크 — 신규상장/얇은 OI로 실체결 용량이 없을 확률이 높음" style={{ fontSize: 9, fontWeight: 700, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 9, padding: "0 4px" }}>
             스파이크?
           </span>
         )}
-        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "#181a20", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 2, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
+        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         {o.mock ? (
-          <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 2, padding: "0 4px" }}>
+          <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 9, padding: "0 4px" }}>
             mock
           </span>
         ) : !isApr && <PersistChip p={o.persistence} />}
@@ -246,11 +246,11 @@ export function Row({ o, onExecute, showExecute, live, flashing, onInspect, insp
           onClick={(e) => { e.stopPropagation(); onExecute(o); }}
           style={{
             justifySelf: "end",
-            borderRadius: 2, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,
+            borderRadius: 9, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,
             cursor: o.executable ? "pointer" : "not-allowed",
             border: o.executable ? "none" : "1px solid var(--border-strong)",
             background: o.executable ? "var(--brand-grad)" : "transparent",
-            color: o.executable ? "#181a20" : "var(--text-mute)",
+            color: o.executable ? "var(--brand-ink)" : "var(--text-mute)",
             boxShadow: "none",
           }}
         >

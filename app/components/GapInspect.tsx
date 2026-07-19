@@ -97,7 +97,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
         </span>
         <span style={{ flex: 1 }} />
         <span className="tnum" style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-0.03em", color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
-        <button type="button" onClick={onClose} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>닫기</button>
+        <button type="button" onClick={onClose} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>닫기</button>
       </div>
 
       <div style={{ padding: "10px 14px 14px" }}>
@@ -113,7 +113,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
                     border: `1px solid ${activeChart?.key === c.key ? "var(--brand)" : "var(--border)"}`,
                     background: activeChart?.key === c.key ? "var(--brand-soft)" : "transparent",
                     color: activeChart?.key === c.key ? "var(--brand-2)" : "var(--text-dim)",
-                    borderRadius: 2, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
+                    borderRadius: 9, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
                   }}
                 >
                   {c.label}
@@ -125,7 +125,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
                 key={activeChart.key}
                 src={activeChart.src}
                 title={`${opp.base} — ${activeChart.label}`}
-                style={{ width: "100%", height: 300, border: "1px solid var(--border)", borderRadius: 2, background: "#0e0f12" }}
+                style={{ width: "100%", height: 300, border: "1px solid var(--border)", borderRadius: 9, background: "#0e0f12" }}
                 loading="lazy"
               />
             )}
@@ -164,9 +164,9 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
           disabled={!opp.executable}
           onClick={() => onExecute(opp)}
           style={{
-            marginTop: 12, width: "100%", border: "none", borderRadius: 2, padding: "11px 0",
+            marginTop: 12, width: "100%", border: "none", borderRadius: 9, padding: "11px 0",
             background: opp.executable ? "var(--brand)" : "var(--card-3)",
-            color: opp.executable ? "#10141a" : "var(--text-mute)",
+            color: opp.executable ? "var(--brand-ink)" : "var(--text-mute)",
             fontWeight: 700, fontSize: 13.5, cursor: opp.executable ? "pointer" : "not-allowed",
           }}
         >

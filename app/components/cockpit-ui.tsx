@@ -89,7 +89,7 @@ export function Empty({ text }: { text: string }) {
 
 export function Metric({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
-    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, padding: "8px 10px" }}>
+    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px" }}>
       <div style={{ fontSize: 10, color: "var(--text-mute)" }}>{label}</div>
       <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: tone ?? "var(--text)" }}>{value}</div>
       {sub && <div style={{ fontSize: 9.5, color: "var(--text-mute)" }}>{sub}</div>}
@@ -118,7 +118,7 @@ export function Line({
 
 export function Warn({ text }: { text: string }) {
   return (
-    <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 2, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
+    <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 9, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
       {text}
     </div>
   );
@@ -209,7 +209,7 @@ export function PersistChip({ p }: { p?: Opportunity["persistence"] }) {
       title={`지속 ${label} · 적중률 ${p.hitRatePct}%`}
       style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600, color: tone }}
     >
-      <span style={{ width: 4, height: 4, borderRadius: 2, background: tone }} />
+      <span style={{ width: 4, height: 4, borderRadius: 9, background: tone }} />
       {held <= 0 ? "신규" : `지속 ${label}`}
     </span>
   );
@@ -228,7 +228,7 @@ export function ScanAge({ ts, live }: { ts: number; live: boolean }) {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--text-mute)" }}>
       {live && (
         <>
-          <span style={{ width: 5, height: 5, borderRadius: 2, background: "var(--pos)" }} />
+          <span style={{ width: 5, height: 5, borderRadius: 9, background: "var(--pos)" }} />
           <span style={{ color: "var(--pos)", fontWeight: 600 }}>실시간</span>
           <span>·</span>
         </>
@@ -252,12 +252,12 @@ export function LiveDots({ status, ages, isMobile }: { status: LiveStatus; ages:
         title={`${label} · ${age != null ? age + "s 전" : "미수신"}`}
         style={{
           display: "inline-flex", alignItems: "center", gap: 4,
-          border: "1px solid var(--border)", borderRadius: 2,
+          border: "1px solid var(--border)", borderRadius: 9,
           padding: isMobile ? "2px 5px" : "2px 7px",
           background: "var(--card)",
         }}
       >
-        <span style={{ width: 5, height: 5, borderRadius: 2, background: tone }} />
+        <span style={{ width: 5, height: 5, borderRadius: 9, background: tone }} />
         <span className="tnum" style={{ fontSize: 10, fontWeight: 600, color: on ? "var(--text-dim)" : "var(--text-mute)" }}>
           {label}
           {!isMobile && age != null && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}> {age}s</span>}
@@ -288,10 +288,10 @@ export function Pill({
         display: "inline-flex", alignItems: "center", gap: 6,
         border: `1px solid ${soft ? "transparent" : tone}`,
         background: soft ? "color-mix(in srgb, " + tone + " 14%, transparent)" : "transparent",
-        color: tone, fontSize: 12, fontWeight: 600, borderRadius: 2, padding: "5px 11px",
+        color: tone, fontSize: 12, fontWeight: 600, borderRadius: 9, padding: "5px 11px",
       }}
     >
-      {dot && <span style={{ width: 7, height: 7, borderRadius: 2, background: tone }} />}
+      {dot && <span style={{ width: 7, height: 7, borderRadius: 9, background: tone }} />}
       {text}
     </span>
   );
@@ -299,5 +299,5 @@ export function Pill({
 
 export const xBtn: React.CSSProperties = {
   background: "transparent", border: "1px solid var(--border-strong)",
-  color: "var(--text-dim)", fontSize: 13, borderRadius: 2, padding: "4px 9px", cursor: "pointer",
+  color: "var(--text-dim)", fontSize: 13, borderRadius: 9, padding: "4px 9px", cursor: "pointer",
 };

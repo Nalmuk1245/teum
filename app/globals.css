@@ -1,50 +1,101 @@
+/* ── Liquid Glass (시안 glass-cockpit 이식) ─────────────────────────────
+   다크 기본(트레이딩 상시 화면) + [data-theme="light"] 수동 토글.
+   유리 재질: 반투명 표면 + 상단 스펙큘러 엣지(inset 그림자 토큰에 포함),
+   배경은 그라데이션 + 웜/인디고 블롭 글로우. 컴포넌트는 토큰만 참조. */
 :root {
-  /* ── Mono trading desk (de-AI pass) ───────────────────────────── */
-  /* Flat near-black surfaces, hairline dividers, 2px corners, no
-     gradients / glows / pills. Numbers are the protagonist. */
-  --bg: #15171b; /* app background */
+  --bg: rgba(10, 12, 17, 0.55); /* 입력창 등 유리 위의 오목면 */
   --bg-grad: none;
-  --card: #17191e; /* panel — barely above bg, hairline-separated */
-  --card-2: #1e2126; /* nested / hover */
-  --card-3: #24272d;
-  --border: #2b2e34; /* hairline */
-  --border-strong: #383c43;
+  --card: rgba(36, 39, 48, 0.62);
+  --card-2: rgba(50, 54, 65, 0.55);
+  --card-3: rgba(64, 69, 82, 0.55);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.20);
+  --header-bg: rgba(14, 16, 22, 0.72);
 
-  --text: #e9eaec;
-  --text-dim: #a8abb2;
-  --text-mute: #6b6f76;
+  --text: #eef0f4;
+  --text-dim: #a9aeb9;
+  --text-mute: #767c88;
 
-  /* accent — desaturated steel blue, reserved for "executable" things */
-  --brand: #5aa7dd;
-  --brand-2: #74b6e4;
-  --brand-soft: rgba(90, 167, 221, 0.1);
-  --brand-grad: var(--brand); /* flattened — no gradients in this design */
+  /* 액센트 — 실행 가능한 것에만 */
+  --brand: #6db1e8;
+  --brand-2: #8cc3f0;
+  --brand-soft: rgba(109, 177, 232, 0.14);
+  --brand-grad: var(--brand);
+  --brand-ink: #101216; /* 액센트/배지 위 잉크 */
 
-  /* semantic P&L — muted green/red (GitHub-diff family, not neon) */
-  --pos: #2ea043;
-  --pos-soft: rgba(46, 160, 67, 0.12);
-  --neg: #f85149;
-  --neg-soft: rgba(248, 81, 73, 0.12);
+  --pos: #4cc46e;
+  --pos-soft: rgba(76, 196, 110, 0.15);
+  --neg: #ff7369;
+  --neg-soft: rgba(255, 115, 105, 0.14);
 
-  /* strategy hues — color diet: muted, low-chroma */
-  --sky: #5aa7dd;
-  --amber: #d9a63f;
-  --teal: #3fae9e;
+  --sky: #6db1e8;
+  --amber: #e8b04c;
+  --teal: #46bfae;
 
-  --radius: 2px;
-  --radius-sm: 2px;
-  --shadow-sm: none;
-  --shadow: none;
-  --shadow-lg: none;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 
-  --sans: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas,
-    "Apple SD Gothic Neo", "Malgun Gothic", monospace;
-  --num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas,
-    monospace;
+  --html-grad: linear-gradient(160deg, #101218 0%, #0a0c10 100%);
+  --blob-warm-a: #b97b1e;
+  --blob-warm-b: #8a5a14;
+  --blob-warm-o: 0.42;
+  --blob-cool: #4a63d8;
+  --blob-cool-o: 0.30;
+
+  --sans: "Pretendard Variable", Pretendard, "Inter", -apple-system, system-ui,
+    "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --num: var(--sans);
+}
+
+:root[data-theme="light"] {
+  --bg: rgba(255, 255, 255, 0.65);
+  --card: rgba(255, 255, 255, 0.66);
+  --card-2: rgba(242, 244, 248, 0.75);
+  --card-3: rgba(233, 236, 242, 0.85);
+  --border: rgba(23, 24, 28, 0.08);
+  --border-strong: rgba(23, 24, 28, 0.18);
+  --header-bg: rgba(244, 246, 249, 0.72);
+
+  --text: #17181c;
+  --text-dim: #55585f;
+  --text-mute: #8b8e96;
+
+  --brand: #2b6fd8;
+  --brand-2: #4a86e2;
+  --brand-soft: rgba(43, 111, 216, 0.12);
+  --brand-ink: #ffffff;
+
+  --pos: #238a44;
+  --pos-soft: #e4f3e8;
+  --neg: #cf4444;
+  --neg-soft: #fdeaea;
+
+  --sky: #2b6fd8;
+  --amber: #c07b1d;
+  --teal: #1f9c8d;
+
+  --shadow-sm: 0 10px 26px rgba(23, 24, 28, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --shadow: 0 14px 34px rgba(23, 24, 28, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --shadow-lg: 0 24px 56px rgba(23, 24, 28, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+
+  --html-grad: linear-gradient(160deg, #eef0f3 0%, #e6e8ec 100%);
+  --blob-warm-a: #ffd76a;
+  --blob-warm-b: #ffb84d;
+  --blob-warm-o: 0.75;
+  --blob-cool: #3b57d0;
+  --blob-cool-o: 0.35;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  background: var(--html-grad);
+  min-height: 100%;
 }
 
 html,
@@ -52,15 +103,48 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 12.5px; /* mono runs wide — pull the baseline in a touch */
+  font-size: 13px;
   line-height: 1.4;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  transition: color 300ms ease;
+}
+
+body {
+  background: transparent;
+  position: relative;
+}
+
+/* 배경 블롭 — 유리 뒤에서 은은히 비치는 광원 */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  pointer-events: none;
+}
+body::before {
+  width: 56vw;
+  height: 44vw;
+  left: 26vw;
+  top: -8vw;
+  background: radial-gradient(circle at 45% 45%, var(--blob-warm-a) 0%, var(--blob-warm-b) 40%, transparent 72%);
+  filter: blur(80px);
+  opacity: var(--blob-warm-o);
+}
+body::after {
+  width: 22vw;
+  height: 18vw;
+  right: 4vw;
+  bottom: -4vw;
+  background: radial-gradient(circle, var(--blob-cool) 0%, transparent 70%);
+  filter: blur(70px);
+  opacity: var(--blob-cool-o);
 }
 
 button,
@@ -84,21 +168,16 @@ button:disabled {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 0;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #4a4f57;
+  border-radius: 999px;
 }
 
-/* ── Motion (frequency-based: only occasional surfaces animate) ──────────
-   Tab switches / scan updates / row hovers: NO animation — seen hundreds of
-   times a day. Modals, detail panels: single ease-out enter. */
+/* ── Motion (frequency-based) — 가끔 보는 표면만 진입 모션 ──────────── */
 @keyframes panel-in {
-  from { opacity: 0; transform: scale(0.98) translateY(4px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: scale(0.985) translateY(6px); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
 }
 .panel-in {
-  animation: panel-in 180ms cubic-bezier(0.16, 1, 0.3, 1); /* ease-out — instant start, gentle settle */
+  animation: panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1); /* materialize — 크리티컬 댐핑 */
 }
 @keyframes overlay-in {
   from { opacity: 0; }
@@ -108,8 +187,7 @@ button:disabled {
   animation: overlay-in 150ms ease-out;
 }
 
-/* Press feedback — buttons must respond to touch. Scale, not color, so it
-   reads at every size; transform doesn't reflow layout. */
+/* Press feedback — pointer-down 즉시 */
 button {
   transition: transform 100ms ease-out;
 }
@@ -124,7 +202,7 @@ button:not(:disabled):active {
 
 /* Spike alert — a row whose live net just crossed the threshold */
 @keyframes spike-flash {
-  0% { background: rgba(90, 167, 221, 0.22); }
+  0% { background: rgba(109, 177, 232, 0.22); }
   100% { background: transparent; }
 }
 .spike-flash {

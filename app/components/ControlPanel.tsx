@@ -110,7 +110,7 @@ export function KillCard({ killed }: { killed: boolean }) {
         style={{
           border: "none", borderRadius: "var(--radius-sm)", padding: "10px 18px", cursor: "pointer",
           fontWeight: 800, fontSize: 13,
-          background: killed ? "var(--pos)" : "var(--neg)", color: "#0b0e11",
+          background: killed ? "var(--pos)" : "var(--neg)", color: "var(--brand-ink)",
         }}
       >
         {killed ? "해제" : "전체 중단"}
@@ -150,7 +150,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
   const field = (label: string, key: "perTrade" | "inFlight" | "dailyLoss") => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 2, padding: "6px 8px", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)" }}>
         <span style={{ color: "var(--text-mute)", fontSize: 12 }}>$</span>
         <input
           className="tnum"
@@ -175,7 +175,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
         type="button"
         onClick={save}
         disabled={saving}
-        style={{ marginTop: 10, width: "100%", border: "none", borderRadius: "var(--radius-sm)", padding: 9, background: "var(--brand-grad)", color: "#181a20", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}
+        style={{ marginTop: 10, width: "100%", border: "none", borderRadius: "var(--radius-sm)", padding: 9, background: "var(--brand-grad)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}
       >
         {saving ? "저장 중…" : "한도 저장"}
       </button>
@@ -187,7 +187,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
               <span>총 노출 (진행 중)</span>
               <span className="tnum">{usd(inFlight)} / {usd(rs.maxInFlightUsd)}</span>
             </div>
-            <div style={{ height: 5, borderRadius: 2, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 5, borderRadius: 9, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
               <div style={{ width: `${flightPct}%`, height: "100%", background: flightPct > 90 ? "var(--neg)" : "var(--brand)" }} />
             </div>
           </div>
@@ -198,7 +198,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
                 {rs.realizedPnlUsd >= 0 ? "+" : "−"}${Math.abs(rs.realizedPnlUsd).toFixed(2)}
               </span>
             </div>
-            <div style={{ height: 5, borderRadius: 2, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 5, borderRadius: 9, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
               <div style={{ width: `${lossPct}%`, height: "100%", background: lossPct > 80 ? "var(--neg)" : "var(--amber)" }} />
             </div>
             <div style={{ fontSize: 10, color: "var(--text-mute)", marginTop: 3 }}>손실 한도까지 {usd(Math.max(0, rs.maxDailyLossUsd - loss))} 남음</div>
@@ -240,7 +240,7 @@ export function GatesCard() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="코인 검색 (예: XRP)"
-        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 8 }}
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 8 }}
       />
       {!data ? (
         <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "8px 0" }}>조회 중…</div>
@@ -327,11 +327,11 @@ export function TelegramCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>텔레그램 알림</span>
-        <span style={{ width: 6, height: 6, borderRadius: 2, background: on ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 9, background: on ? "var(--pos)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, color: on ? "var(--pos)" : "var(--text-mute)" }}>{on ? "연결됨" : "키 필요"}</span>
         <span style={{ flex: 1 }} />
         {on && (
-          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             {busy ? "…" : "테스트 발송"}
           </button>
         )}
@@ -351,7 +351,7 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
   const field = (label: string, key: "minNet" | "minHeld" | "sizeUsd", suffix: string) => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 2, padding: "6px 8px", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)" }}>
         <input className="tnum" inputMode="decimal" value={String(cfg[key])} disabled={cfg.armed}
           onChange={(e) => onChange({ ...cfg, [key]: num(e.target.value) })}
           style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: "var(--text)", fontSize: 13, outline: "none" }} />
@@ -363,12 +363,12 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
     <div style={{ background: cfg.armed ? "var(--brand-soft)" : "var(--card)", border: `1px solid ${cfg.armed ? "var(--brand)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>조건부 자동 진입</span>
-        <span style={{ width: 6, height: 6, borderRadius: 2, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 9, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, color: cfg.armed ? "var(--pos)" : "var(--text-mute)" }}>{cfg.armed ? "무장됨" : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
         <button type="button" disabled={killed} onClick={() => onChange({ ...cfg, armed: !cfg.armed })}
           style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
-            background: cfg.armed ? "var(--neg)" : "var(--brand-grad)", color: cfg.armed ? "#fff" : "#181a20" }}>
+            background: cfg.armed ? "var(--neg)" : "var(--brand-grad)", color: cfg.armed ? "#fff" : "var(--brand-ink)" }}>
           {cfg.armed ? "해제" : "무장"}
         </button>
       </div>
@@ -442,7 +442,7 @@ export function HoldingsCard() {
         <button
           type="button" disabled={importing} onClick={() => void runImport()}
           title="Etherscan 공개 라벨 덤프에서 거래소 지갑 주소를 가져옵니다 (1회, ~22MB)"
-          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 2, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "0 0 auto" }}
+          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "0 0 auto" }}
         >
           {importing ? "임포트 중…" : `라벨 임포트${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
         </button>
@@ -453,11 +453,11 @@ export function HoldingsCard() {
           onChange={(e) => setSym(e.target.value.toUpperCase())}
           onKeyDown={(e) => { if (e.key === "Enter") void lookup(sym); }}
           placeholder="티커 (예: PYR)"
-          style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 2, color: "var(--text)", padding: "7px 10px", fontSize: 12.5, outline: "none" }}
+          style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "7px 10px", fontSize: 12.5, outline: "none" }}
         />
         <button
           type="button" disabled={busy || !sym.trim()} onClick={() => void lookup(sym)}
-          style={{ border: "none", borderRadius: 2, padding: "7px 16px", background: "var(--brand)", color: "#10141a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+          style={{ border: "none", borderRadius: 9, padding: "7px 16px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
         >
           {busy ? "…" : "조회"}
         </button>
@@ -526,7 +526,7 @@ export function ToolsCard() {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {tools.map((x) => (
           <div key={x.t} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
-            <span style={{ marginTop: 5, width: 5, height: 5, borderRadius: 2, background: "var(--brand)", flex: "0 0 auto" }} />
+            <span style={{ marginTop: 5, width: 5, height: 5, borderRadius: 9, background: "var(--brand)", flex: "0 0 auto" }} />
             <div>
               <div style={{ fontSize: 12.5, fontWeight: 600 }}>{x.t}</div>
               <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{x.d}</div>
@@ -581,7 +581,7 @@ export function RunsDashboard({ runs, onOpen }: {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 6, height: 6, borderRadius: 2, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
+                <span style={{ width: 6, height: 6, borderRadius: 9, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
                 <span style={{ fontWeight: 700, fontSize: 13.5 }}>{r.base}</span>
                 <span style={{ fontSize: 11, color: "var(--text-mute)" }}>{r.route}</span>
                 <span style={{ flex: 1 }} />
@@ -589,7 +589,7 @@ export function RunsDashboard({ runs, onOpen }: {
                 <span style={{ fontSize: 11, fontWeight: 600, color: ph.c }}>{ph.t}</span>
               </div>
               {/* progress */}
-              <div style={{ display: "flex", height: 5, borderRadius: 2, overflow: "hidden", background: "var(--bg)", marginTop: 8 }}>
+              <div style={{ display: "flex", height: 5, borderRadius: 9, overflow: "hidden", background: "var(--bg)", marginTop: 8 }}>
                 <div style={{ width: `${total ? (doneCount / total) * 100 : 0}%`, background: r.phase === "error" ? "var(--neg)" : "var(--brand)", transition: "width 200ms" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 10.5, color: "var(--text-mute)" }}>
