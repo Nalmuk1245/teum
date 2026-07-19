@@ -251,7 +251,8 @@ export default function Cockpit() {
             border: `1px solid ${runsStore.killed ? "var(--neg)" : "var(--border-strong)"}`,
             background: runsStore.killed ? "var(--neg-soft)" : "transparent",
             color: runsStore.killed ? "var(--neg)" : "var(--text-dim)",
-            borderRadius: 9, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+            borderRadius: 9, padding: "0 10px", height: 28, boxSizing: "border-box",
+            fontSize: 11, fontWeight: 700, cursor: "pointer",
           }}
         >
           <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
@@ -264,11 +265,11 @@ export default function Cockpit() {
           style={{
             border: "1px solid var(--border)", background: "var(--card)",
             backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)",
-            color: "var(--text-dim)", borderRadius: 999, width: 26, height: 26,
-            display: "grid", placeItems: "center", fontSize: 13, cursor: "pointer",
+            color: "var(--text-dim)", borderRadius: 999, width: 28, height: 28, boxSizing: "border-box",
+            display: "grid", placeItems: "center", fontSize: 13, lineHeight: 1, cursor: "pointer",
           }}
         >
-          ⚙
+          <span style={{ display: "block", lineHeight: 1, transform: "translateY(0.5px)" }}>⚙</span>
         </button>
         <button
           type="button"
@@ -276,11 +277,11 @@ export default function Cockpit() {
           title={theme === "dark" ? "라이트 모드" : "다크 모드"}
           style={{
             border: "1px solid var(--border-strong)", background: "transparent",
-            color: "var(--text-dim)", borderRadius: 999, width: 26, height: 26,
-            display: "grid", placeItems: "center", fontSize: 12, cursor: "pointer",
+            color: "var(--text-dim)", borderRadius: 999, width: 28, height: 28, boxSizing: "border-box",
+            display: "grid", placeItems: "center", fontSize: 12, lineHeight: 1, cursor: "pointer",
           }}
         >
-          {theme === "dark" ? "☾" : "☀"}
+          <span style={{ display: "block", lineHeight: 1 }}>{theme === "dark" ? "☾" : "☀"}</span>
         </button>
         <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
         {meta?.mock && !isMobile && <Pill text="목업" tone="var(--sky)" soft />}
