@@ -74,7 +74,7 @@ export async function fetchHoldings(symbolRaw: string): Promise<HoldingsResult |
   for (const [venue, list] of Object.entries(book)) {
     for (const e of list) flat.push({ venue, type: e.type, address: e.address });
   }
-  if (!flat.length) return { error: "주소록 비어있음 — 관제 탭에서 라벨 임포트 먼저" };
+  if (!flat.length) return { error: "주소록 비어있음 — 운영 탭에서 라벨 가져오기 먼저" };
 
   const sums = new Map<string, { hot: number; cold: number; n: number }>();
   const bump = (venue: string, type: "hot" | "cold", amt: number) => {

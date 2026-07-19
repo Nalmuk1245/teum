@@ -16,7 +16,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
   const inFlight = inFlightUsd();
   const runsBlock = runs.length > 0
     ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
-    : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 실행 탭에서 시작하면 여기에 표시됩니다</div>;
+    : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 갭 탭에서 시작하면 여기에 표시됩니다</div>;
   const col: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 12, minWidth: 0 };
   if (!wide) {
     return (
@@ -57,7 +57,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
   );
 }
 
-// ── 관제 현황 스트립 — 지금 시스템이 뭘 하고 있는지 한 줄 요약 ────────────────
+// ── 운영 현황 스트립 — 지금 시스템이 뭘 하고 있는지 한 줄 요약 ────────────────
 function StatusCard({ runs, killed, inFlight, autoArmed }: { runs: RunView[]; killed: boolean; inFlight: number; autoArmed?: boolean }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [watch, setWatch] = useState<{ plays: number; annBlocked: boolean; annOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
@@ -88,7 +88,7 @@ function StatusCard({ runs, killed, inFlight, autoArmed }: { runs: RunView[]; ki
         {cell("실행 · 대기 · 오류", `${running} · ${paused} · ${errored}`, errored > 0 ? "var(--amber)" : undefined)}
         {cell("노출", risk ? `$${inFlight.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : `$${inFlight.toFixed(0)}`)}
         {cell("오늘 실현 손익", `${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`, pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : undefined)}
-        {cell("자동 진입", autoArmed ? "무장" : "꺼짐", autoArmed ? "var(--amber)" : undefined)}
+        {cell("자동 진입", autoArmed ? "켜짐" : "꺼짐", autoArmed ? "var(--amber)" : undefined)}
         {cell("상장 감시", watch == null ? "—" : listingWatchOk ? `정상 · ${watch.plays}건` : "차단/꺼짐", watch == null ? undefined : listingWatchOk ? "var(--pos)" : "var(--amber)")}
       </div>
     </div>
@@ -234,7 +234,7 @@ export function GatesCard() {
   };
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>입출금 게이트 조회</div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>입출금 상태 조회</div>
       <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 8 }}>실행 전 코인의 거래소별 입금·출금 열림 여부 확인 (<span style={{ color: "var(--pos)" }}>입/출</span> = 열림, <span style={{ color: "var(--neg)" }}>빨강</span> = 중단)</div>
       <input
         value={q}
@@ -364,12 +364,12 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>조건부 자동 진입</span>
         <span style={{ width: 6, height: 6, borderRadius: 9, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
-        <span style={{ fontSize: 11, color: cfg.armed ? "var(--pos)" : "var(--text-mute)" }}>{cfg.armed ? "무장됨" : "꺼짐"}</span>
+        <span style={{ fontSize: 11, color: cfg.armed ? "var(--pos)" : "var(--text-mute)" }}>{cfg.armed ? "켜짐" : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
         <button type="button" disabled={killed} onClick={() => onChange({ ...cfg, armed: !cfg.armed })}
           style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
             background: cfg.armed ? "var(--neg)" : "var(--brand-grad)", color: cfg.armed ? "#fff" : "var(--brand-ink)" }}>
-          {cfg.armed ? "해제" : "무장"}
+          {cfg.armed ? "끄기" : "켜기"}
         </button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginTop: 10 }}>
@@ -379,7 +379,7 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
       </div>
       <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginTop: 8, lineHeight: 1.5 }}>
         조건 충족 시 자동으로 매수+헷지까지 진입하고 <b>출금 직전에 멈춥니다</b>(승인 필요). 동시 1건 ·
-        코인당 30분 쿨다운 · 킬스위치 하위 · 브라우저가 열려 있어야 동작. 무장 상태는 저장되지 않음(세션마다 직접 켜기).
+        코인당 30분 쿨다운 · 킬스위치 하위 · 브라우저가 열려 있어야 동작. 켜짐 상태는 저장되지 않음(세션마다 직접 켜기).
       </div>
     </div>
   );
@@ -427,7 +427,7 @@ export function HoldingsCard() {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "import" }),
       })).json();
       if (j.error) setErr(`임포트 실패: ${j.error}`);
-      else setErr(`✓ 라벨 임포트 완료: ${Object.entries(j.counts as Record<string, number>).map(([v, n]) => `${v} ${n}`).join(" · ")}`);
+      else setErr(`✓ 라벨 가져오기 완료: ${Object.entries(j.counts as Record<string, number>).map(([v, n]) => `${v} ${n}`).join(" · ")}`);
     } catch { setErr("임포트 요청 실패"); }
     finally { setImporting(false); }
   };
@@ -444,7 +444,7 @@ export function HoldingsCard() {
           title="Etherscan 공개 라벨 덤프에서 거래소 지갑 주소를 가져옵니다 (1회, ~22MB)"
           style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "0 0 auto" }}
         >
-          {importing ? "임포트 중…" : `라벨 임포트${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
+          {importing ? "임포트 중…" : `라벨 가져오기${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
         </button>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -507,7 +507,7 @@ export function HoldingsCard() {
       )}
       {!data && !err && (
         <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-mute)" }}>
-          상장 공지가 뜨면 텔레그램 알림에 자동 포함됩니다. 여기선 아무 티커나 수동 조회. 최초 1회 라벨 임포트 필요.
+          상장 공지가 뜨면 텔레그램 알림에 자동 포함됩니다. 여기선 아무 티커나 수동 조회. 최초 1회 라벨 가져오기 필요.
         </div>
       )}
     </div>
@@ -517,12 +517,12 @@ export function HoldingsCard() {
 export function ToolsCard() {
   const tools = [
     { t: "긴급 청산·헷지 정리", d: "열린 포지션을 즉시 시장가 청산 / 헷지만 정리" },
-    { t: "KRW 리패트리에이션", d: "원화 회수(오프램프) 한도·환전 비용 추적" },
+    { t: "원화 회수", d: "원화 회수(오프램프) 한도·환전 비용 추적" },
   ];
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>도구 (추천)</div>
-      <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 10 }}>더 붙이면 좋은 관제 도구들 — 원하는 걸 만들어 드립니다</div>
+      <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 10 }}>더 붙이면 좋은 운영 도구들 — 원하는 걸 만들어 드립니다</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {tools.map((x) => (
           <div key={x.t} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>

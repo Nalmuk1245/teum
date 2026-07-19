@@ -293,7 +293,7 @@ export default function Cockpit() {
             { k: "monitor", label: "갭", sub: "차익·실행" },
             { k: "funding", label: "펀딩", sub: "APR" },
             { k: "listing", label: "상장", sub: "따리·물량" },
-            { k: "control", label: "관제", sub: "실행·리스크" },
+            { k: "control", label: "운영", sub: "실행·리스크" },
             { k: "assets", label: "자산", sub: "잔고" },
           ] as const).map((m) => {
             const active = mode === m.k;
@@ -454,7 +454,7 @@ export default function Cockpit() {
         </div>
         )}
 
-        {/* Runs live on the 관제 tab now — nudge there when any are active. */}
+        {/* Runs live on the 운영 tab now — nudge there when any are active. */}
         {mode === "monitor" && activeRuns > 0 && (
           <button
             type="button"
@@ -466,14 +466,14 @@ export default function Cockpit() {
               fontSize: 12.5, fontWeight: 600,
             }}
           >
-            실행 중 {activeRuns}건 — 관제 탭에서 현황 보기 →
+            실행 중 {activeRuns}건 — 운영 탭에서 현황 보기 →
           </button>
         )}
 
         {/* ── Board ────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>
-            {funding ? "펀딩 스프레드 (숏 받는쪽 → 롱 내는쪽)" : "기회 테이블"}
+            {funding ? "펀딩 스프레드 (숏 받는쪽 → 롱 내는쪽)" : "기회 목록"}
           </span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
             {!funding && (

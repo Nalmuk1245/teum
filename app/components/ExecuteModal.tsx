@@ -374,7 +374,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
           <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
             {store.killed
               ? "킬 스위치가 활성화되어 신규 실행이 차단됩니다. 해제하려면 상단 정지 버튼을 누르세요."
-              : "실행은 백그라운드에서 돌아갑니다 — 이 창을 닫아도 계속 진행되며 '실행' 탭에서 상태를 볼 수 있습니다. 현재 DRY-RUN(시뮬)."}
+              : "실행은 백그라운드에서 돌아갑니다 — 이 창을 닫아도 계속 진행되며 '운영' 탭에서 상태를 볼 수 있습니다. 현재 DRY-RUN(시뮬)."}
           </p>
         </div>
       </div>

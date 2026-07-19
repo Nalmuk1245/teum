@@ -192,7 +192,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       >
         <span style={{ width: 6, height: 6, borderRadius: 9, background: auto?.armed ? "var(--amber)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 12, fontWeight: 600, color: auto?.armed ? "var(--amber)" : "var(--text-dim)" }}>공지 즉시 자동매수</span>
-        <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{auto?.armed ? (autoLive ? "무장 · 라이브" : "무장 · 모의") : "꺼짐"}</span>
+        <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{auto?.armed ? (autoLive ? "켜짐 · 라이브" : "켜짐 · 모의") : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
         <span style={CAP}>$</span>
         <input
@@ -206,7 +206,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
           onClick={() => void saveAuto({ armed: !auto?.armed })}
           style={{ ...BTN, background: auto?.armed ? "var(--neg)" : "var(--brand)", color: auto?.armed ? "#fff" : "var(--brand-ink)" }}
         >
-          {auto?.armed ? "해제" : "무장"}
+          {auto?.armed ? "끄기" : "켜기"}
         </button>
       </div>
 

@@ -1,8 +1,8 @@
 "use client";
 
 // 대시보드 탭 — 글래스 시안의 요약 화면을 실데이터로.
-// 구성: 실전화 체크리스트 · 리스크 펄스(게이지) · KPI 4장(세션 미니바) ·
-// 자본 배치(세그먼트 바) · 실시간 기회 스트림. 전부 기존 API에서 읽는다.
+// 구성: 라이브 전환 체크리스트 · 리스크 현황(게이지) · KPI 4장(세션 미니바) ·
+// 자금 배분(세그먼트 바) · 실시간 기회. 전부 기존 API에서 읽는다.
 
 import React from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -101,13 +101,13 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     for (const k of Object.keys(h) as (keyof typeof h)[]) if (h[k].length > 48) h[k].shift();
   }
 
-  // 리스크 펄스 — 사용률의 최대치 기준 여유
+  // 리스크 현황 — 사용률의 최대치 기준 여유
   const inFlight = inFlightUsd();
   const expoUse = risk && risk.maxInFlightUsd > 0 ? (inFlight / risk.maxInFlightUsd) * 100 : 0;
   const lossUse = risk && risk.maxDailyLossUsd > 0 ? (Math.max(0, -pnl) / risk.maxDailyLossUsd) * 100 : 0;
   const headroom = Math.max(0, Math.round(100 - Math.max(expoUse, lossUse)));
 
-  // 자본 배치 — 가용(현금) / 포지션(코인) / 전송 중(개인지갑 + 인플라이트)
+  // 자금 배분 — 가용(현금) / 포지션(코인) / 전송 중(개인지갑 + 인플라이트)
   const cash = (portfolio?.venues ?? []).reduce((s, v) => s + v.cashUsd, 0);
   const coins = (portfolio?.venues ?? []).reduce((s, v) => s + v.coins.reduce((a, c) => a + c.usdValue, 0), 0);
   const transit = (portfolio?.wallet?.totalUsd ?? 0) + inFlight;
@@ -137,10 +137,10 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
 
   return (
     <div style={{ paddingBottom: 46 }}>
-      {/* 상단 그리드: 체크리스트 | KPI 2×2 | 리스크 펄스 */}
+      {/* 상단 그리드: 체크리스트 | KPI 2×2 | 리스크 현황 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
         <div style={{ ...CARD, gridRow: mobile ? "auto" : "1 / 3", gridColumn: mobile ? "1 / -1" : undefined, padding: "16px 18px" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>실전화 체크리스트</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>라이브 전환 체크리스트</div>
           <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)" }}>라이브 전환 전 완료 항목 · RUNBOOK 순서</div>
           <div style={{ marginTop: 12, height: 6, borderRadius: 999, background: "var(--card-3)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", inset: 0, width: `${progress}%`, background: "var(--pos)", borderRadius: 999 }} />
@@ -163,7 +163,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
             onClick={() => onGoTab("control")}
             style={{ marginTop: 12, width: "100%", border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: "var(--radius-sm)", padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
           >
-            관제 탭에서 설정 →
+            운영 탭에서 설정 →
           </button>
         </div>
 
@@ -185,7 +185,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
         />
 
         <div style={{ ...CARD, gridColumn: mobile ? "1 / -1" : "4", gridRow: mobile ? "auto" : "1 / 3", padding: "16px 18px", display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>리스크 펄스</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>리스크 현황</div>
           <div style={{ position: "relative", margin: "10px auto 0", width: 180, height: 106 }}>
             <svg viewBox="0 0 200 118" width="180" height="106" aria-label={`리스크 여유 ${headroom}%`}>
               <path d="M 18 108 A 84 84 0 0 1 60 36" fill="none" stroke="var(--amber)" strokeWidth="14" strokeLinecap="round" opacity={expoUse > 60 || lossUse > 60 ? 1 : 0.55} />
@@ -219,11 +219,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
         </div>
       </div>
 
-      {/* 하단: 자본 배치 | 기회 스트림 */}
+      {/* 하단: 자금 배분 | 기회 스트림 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
         <div style={{ ...CARD, padding: "16px 18px" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700 }}>자본 배치</span>
+            <span style={{ fontSize: 13.5, fontWeight: 700 }}>자금 배분</span>
             {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
             <button type="button" onClick={() => onGoTab("assets")} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
           </div>
@@ -244,7 +244,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
         </div>
 
         <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
-          {secHd("실시간 기회 스트림", (
+          {secHd("실시간 기회", (
             <button type="button" onClick={() => onGoTab("monitor")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>갭 보드 →</button>
           ))}
           {stream.length === 0 ? (

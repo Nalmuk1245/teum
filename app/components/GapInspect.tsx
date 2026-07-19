@@ -170,7 +170,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
             fontWeight: 700, fontSize: 13.5, cursor: opp.executable ? "pointer" : "not-allowed",
           }}
         >
-          {opp.executable ? "실행 시작 →" : opp.transfer?.blocked ? "입출금 중단 — 실행 불가" : "실행 불가 (게이트 미확인)"}
+          {opp.executable ? "실행 시작 →" : opp.transfer?.blocked ? "입출금 중단 — 실행 불가" : "실행 불가 (입출금 미확인)"}
         </button>
       </div>
     </div>

@@ -92,7 +92,7 @@ export async function globalVenueFor(base: string): Promise<{ venue: string; pri
 }
 
 // ── 자동매수 프리셋 (공지 감지 즉시) ──────────────────────────────────────────
-// UI에서 무장; 서버가 공지 등록 직후 바로 산다. 라이브 실행은 env
+// UI에서 켜짐; 서버가 공지 등록 직후 바로 산다. 라이브 실행은 env
 // LISTING_AUTO_LIVE=true 를 추가로 요구 (무인 자금 집행은 이중 옵트인).
 export type ListingAutoCfg = { armed: boolean; sizeUsd: number };
 export function getListingAuto(): ListingAutoCfg {

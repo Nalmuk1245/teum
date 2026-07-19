@@ -6,7 +6,7 @@
 // Sources, in merge order (later wins on duplicate address):
 //  1. SEED — a small set of very-well-known labeled wallets (hardcoded).
 //  2. data/exchange-wallets.json — local, user-editable. Populated by the
-//     one-time Etherscan-label import (관제 탭 → 라벨 임포트) and/or by hand
+//     one-time Etherscan-label import (운영 탭 → 라벨 가져오기) and/or by hand
 //     from Arkham's web UI (hot/cold is visible there; set "type" accordingly).
 //
 // EVM addresses are chain-agnostic: the same address book is queried on

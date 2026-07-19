@@ -7,7 +7,7 @@ export async function GET() {
   return NextResponse.json({ cfg: getListingAuto(), liveEnabled: process.env.LISTING_AUTO_LIVE === "true" });
 }
 
-// 무장/규모 변경 — 실제 자금 집행은 DRY이거나 LISTING_AUTO_LIVE=true일 때만.
+// 켜짐/규모 변경 — 실제 자금 집행은 DRY이거나 LISTING_AUTO_LIVE=true일 때만.
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as { armed?: boolean; sizeUsd?: number };

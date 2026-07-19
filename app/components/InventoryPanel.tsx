@@ -145,7 +145,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
           <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 9, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
             {g > 85
               ? "글로벌 과다 — USDT 놀고 있음. KR 재고 보충하거나 규모 확대"
-              : `KR 과다 — 원화가 묶임. USD 회수(리패트리에이션)를 원/USDT 유리할 때 배치로 (목표 글로벌 ${target}%)`}
+              : `KR 과다 — 원화가 묶임. USD 회수(원화 회수)를 원/USDT 유리할 때 배치로 (목표 글로벌 ${target}%)`}
           </div>
         ) : (
           <div style={{ marginTop: 10, color: "var(--text-mute)", fontSize: 11 }}>
