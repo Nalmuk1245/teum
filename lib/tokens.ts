@@ -57,6 +57,19 @@ async function erc20Decimals(chainKey: string, address: string): Promise<number 
   } catch { return null; }
 }
 
+// 온체인 symbol() 직접 확인 — cex-dex 동적 후보가 "바낸의 그 코인"과 같은
+// 토큰인지 검증하는 데 쓴다(CoinGecko 대체). 로컬/공개 RPC라 CG처럼 레이트리밋
+// 예산을 갉아먹지 않는다. 실패(구형 bytes32 심볼 등) = null → 호출부에서 강등.
+export async function erc20Symbol(chainKey: string, address: string): Promise<string | null> {
+  try {
+    const { JsonRpcProvider, Contract } = await import("ethers");
+    const provider = new JsonRpcProvider(CHAINS[chainKey].rpc, undefined, { staticNetwork: true });
+    const c = new Contract(address, ["function symbol() view returns (string)"], provider);
+    const sym = String(await c.symbol()).trim();
+    return sym.length ? sym : null;
+  } catch { return null; }
+}
+
 // okxWallet 체인 표기 ↔ chains.ts 키
 const OKX_CHAIN_SHORT: Record<string, string> = {
   ethereum: "eth", optimism: "op", bsc: "bsc", polygon: "poly",

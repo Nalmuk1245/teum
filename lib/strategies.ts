@@ -13,6 +13,7 @@ import {
 } from "./config";
 import { walletStatus } from "./transfers";
 import { coinNetwork, withdrawFeeCoin } from "./networks";
+import { erc20Symbol } from "./tokens";
 import { chainKeyFromLabel } from "./chains";
 import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS, allTokens, type DexToken } from "./dex";
 
@@ -422,19 +423,19 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
         gRot.__cexdexRot ??= {};
         const ptr = gRot.__cexdexRot[uni.chain] ?? 0;
         // 심볼 일치만으로는 바낸의 코인과 DEX 토큰이 같다는 보장이 없다(동명
-        // 이토큰 함정). CoinGecko 컨트랙트와 교차확인: 불일치 = 다른 토큰 →
-        // 제외, CG 미확인(레이트리밋 등) = 포함하되 unverified 강등.
-        for (let k = 0; k < Math.min(6, cand.length); k++) {
-          const [sym, tok] = cand[(ptr + k) % cand.length];
-          try {
-            const { resolveToken } = await import("./tokenResolve");
-            const rv = await resolveToken(sym);
-            const exp = rv?.contracts?.[uni.chain as "ethereum" | "bsc" | "base"];
-            if (exp && exp.address.toLowerCase() !== tok.address.toLowerCase()) continue; // 다른 토큰 확정
-            universe[sym] = tok;
-            if (!exp) dynUnverified.add(sym);
-          } catch { universe[sym] = tok; dynUnverified.add(sym); }
-          await sleepMs(300); // CG 레이트리밋 완화
+        // 이토큰 함정). OKX 리스트가 이미 중복 심볼을 null로 배제하지만, 한 번
+        // 더 온체인 symbol()로 컨트랙트가 실제 그 심볼인지 확인한다 — 불일치=
+        // 래핑/스캠 제외, 확인불가=포함하되 unverified 강등. (CoinGecko 대신
+        // 온체인 RPC를 써서 상장 순간을 위한 CG 레이트리밋 예산을 보존한다.)
+        const picks = Array.from({ length: Math.min(6, cand.length) }, (_, k) => cand[(ptr + k) % cand.length]);
+        const checks = await Promise.all(picks.map(async ([sym, tok]) => {
+          const onchain = await erc20Symbol(uni.chain, tok.address);
+          return { sym, tok, onchain };
+        }));
+        for (const { sym, tok, onchain } of checks) {
+          if (onchain && onchain.toUpperCase() !== sym) continue; // 다른 토큰 확정 → 제외
+          universe[sym] = tok;
+          if (!onchain) dynUnverified.add(sym); // 확인불가 → 강등
         }
         gRot.__cexdexRot[uni.chain] = cand.length ? (ptr + 6) % cand.length : 0;
       } catch { /* 리스트 실패 → 코어만 */ }
