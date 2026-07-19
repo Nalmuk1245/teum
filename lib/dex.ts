@@ -81,6 +81,55 @@ export const OKX_CHAIN_ID: Record<string, string> = {
 // from tokens.ts (which drives real wallet sends). Bases the CEX doesn't list
 // are skipped at runtime, so it's safe to include candidates.
 export type DexToken = { address: string; decimals: number };
+
+// ── OKX Wallet API: 전송 tx 빌드 (sign-info) ─────────────────────────────────
+// 프로젝트 ID(OKX_WEB3_PROJECT)가 있을 때만 동작 — 가스한도·논스·수수료 제안을
+// OKX가 계산해준다. 서명·방송은 항상 로컬(ethers). 실패하면 null → ethers 자체
+// 추정으로 폴백하므로 fail-open이어도 안전(빌드 보조일 뿐 자금 위험 없음).
+export type TxBuild = {
+  nonce?: number; gasLimit?: bigint;
+  maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; gasPrice?: bigint;
+};
+
+export async function okxSignInfo(
+  chainKey: string, fromAddr: string, toAddr: string, valueWei: bigint, data?: string,
+): Promise<TxBuild | null> {
+  if (!process.env.OKX_WEB3_PROJECT) return null;
+  const chainId = OKX_CHAIN_ID[chainKey];
+  if (!chainId) return null;
+  try {
+    const r = await okxPost("/api/v5/wallet/pre-transaction/sign-info", {
+      chainIndex: chainId, fromAddr, toAddr,
+      txAmount: valueWei.toString(),
+      ...(data ? { extJson: { inputData: data } } : {}),
+    });
+    if (r.code !== "0" || !r.data[0]) return null;
+    const d = r.data[0] as Record<string, unknown>;
+    const num = (v: unknown): bigint | null => {
+      const n = typeof v === "string" || typeof v === "number" ? BigInt(String(v).split(".")[0]) : null;
+      return n != null && n > 0n ? n : null;
+    };
+    const out: TxBuild = {};
+    const nonce = num(d.nonce);
+    if (nonce != null) out.nonce = Number(nonce);
+    const gasLimit = num(d.gasLimit);
+    if (gasLimit != null) out.gasLimit = (gasLimit * 12n) / 10n; // +20% 여유
+    const gp = d.gasPrice as Record<string, unknown> | undefined;
+    const proto = (gp?.eip1559Protocol ?? gp?.erc1599Protocol) as Record<string, unknown> | undefined;
+    if (proto) {
+      const base = num(proto.suggestBaseFee ?? proto.baseFee);
+      const prio = num(proto.proposePriorityFee ?? proto.safePriorityFee);
+      if (base != null && prio != null) {
+        out.maxFeePerGas = base * 2n + prio; // 다음 블록 baseFee 급등 버퍼
+        out.maxPriorityFeePerGas = prio;
+      }
+    } else {
+      const normal = num(gp?.normal);
+      if (normal != null) out.gasPrice = normal;
+    }
+    return Object.keys(out).length ? out : null;
+  } catch { return null; }
+}
 export type DexChainUniverse = {
   chain: string; // chains.ts key
   native: "ETH" | "BNB"; // gas is paid in this (priced via CEX ticker)

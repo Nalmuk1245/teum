@@ -78,21 +78,45 @@ export async function sendToken(req: SendReq): Promise<SendResult> {
 }
 
 // ── EVM (ethers) ──────────────────────────────────────────────────────────────
+// tx 빌드(가스·논스)는 OKX sign-info가 있으면 그걸 쓰고(프로젝트 ID 필요),
+// 없거나 실패하면 ethers 자체 추정. 서명·방송은 항상 로컬.
 async function sendEvm(req: SendReq, key: string): Promise<SendResult> {
   const provider = new JsonRpcProvider(CHAINS[req.chain].rpc);
   const wallet = new Wallet(key, provider);
   let hash: string;
   if (req.tokenAddress) {
     const erc20 = new Contract(req.tokenAddress, ERC20_ABI, wallet);
-    const tx = await erc20.transfer(req.to, parseUnits(req.amountHuman, req.decimals ?? 18));
+    const amount = parseUnits(req.amountHuman, req.decimals ?? 18);
+    const data = erc20.interface.encodeFunctionData("transfer", [req.to, amount]);
+    const build = await okxBuild(req.chain, wallet.address, req.tokenAddress, 0n, data);
+    const tx = await erc20.transfer(req.to, amount, build);
     hash = tx.hash;
     await tx.wait(req.confirms ?? 1);
   } else {
-    const tx = await wallet.sendTransaction({ to: req.to, value: parseEther(req.amountHuman) });
+    const value = parseEther(req.amountHuman);
+    const build = await okxBuild(req.chain, wallet.address, req.to, value);
+    const tx = await wallet.sendTransaction({ to: req.to, value, ...build });
     hash = tx.hash;
     await tx.wait(req.confirms ?? 1);
   }
   return { ok: true, dryRun: false, hash, message: "전송 완료" };
+}
+
+// ethers 오버라이드 형태로 변환 — sign-info 실패/미설정 시 {} (ethers가 알아서).
+async function okxBuild(chainKey: string, from: string, to: string, valueWei: bigint, data?: string): Promise<Record<string, unknown>> {
+  try {
+    const { okxSignInfo } = await import("./dex");
+    const b = await okxSignInfo(chainKey, from, to, valueWei, data);
+    if (!b) return {};
+    const out: Record<string, unknown> = {};
+    if (b.nonce != null) out.nonce = b.nonce;
+    if (b.gasLimit != null) out.gasLimit = b.gasLimit;
+    if (b.maxFeePerGas != null && b.maxPriorityFeePerGas != null) {
+      out.maxFeePerGas = b.maxFeePerGas;
+      out.maxPriorityFeePerGas = b.maxPriorityFeePerGas;
+    } else if (b.gasPrice != null) out.gasPrice = b.gasPrice;
+    return out;
+  } catch { return {}; }
 }
 
 // ── XRP (xrpl) — native XRP w/ destination tag ────────────────────────────────
