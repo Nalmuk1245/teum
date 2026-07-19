@@ -13,9 +13,10 @@ import { checkEntry, recordPnl } from "@/lib/risk";
 import { notifyNow } from "@/lib/telegram";
 import { recordTrade } from "@/lib/trades";
 import { estimateLegSlippage } from "@/lib/quote";
-import { withdrawFeeCoin } from "@/lib/networks";
+import { withdrawFeeCoin, withdrawMinCoin } from "@/lib/networks";
 import { fetchUsdKrw } from "@/lib/exchanges";
 import type { StepId } from "@/lib/executionPlan";
+import { notify } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +116,22 @@ async function runStep(
       if (!buy) return fail("매수 다리 없음");
       if (!(sizeUsd > 0)) return fail("주문 규모가 0 이하");
       if (isKilled()) return fail("킬 스위치 활성 — 신규 실행 차단");
+      // 스냅샷 신선도 — 라이브 진입은 2분 넘은 기회로 시작하지 않는다
+      // (재검증이 있어도 진입 자체가 낡은 판단이면 원천 차단이 맞다).
+      if (!dry && opp.ts && Date.now() - opp.ts > 120_000) {
+        return fail("기회 스냅샷 2분 초과 — 보드 갱신 후 다시 실행");
+      }
+      // 최소 출금 수량 사전 게이트 — 부분체결로 수량이 min 미달이면 출금
+      // 단계에서 터지고 롤백 덤프로 이어진다. 진입 전에 막는다.
+      const willWithdraw =
+        opp.kind === "kimchi" || opp.kind === "cross-cex" ||
+        (opp.kind === "cex-dex" && opp.legs.find((l) => l.venue === "dex")?.side === "sell");
+      if (willWithdraw && buy.venue === "binance") {
+        const wMin = withdrawMinCoin(opp.base);
+        if (wMin != null && qty < wMin) {
+          return fail(`예상 수량 ${qty.toFixed(6)} < 바낸 최소 출금 ${wMin} — 규모를 키우거나 중단`);
+        }
+      }
       const risk = checkEntry(sizeUsd);
       if (risk) return fail(`리스크 한도 — ${risk}`);
       // Live slippage cap — a thin book can eat the whole edge in one market order.
@@ -202,6 +219,14 @@ async function runStep(
           : fail(`체인 미상(${opp.transfer?.network?.chain ?? "?"}) — 출금 차단`);
       }
       const net = NET_LABEL[chain] ?? chain;
+      // 부분체결 등으로 실수량이 최소 출금 미달이면 API 에러 대신 명시 중단
+      // (여기서 실패해야 롤백 경로가 슬리피지 가드를 태운다).
+      if (buy?.venue === "binance") {
+        const wMin = withdrawMinCoin(opp.base);
+        if (wMin != null && qty < wMin) {
+          return fail(`체결 수량 ${qty.toFixed(6)} < 최소 출금 ${wMin} — 출금 불가, 수동 처리 또는 롤백`);
+        }
+      }
       const evm = getChain(chain)?.family === "evm";
       const destVenue = sell?.venue ?? "upbit";
       // Personal-wallet hop ONLY for overseas → KR (travel-rule bypass on the
@@ -414,6 +439,16 @@ async function runStep(
 async function undoStep(stepId: StepId, opp: Opportunity, qty: number): Promise<StepResult> {
   const buy = opp.legs.find((l) => l.side === "buy");
   if (stepId === "buy") {
+    // 롤백도 시장가 매도다 — 얇은 호가에 덤프하면 방어 동작이 손실을 만든다.
+    // 진입과 같은 슬리피지 상한을 적용, 초과 시 보류하고 사람을 부른다.
+    if (!CONFIG.DRY_RUN && buy?.venue && buy.symbol) {
+      const est = await estimateLegSlippage(buy.venue, buy.symbol, "sell", { baseQty: qty }).catch(() => null);
+      if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+        void notify(`rollback-hold:${opp.base}`,
+          `⚠ <b>${opp.base}</b> 롤백 보류 — 예상 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% · 수동 처리 필요 (수량 ${qty.toFixed(6)})`);
+        return { ok: false, dryRun: false, message: `롤백 보류: 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 — 수동 처리 (텔레그램 발송)` };
+      }
+    }
     if (buy?.venue === "binance") return await binanceSpot(opp.base, "SELL", { qty });
     if (buy?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });
     if (buy?.venue === "bithumb") return await bithumbOrder(opp.base, "ask", qty);

@@ -60,9 +60,40 @@ const g = globalThis as unknown as {
 g.__arbRuns ??= { store: { runs: {}, killed: false, maxInFlightUsd: Infinity }, engines: new Map(), listeners: new Set(), seq: 0 };
 const R = g.__arbRuns;
 
+// ── 런 스냅샷 persist ─────────────────────────────────────────────────────────
+// 실행 루프는 이 탭 안에서 돈다 — 탭/브라우저가 죽으면 루프는 끊기지만 거래소
+// 실포지션은 남는다. 스냅샷을 localStorage에 남겨, 재접속 시 "중단된 런"을
+// 경고와 함께 복원한다 (자동 재개는 안 한다 — 상태를 모르는 재개가 더 위험).
+const LS_RUNS = "ac.runs.v1";
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function persistRuns() {
+  if (typeof window === "undefined") return;
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      const keep = Object.values(R.store.runs).slice(-20);
+      localStorage.setItem(LS_RUNS, JSON.stringify(Object.fromEntries(keep.map((r) => [r.id, r]))));
+    } catch { /* quota/private mode */ }
+  }, 300);
+}
+if (typeof window !== "undefined" && Object.keys(R.store.runs).length === 0) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_RUNS) ?? "{}") as Record<string, RunView>;
+    for (const [rid, rv] of Object.entries(saved)) {
+      if (rv.phase === "running" || rv.phase === "paused") {
+        rv.phase = "error";
+        rv.error = "⚠ 탭/서버 재시작으로 실행 루프 중단 — 거래소 실포지션·헷지 수동 확인 필요";
+      }
+      R.store.runs[rid] = rv;
+    }
+  } catch { /* malformed */ }
+}
+
 function emit() {
   R.store = { ...R.store, runs: { ...R.store.runs } };
   R.listeners.forEach((l) => l());
+  persistRuns();
 }
 
 /** USD notional currently in-flight (runs started and not finished). */
@@ -223,6 +254,25 @@ async function loop(id: string) {
   }
   patch(id, { phase: "done", pauseAt: -1 });
   eng.busy = false;
+}
+
+// ── 헷지 마진 워치 ────────────────────────────────────────────────────────────
+// 전송 대기 중(헷지 열림·미청산) 급등이 오면 숏 증거금이 쪼인다. 60초마다
+// 서버(/api/hedge-health)에 위임 — 임계 미달이면 서버가 텔레그램을 쏜다.
+if (typeof window !== "undefined") {
+  const gW = globalThis as unknown as { __arbHedgeWatch?: boolean };
+  if (!gW.__arbHedgeWatch) {
+    gW.__arbHedgeWatch = true;
+    setInterval(() => {
+      const active = Object.values(R.store.runs).filter(
+        (r) => r.hedge && r.statuses.hedge === "done" && r.statuses.close !== "done"
+          && (r.phase === "running" || r.phase === "paused" || r.phase === "error"),
+      );
+      if (!active.length) return;
+      const notional = active.reduce((s2, r) => s2 + r.sizeUsd, 0);
+      void fetch(`/api/hedge-health?notional=${Math.round(notional)}`).catch(() => {});
+    }, 60_000);
+  }
 }
 
 // ── Public actions ────────────────────────────────────────────────────────────

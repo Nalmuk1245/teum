@@ -478,6 +478,11 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
         const gasPct = (swapGasUsd / DEXDEX_REF_USD) * 100;
         const cost = gasPct + transferPct + cexTaker + CEXDEX_MEV_PCT;
         const net = grossPct - cost;
+        // 손익분기 규모 — 고정비($: 가스·출금비)와 변동비(%)를 분해해 "이 갭이
+        // 흑자가 되는 최소 규모"를 산출. $2000 고정 표기의 착시 제거용.
+        const fixedUsd = swapGasUsd + (dir === "buyDex" ? sendGasUsd : (wFeeCoin != null ? wFeeCoin * mid : DEXDEX_REF_USD * 0.0005));
+        const propPct = cexTaker + CEXDEX_MEV_PCT;
+        const breakevenUsd = grossPct > propPct ? fixedUsd / ((grossPct - propPct) / 100) : null;
         // 방향별 하드 게이트: buyDex는 바낸 "입금" 열림, sellDex는 "출금" 열림.
         const gateOpen: boolean | null = wStat ? (dir === "buyDex" ? wStat.deposit : wStat.withdraw) : null;
         const blocked = gateOpen === false || chainMatch === false;
@@ -519,6 +524,7 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
             `ETA ~${etaMin}분(전송 중 가격 노출)`,
             chainMatch === false ? `⚠ 바낸 입출금 체인(${netInfo.chain})과 불일치 — 이 루트 불가` : null,
             gateOpen === false ? `⚠ 바낸 ${dir === "buyDex" ? "입금" : "출금"} 정지` : gateOpen === null ? "입출금 미확인(바낸 키 필요)" : null,
+            breakevenUsd != null ? `손익분기 ≥$${Math.ceil(breakevenUsd / 10) * 10}` : "규모 무관 적자",
             `$${DEXDEX_REF_USD} 기준 · 견적 최대 ${Math.round(CEXDEX_TTL_MS / 1000)}s 지연`,
             unverified ? "⚠ 심볼일치만(컨트랙트 미검증) — 수동확인 필요" : null,
           ].filter(Boolean).join(" · "),

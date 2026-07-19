@@ -121,6 +121,12 @@ export async function quoteOpportunity(
   const sellLeg = opp.legs.find((l) => l.side === "sell");
   if (!buyLeg || !sellLeg) return null;
 
+  // cex-dex: dex 다리는 오더북 어댑터가 없다 — OKX 실시간 견적으로 별도 평가.
+  // (없으면 재검증이 항상 "재조회 실패"로 죽는다.)
+  if (buyLeg.venue === "dex" || sellLeg.venue === "dex") {
+    return quoteCexDexLeg(opp, sizeUsd, buyLeg, sellLeg, fresh);
+  }
+
   const buyAd = getAdapter(buyLeg.venue);
   const sellAd = getAdapter(sellLeg.venue);
   if (!buyAd?.fetchOrderBook || !sellAd?.fetchOrderBook) return null; // unwired (mock)
@@ -202,3 +208,89 @@ export async function quoteOpportunity(
     note: q.filled ? undefined : "order book too thin for this size",
   };
 }
+
+// ── cex-dex 재검증 견적 — DEX 다리는 OKX 라우팅 실견적, CEX 다리는 실호가 ──
+async function binancePx(symbol: string): Promise<number | null> {
+  try {
+    const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, {
+      cache: "no-store", signal: AbortSignal.timeout(4000),
+    });
+    const j = (await r.json()) as { price?: string };
+    return j.price ? Number(j.price) : null;
+  } catch { return null; }
+}
+
+async function quoteCexDexLeg(
+  opp: Opportunity, sizeUsd: number,
+  buyLeg: Opportunity["legs"][number], sellLeg: Opportunity["legs"][number],
+  fresh: boolean,
+): Promise<Quote | null> {
+  const { quoteDex, gasPriceWei, gasCostUsd, QUOTE_STABLES, CEXDEX_CHAINS, allTokens } = await import("./dex");
+  const dexLeg = buyLeg.venue === "dex" ? buyLeg : sellLeg;
+  const cexLeg = buyLeg.venue === "dex" ? sellLeg : buyLeg;
+  const dexBuys = dexLeg.side === "buy";
+  const chainKey = dexLeg.symbol.split("@")[1];
+  if (!chainKey) return null;
+  const uni = CEXDEX_CHAINS.find((u) => u.chain === chainKey);
+  const stable = uni?.quote ?? QUOTE_STABLES[chainKey];
+  let token = uni?.bases[opp.base];
+  if (!token) token = (await allTokens(chainKey)).get(opp.base) ?? undefined;
+  if (!stable || !token) return null;
+
+  // CEX 다리 실호가 (뎁스 슬리피지 포함)
+  const ad = getAdapter(cexLeg.venue);
+  if (!ad?.fetchOrderBook) return null;
+  const book = await cachedBook(ad.fetchOrderBook.bind(ad), cexLeg.venue, cexLeg.symbol, fresh);
+  const cexLevels: LevelUsd[] = (dexBuys ? book.bids : book.asks)
+    .map((l) => ({ priceUsd: l.price, size: l.size }))
+    .filter((l) => l.priceUsd > 0);
+  if (!cexLevels.length) return null;
+
+  // 가스비 산정용 네이티브 USD — 바낸 공개 시세
+  const native = uni?.native ?? "ETH";
+  const [gasWei, nativeUsd] = await Promise.all([gasPriceWei(chainKey), binancePx(`${native}USDT`)]);
+
+  let base: number, avgBuyUsd: number, avgSellUsd: number, gasUnits: number;
+  if (dexBuys) {
+    // DEX에서 sizeUsd 매수 → CEX bids에 매도
+    const q = await quoteDex(chainKey, stable, token, sizeUsd);
+    if (!q || q.toAmount <= 0) return null;
+    base = q.toAmount; avgBuyUsd = sizeUsd / q.toAmount; gasUnits = q.gasUnits;
+    const { proceeds } = sellInto(cexLevels.sort((a, b) => b.priceUsd - a.priceUsd), base);
+    if (proceeds <= 0) return null;
+    avgSellUsd = proceeds / base;
+  } else {
+    // CEX asks에서 매수 → DEX에 매도
+    const { base: b } = buyInto(cexLevels.sort((a, b) => a.priceUsd - b.priceUsd), sizeUsd);
+    if (b <= 0) return null;
+    base = b; avgBuyUsd = sizeUsd / b;
+    const q = await quoteDex(chainKey, token, stable, base);
+    if (!q || q.toAmount <= 0) return null;
+    avgSellUsd = q.toAmount / base; gasUnits = q.gasUnits;
+  }
+
+  const grossPct = (avgSellUsd / avgBuyUsd - 1) * 100;
+  const takerPct = FEES.takerPct[cexLeg.venue] ?? 0.1;
+  const gasUsd = gasWei && nativeUsd ? gasCostUsd(gasUnits, gasWei, nativeUsd) : 0;
+  const sendGasUsd = gasWei && nativeUsd && dexBuys ? gasCostUsd(65_000, gasWei, nativeUsd) : 0;
+  const wFeeCoin2 = withdrawFeeCoin(opp.base);
+  // 전송 다리: buyDex = 지갑→CEX 전송 가스 / sellDex = CEX 출금 수수료
+  const transferPct = dexBuys
+    ? ((gasUsd + sendGasUsd) / sizeUsd) * 100
+    : (gasUsd / sizeUsd) * 100 + (wFeeCoin2 != null ? ((wFeeCoin2 * avgBuyUsd) / sizeUsd) * 100 : 0.05);
+  const feePct = takerPct + transferPct + 0.1; // + MEV/재견적 버퍼
+  const netPct = grossPct - feePct;
+  return {
+    sizeUsd,
+    execBuyPriceUsd: avgBuyUsd, execSellPriceUsd: avgSellUsd,
+    execGrossPct: grossPct,
+    buySlippagePct: 0, sellSlippagePct: 0, // DEX 라우팅 견적에 내재
+    takerPct, fxSpreadPct: 0,
+    withdrawalPct: transferPct, feePct,
+    execNetPct: netPct,
+    maxSizeUsd: netPct > 0 ? sizeUsd : 0,
+    filledFully: true,
+    note: `DEX 실견적(${chainKey}) 기준`,
+  };
+}
+

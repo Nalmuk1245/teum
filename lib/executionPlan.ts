@@ -103,12 +103,12 @@ function needsConfirmBefore(id: StepId, level: AutoLevel): boolean {
 }
 // Re-exported for the background run store (which owns its own loop).
 export const needsConfirmBeforePublic = needsConfirmBefore;
-export const REVALIDATE_STEPS: ReadonlySet<StepId> = new Set<StepId>(["buy", "withdraw", "sell"]);
+export const REVALIDATE_STEPS: ReadonlySet<StepId> = new Set<StepId>(["buy", "withdraw", "sell", "swap"]);
 
 export type Revalidation = { ok: boolean; reason?: string };
 // Steps that must re-check the edge right before firing — the quote on screen
 // can be minutes old by the time these run.
-const REVALIDATE_BEFORE = new Set<StepId>(["buy", "withdraw", "sell"]);
+const REVALIDATE_BEFORE = new Set<StepId>(["buy", "withdraw", "sell", "swap"]);
 
 /**
  * Pausable sequential runner. Each step calls `runStep` (which POSTs to the

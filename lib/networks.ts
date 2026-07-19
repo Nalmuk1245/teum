@@ -6,7 +6,7 @@
 
 import { COIN_NETWORK, COIN_NETWORK_DEFAULT, WITHDRAW_FEE_COIN } from "./config";
 
-export type LiveNetwork = { chain: string; confirms: number; withdrawFee: number };
+export type LiveNetwork = { chain: string; confirms: number; withdrawFee: number; withdrawMin?: number };
 const g = globalThis as unknown as { __arbNetworks?: Map<string, LiveNetwork> };
 g.__arbNetworks ??= new Map();
 
@@ -25,4 +25,9 @@ export function coinNetwork(base: string): { chain: string; confirms: number } {
 /** Real per-coin withdrawal fee (coin units) — live if available, else curated. */
 export function withdrawFeeCoin(base: string): number | undefined {
   return g.__arbNetworks!.get(base)?.withdrawFee ?? WITHDRAW_FEE_COIN[base];
+}
+
+/** 최소 출금 수량 (코인 단위, 바낸 networkList 라이브) — 미상이면 undefined. */
+export function withdrawMinCoin(base: string): number | undefined {
+  return g.__arbNetworks!.get(base)?.withdrawMin;
 }

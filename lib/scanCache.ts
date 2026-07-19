@@ -33,6 +33,8 @@ import { loadSection, saveSection } from "./persist";
 // and per-venue call rates stay far below every venue's public limits.
 const REFRESH_MS = 3000;
 const ALERT_NET_PCT = 0.5; // matches the client board threshold
+// %가 아니라 돈으로도 거른다 — 0.6% 흑자여도 $3짜리 기회는 폰을 울릴 가치가 없다.
+const ALERT_MIN_USD = Number(process.env.ALERT_MIN_USD || 5);
 
 type Cache = {
   opps: Opportunity[];
@@ -56,8 +58,8 @@ async function refresh(): Promise<void> {
     recordHourlyHeat(next);
     C.opps = next;
     C.ts = Date.now();
-  } catch {
-    /* keep the previous snapshot on failure */
+  } catch (e) {
+    console.error("[scan refresh]", e); // 직전 스냅샷 유지 — 원인은 로그로
   } finally {
     C.refreshing = false;
   }
@@ -85,11 +87,13 @@ async function alertOnScan(opps: Opportunity[]): Promise<void> {
   for (const o of opps) {
     if (o.mock || o.kind === "funding-basis") continue;
     // Threshold crossing — cooldown keeps a hovering coin from spamming.
-    if (o.netPct >= ALERT_NET_PCT) {
+    const refUsd = Math.min(o.notionalCapUsd ?? 2000, 2000);
+    const expUsd = (o.netPct / 100) * refUsd;
+    if (o.netPct >= ALERT_NET_PCT && expUsd >= ALERT_MIN_USD) {
       const [buy, sell] = o.legs;
       void notify(
         `net:${o.id}`,
-        `🔔 <b>${o.base}</b> 갭 <b>+${o.netPct.toFixed(2)}%</b>\n${buy?.venue} → ${sell?.venue} · ${o.kind}${o.persistence?.heldSec ? ` · 지속 ${o.persistence.heldSec}s` : ""}`,
+        `🔔 <b>${o.base}</b> 갭 <b>+${o.netPct.toFixed(2)}%</b> (≈$${expUsd.toFixed(0)})\n${buy?.venue} → ${sell?.venue} · ${o.kind}${o.persistence?.heldSec ? ` · 지속 ${o.persistence.heldSec}s` : ""}`,
       );
     }
     // Settlement gate went down while an edge exists.

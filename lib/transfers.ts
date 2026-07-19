@@ -102,7 +102,7 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       coin: string;
       depositAllEnable: boolean;
       withdrawAllEnable: boolean;
-      networkList?: Array<{ network: string; name?: string; isDefault?: boolean; depositEnable: boolean; withdrawEnable: boolean; withdrawFee?: string; minConfirm?: number }>;
+      networkList?: Array<{ network: string; name?: string; isDefault?: boolean; depositEnable: boolean; withdrawEnable: boolean; withdrawFee?: string; withdrawMin?: string; minConfirm?: number }>;
     }>;
     if (!Array.isArray(arr)) return null;
     const m = new Map<string, WalletStatus>();
@@ -125,6 +125,7 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
           chain: net.name || (COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).chain,
           confirms: net.minConfirm ?? (COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).confirms,
           withdrawFee: net.withdrawFee ? Number(net.withdrawFee) : 0,
+          withdrawMin: net.withdrawMin ? Number(net.withdrawMin) : undefined,
         });
       }
     }
