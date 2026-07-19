@@ -66,6 +66,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [tgOk, setTgOk] = useState<boolean | null>(null);
   const [tradeCount, setTradeCount] = useState<number | null>(null);
+  const [trades, setTrades] = useState<{ base: string; kind: string; route: string; realizedPnlUsd: number | null; dryRun: boolean; ts: number }[]>([]);
+  const [listWatch, setListWatch] = useState<{ plays: { base: string; venue: string; opensAt?: number; opened: boolean }[]; watching: boolean } | null>(null);
   const [wl, setWl] = useState(false);
   const [mock, setMock] = useState(true);
 
@@ -77,9 +79,17 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     load();
     const id = setInterval(load, 15_000);
     fetch("/api/telegram-test").then((r) => r.json()).then((j) => setTgOk(!!j.configured)).catch(() => {});
-    fetch("/api/trades", { cache: "no-store" }).then((r) => r.json()).then((j) => setTradeCount(j.stats?.count ?? 0)).catch(() => {});
+    const loadFeeds = () => {
+      fetch("/api/trades", { cache: "no-store" }).then((r) => r.json()).then((j) => { setTradeCount(j.stats?.count ?? 0); setTrades((j.trades ?? []).slice(0, 6)); }).catch(() => {});
+      fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+        const plays = (j.listings ?? []).map((l: { base: string; venue: string; opensAt?: number; opened: boolean }) => ({ base: l.base, venue: l.venue, opensAt: l.opensAt, opened: l.opened }));
+        setListWatch({ plays, watching: (j.watch?.plays ?? 0) >= 0 });
+      }).catch(() => {});
+    };
+    loadFeeds();
+    const fid = setInterval(loadFeeds, 20_000);
     try { setWl((JSON.parse(localStorage.getItem(WL_KEY) || "[]") as string[]).length > 0); } catch { /* */ }
-    return () => clearInterval(id);
+    return () => { clearInterval(id); clearInterval(fid); };
   }, []);
 
   // 실데이터 지표 (mock 제외)
@@ -277,6 +287,69 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
                     >
                       {o.executable ? "Live" : o.transfer?.blocked ? "Closed" : "Wait"}
                     </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 하단 2행: 상장 감시 | 최근 거래 */}
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
+        {/* 상장 감시 */}
+        <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+          {secHd("상장 감시", (
+            <button type="button" onClick={() => onGoTab("listing")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상장 탭 →</button>
+          ))}
+          {!listWatch ? (
+            <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>불러오는 중…</div>
+          ) : listWatch.plays.length === 0 ? (
+            <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>👀 감시 중 — 신규 상장이 감지되면 여기 뜹니다</div>
+          ) : (
+            <div style={{ padding: "2px 16px 8px" }}>
+              {listWatch.plays.slice(0, 5).map((l) => {
+                const mins = l.opensAt && !l.opened ? Math.round((l.opensAt - Date.now()) / 60_000) : null;
+                return (
+                  <div key={l.base + l.venue} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                    <span style={{ fontWeight: 700 }}>{l.base}</span>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: l.venue === "upbit" ? "var(--brand-2)" : "var(--amber)" }}>{l.venue === "upbit" ? "업비트" : "빗썸"}</span>
+                    <span style={{ flex: 1 }} />
+                    <span className="tnum" style={{ fontSize: 11.5, fontWeight: 700, color: l.opened ? "var(--pos)" : "var(--amber)" }}>
+                      {l.opened ? "개장됨" : mins != null ? (mins > 0 ? `개장 T−${mins}분` : "개장 임박") : "예정"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 최근 거래 */}
+        <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+          {secHd("최근 거래", (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {tradeCount != null && <span style={{ fontSize: 11, color: "var(--text-mute)" }}>누적 {tradeCount}건</span>}
+              <button type="button" onClick={() => onGoTab("control")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>운영 탭 →</button>
+            </span>
+          ))}
+          {trades.length === 0 ? (
+            <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>아직 거래 기록 없음 — 실행하면 여기 쌓입니다</div>
+          ) : (
+            <div style={{ padding: "2px 16px 8px" }}>
+              {trades.map((t, i) => {
+                const p2 = t.realizedPnlUsd;
+                const ago = Math.round((Date.now() - t.ts) / 60_000);
+                return (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) auto auto", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ fontWeight: 700 }}>{t.base}</span>
+                      <span style={{ marginLeft: 6, fontSize: 10.5, color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>
+                    </span>
+                    <span className="tnum" style={{ fontWeight: 700, color: p2 == null ? "var(--text-mute)" : p2 >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                      {p2 == null ? "—" : `${p2 >= 0 ? "+" : "−"}$${Math.abs(p2).toFixed(2)}`}
+                    </span>
+                    <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-mute)", justifySelf: "end" }}>{ago < 60 ? `${ago}분 전` : `${Math.round(ago / 60)}시간 전`}</span>
                   </div>
                 );
               })}
