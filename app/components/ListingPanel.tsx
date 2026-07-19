@@ -28,6 +28,7 @@ type CexRow = { venue: string; listed: boolean; priceUsd: number | null; priceKr
 type DexRow = { chain: string; contract: string; decimals: number; verified: boolean; execPriceUsd: number | null; premiumVsCgPct: number | null; note?: string };
 type Detail = {
   base: string; play: Listing | null;
+  krDeposits?: { ts: number; up: number; bt: number }[];
   token: { name: string; priceUsd: number | null; volumeUsd: number | null; marketCapUsd: number | null; contractsList: { chain: string; address: string; decimals: number }[] } | null;
   cex: CexRow[]; dex: DexRow[]; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
 };
@@ -46,7 +47,7 @@ const fmtQty = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 
 const ago = (ts: number) => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`; };
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
-const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" };
+const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" , backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)" }
 const BTN: React.CSSProperties = { border: "none", borderRadius: 9, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
 const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
@@ -527,6 +528,9 @@ function DetailPanel({ base }: { base: string }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [refOpen, setRefOpen] = useState(false); // ⑤ 참고(보유량·컨트랙트) 접기
   const [hotOpen, setHotOpen] = useState<string | null>(null); // 핫월렛 드릴다운 (거래소별 주소 잔고)
+  const [addOpen, setAddOpen] = useState(false); // 입금 지갑 수동 등록 폼
+  const [addForm, setAddForm] = useState({ venue: "upbit", type: "hot", address: "", tag: "" });
+  const [addMsg, setAddMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let stop = false;
@@ -642,6 +646,34 @@ function DetailPanel({ base }: { base: string }) {
 
   return (
     <div style={{ padding: "0 14px 14px", background: "var(--card-2)", borderTop: "1px solid var(--border)" }}>
+      {/* ⓪ 상장 정보 배지 — 어느 거래소에 상장하는지 + 개장 상태 */}
+      {(() => {
+        const upListed = d.cex.find((r) => r.venue === "upbit")?.listed;
+        const btListed = d.cex.find((r) => r.venue === "bithumb")?.listed;
+        const badge = (label: string, tone: string, strong?: boolean) => (
+          <span style={{ fontSize: 11.5, fontWeight: strong ? 800 : 600, color: tone, padding: "3px 10px", borderRadius: 8, border: `1.5px solid ${tone}`, whiteSpace: "nowrap" }}>{label}</span>
+        );
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            {play ? (
+              <>
+                {badge(`${play.venue === "upbit" ? "업비트" : "빗썸"} 상장${play.opened ? "됨" : " 예정"}`, play.opened ? "var(--pos)" : "var(--amber)", true)}
+                {!play.opened && play.opensAt != null && (
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--amber)" }}>개장 <Countdown opensAt={play.opensAt} /></span>
+                )}
+                {!play.opened && play.opensAt == null && <span style={{ fontSize: 11, color: "var(--text-mute)" }}>개장 시각 미정 (공지 확인)</span>}
+                {play.overseas && play.globalVenue && badge(`해외 기상장 · ${play.globalVenue}`, "var(--text-dim)")}
+              </>
+            ) : (
+              <>
+                {badge(`업비트 ${upListed ? "상장됨" : "미상장"}`, upListed ? "var(--pos)" : "var(--text-mute)")}
+                {badge(`빗썸 ${btListed ? "상장됨" : "미상장"}`, btListed ? "var(--pos)" : "var(--text-mute)")}
+              </>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ① 신호 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
         {signal("가격", d.token?.priceUsd != null ? `$${fmtPx(d.token.priceUsd)}` : "—")}
@@ -676,8 +708,13 @@ function DetailPanel({ base }: { base: string }) {
               {r.listed ? (r.priceKrw != null ? `₩${r.priceKrw.toLocaleString()}` : `$${fmtPx(r.priceUsd)}`) : "미상장"}
             </span>
             <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : "키없음"}</span>
-            <span className="tnum" style={{ textAlign: "right", color: (r.myCoinQty ?? 0) > 0 ? "var(--amber)" : "var(--text-mute)" }}>
-              {(r.myCoinQty ?? 0) > 0 ? `보유 ${r.myCoinQty!.toFixed(3)}` : ["upbit", "bithumb"].includes(r.venue) ? "개장 후 매도처" : "—"}
+            <span className="tnum" style={{ textAlign: "right",
+              color: (r.myCoinQty ?? 0) > 0 ? "var(--amber)"
+                : play && !play.opened && r.venue === play.venue ? "var(--amber)" : "var(--text-mute)",
+              fontWeight: play && !play.opened && r.venue === play.venue ? 700 : 400 }}>
+              {(r.myCoinQty ?? 0) > 0 ? `보유 ${r.myCoinQty!.toFixed(3)}`
+                : play && !play.opened && r.venue === play.venue ? "★ 상장 예정 — 개장 후 매도처"
+                : ["upbit", "bithumb"].includes(r.venue) ? "개장 후 매도처" : "—"}
             </span>
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
               {r.listed && ["binance", "bybit", "okx"].includes(r.venue) && (
@@ -744,9 +781,59 @@ function DetailPanel({ base }: { base: string }) {
       {msg && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
 
       {/* ③.5 거래소 핫월렛 잔고 — 상장 시 덤프 압력 (온체인 라벨 기반) */}
-      {sec("거래소 핫월렛 잔고", holdings?.globalHotUsd != null ? (
-        <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>글로벌 핫 합계 <b style={{ color: "var(--text)" }}>{fmtUsd(holdings.globalHotUsd)}</b></span>
-      ) : undefined)}
+      {sec("거래소 핫월렛 잔고", (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {holdings?.globalHotUsd != null && (
+            <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>글로벌 핫 합계 <b style={{ color: "var(--text)" }}>{fmtUsd(holdings.globalHotUsd)}</b></span>
+          )}
+          <button type="button" style={BTN_GHOST} onClick={() => setAddOpen(!addOpen)}>{addOpen ? "닫기" : "＋ 주소"}</button>
+        </span>
+      ))}
+      {addOpen && (
+        <div style={{ margin: "2px 0 10px", padding: "9px 11px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 9 }}>
+          <div style={{ ...CAP, marginBottom: 6 }}>입금 지갑 수동 등록 — 상장 전 KR 거래소 입금 물량 워치 (영구 주소록에 저장)</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <select value={addForm.venue} onChange={(e) => setAddForm({ ...addForm, venue: e.target.value })} style={{ ...INPUT, width: 86 }}>
+              {["upbit", "bithumb", "binance", "okx", "bybit"].map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <select value={addForm.type} onChange={(e) => setAddForm({ ...addForm, type: e.target.value })} style={{ ...INPUT, width: 64 }}>
+              <option value="hot">핫</option><option value="cold">콜드</option>
+            </select>
+            <input placeholder="0x… 주소" value={addForm.address} onChange={(e) => setAddForm({ ...addForm, address: e.target.value.trim() })} style={{ ...INPUT, flex: 1, minWidth: 260 }} />
+            <input placeholder="메모 (예: 업비트 PEPE 입금)" value={addForm.tag} onChange={(e) => setAddForm({ ...addForm, tag: e.target.value })} style={{ ...INPUT, width: 150 }} />
+            <button type="button" style={BTN} disabled={!/^0x[0-9a-fA-F]{40}$/.test(addForm.address)}
+              onClick={async () => {
+                setAddMsg(null);
+                try {
+                  const j = await (await fetch("/api/wallet-book", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(addForm) })).json();
+                  setAddMsg(`${j.ok ? "✓" : "✗"} ${j.message}`);
+                  if (j.ok) {
+                    setAddForm({ ...addForm, address: "", tag: "" });
+                    // 즉시 재조회 (캐시 우회) — 새 주소 잔고가 바로 표에 반영
+                    const h = await (await fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(base)}&fresh=1`, { cache: "no-store" })).json();
+                    if (h.holdings) setHoldings(h.holdings);
+                  }
+                } catch { setAddMsg("✗ 요청 실패"); }
+              }}>등록</button>
+          </div>
+          {addMsg && <div style={{ marginTop: 5, fontSize: 11, fontWeight: 600, color: addMsg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{addMsg}</div>}
+          {d.token && d.token.contractsList.length > 0 && (
+            <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-mute)", display: "flex", gap: 10, flexWrap: "wrap" }}>
+              주소 찾기:
+              {d.token.contractsList.filter((c) => ["ethereum", "bsc", "base"].includes(c.chain)).map((c) => {
+                const ex = c.chain === "ethereum" ? "etherscan.io" : c.chain === "bsc" ? "bscscan.com" : "basescan.org";
+                return (
+                  <span key={c.chain} style={{ display: "inline-flex", gap: 6 }}>
+                    <a href={`https://${ex}/token/${c.address}#balances`} target="_blank" rel="noreferrer" style={{ color: "var(--brand-2)", textDecoration: "none" }}>{c.chain} 홀더 상위 ↗</a>
+                    <a href={`https://${ex}/token/${c.address}`} target="_blank" rel="noreferrer" style={{ color: "var(--brand-2)", textDecoration: "none" }}>최근 전송 ↗</a>
+                  </span>
+                );
+              })}
+              <span>— 상장 발표 후 갑자기 등장한 대형 수신 주소가 거래소 입금 지갑 후보</span>
+            </div>
+          )}
+        </div>
+      )}
       {holdErr ? (
         <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{holdErr}</div>
       ) : !holdings ? (
@@ -807,6 +894,39 @@ function DetailPanel({ base }: { base: string }) {
       {holdings && holdings.venues.some((v) => (v.hotDeltaPerMin ?? 0) > 0) && (
         <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--amber)" }}>▲ 핫월렛 유입 = 거래소가 매도 물량을 준비 중일 수 있음 (덤프 경계)</div>
       )}
+
+      {/* ③.6 개장 전 입금 물량 — 발표→개장 사이 KR 거래소 누적 (예상 초기 매도 재고) */}
+      {play && (d.krDeposits?.length ?? 0) >= 2 && (() => {
+        const pts = d.krDeposits!;
+        const first = pts[0], last = pts[pts.length - 1];
+        const cur = last.up + last.bt;
+        const delta = cur - (first.up + first.bt);
+        const W = 260, H = 36;
+        const maxV = Math.max(...pts.map((q) => q.up + q.bt), 1);
+        const line = pts.map((q, i) => `${(i / (pts.length - 1)) * W},${H - ((q.up + q.bt) / maxV) * (H - 4) - 2}`).join(" ");
+        return (
+          <>
+            {sec("개장 전 입금 물량", (
+              <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+                현재 <b style={{ color: "var(--text)" }}>{fmtUsd(cur)}</b>
+                {delta > 100 && <span style={{ color: "var(--amber)", fontWeight: 700 }}> · 추적 후 +{fmtUsd(delta)}</span>}
+              </span>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <svg width={W} height={H} style={{ display: "block" }}>
+                <polyline points={line} fill="none" stroke="var(--amber)" strokeWidth={1.5} />
+              </svg>
+              <div style={{ fontSize: 11 }} className="tnum">
+                <div>업비트 <b>{fmtUsd(last.up)}</b>{play.venue === "upbit" && <span style={{ color: "var(--amber)" }}> ★</span>}</div>
+                <div>빗썸 <b>{fmtUsd(last.bt)}</b>{play.venue === "bithumb" && <span style={{ color: "var(--amber)" }}> ★</span>}</div>
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--text-mute)", maxWidth: 340 }}>
+                등록된 KR 지갑의 이 코인 잔고 누적(60초 간격) — 개장 직후 나올 수 있는 매도 재고의 하한선. ＋ 주소로 입금 지갑을 등록할수록 정확해집니다.
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (

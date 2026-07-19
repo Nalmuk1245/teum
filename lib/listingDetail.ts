@@ -7,7 +7,7 @@ import { resolveToken, type ResolvedToken } from "./tokenResolve";
 import { QUOTE_STABLES, quoteDex, dexConfigured } from "./dex";
 import { fetchPortfolio } from "./balances";
 import { swr } from "./ttlCache";
-import { recentListings, type ListingPlay } from "./listings";
+import { recentListings, type ListingPlay, krDeposits } from "./listings";
 import type { Portfolio } from "./types";
 
 export type CexRow = {
@@ -33,6 +33,8 @@ export type DexRow = {
 export type ListingDetail = {
   base: string;
   play: ListingPlay | null;
+  /** 개장 전 KR 입금 시계열 (USD) — trackPlays가 60초마다 적재 */
+  krDeposits: { ts: number; up: number; bt: number }[];
   token: (ResolvedToken & { contractsList: { chain: string; address: string; decimals: number }[] }) | null;
   cex: CexRow[];
   dex: DexRow[];
@@ -139,6 +141,7 @@ export async function buildListingDetail(baseRaw: string): Promise<ListingDetail
   return {
     base,
     play: recentListings().find((p) => p.base === base) ?? null,
+    krDeposits: krDeposits(base).pts,
     token: token
       ? { ...token, contractsList: (Object.entries(token.contracts) as [string, { address: string; decimals: number }][]).map(([chain, c]) => ({ chain, address: c.address, decimals: c.decimals })) }
       : null,

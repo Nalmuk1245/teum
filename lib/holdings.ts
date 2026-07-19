@@ -65,10 +65,10 @@ const CACHE = g.__arbHoldingsCache;
 const PREV = g.__arbHoldingsPrev;
 const TTL = 60_000;
 
-export async function fetchHoldings(symbolRaw: string): Promise<HoldingsResult | { error: string }> {
+export async function fetchHoldings(symbolRaw: string, opts?: { fresh?: boolean }): Promise<HoldingsResult | { error: string }> {
   const symbol = symbolRaw.toUpperCase();
   const hit = CACHE.get(symbol);
-  if (hit && Date.now() - hit.ts < TTL) return hit.v;
+  if (!opts?.fresh && hit && Date.now() - hit.ts < TTL) return hit.v;
 
   const token = await resolveToken(symbol);
   if (!token) return { error: `${symbol}: CoinGecko에서 못 찾음 (오타/미등록)` };

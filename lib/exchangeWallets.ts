@@ -12,7 +12,7 @@
 // EVM addresses are chain-agnostic: the same address book is queried on
 // ethereum/bsc/base. Non-EVM chains are out of scope (v1).
 
-import { promises as fs, existsSync, readFileSync } from "fs";
+import { promises as fs, existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 
 export type WalletType = "hot" | "cold";
@@ -69,6 +69,48 @@ export function loadWalletBook(): VenueWallets {
   for (const [v, list] of Object.entries(SEED)) for (const e of list) put(v, e);
   g.__arbWalletBook = { ts: Date.now(), book };
   return book;
+}
+
+// ── 수동 등록 — 상장 전 입금 지갑 워치용 ─────────────────────────────────────
+// 유저가 익스플로러에서 찾은 KR 거래소 입금 주소를 영구 주소록(data 파일)에
+// 넣는다. 업비트/빗썸 입금 지갑은 코인이 바뀌어도 재사용되는 경우가 많아
+// 다음 상장 때도 그대로 값어치가 있다. 수동 등록은 tag에 "(수동)" 표기 —
+// 검증 안 된 주소임을 드릴다운에서 알 수 있게.
+export function addWalletEntry(venue: string, address: string, type: WalletType, tag?: string): { ok: boolean; message: string } {
+  const v = venue.toLowerCase().trim();
+  const a = address.trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(a)) return { ok: false, message: "EVM 주소 형식이 아님 (0x…40자리)" };
+  if (!v) return { ok: false, message: "거래소 필요" };
+  let local: VenueWallets = {};
+  try {
+    if (existsSync(FILE)) local = JSON.parse(readFileSync(FILE, "utf8")) as VenueWallets;
+  } catch { /* malformed → start fresh */ }
+  const list = (local[v] ??= []);
+  const entry: WalletEntry = { address: a, type, tag: `${(tag ?? "").trim() || "수동 등록"} (수동)` };
+  const i = list.findIndex((x) => x.address.toLowerCase() === a.toLowerCase());
+  if (i >= 0) list[i] = entry; else list.push(entry);
+  try {
+    writeFileSync(FILE, JSON.stringify(local, null, 1), "utf8");
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "저장 실패" };
+  }
+  g.__arbWalletBook = undefined; // 캐시 무효화 — 다음 조회부터 반영
+  return { ok: true, message: `${v} ${type} 주소 등록됨 — 잔고 조회에 즉시 반영` };
+}
+
+export function removeWalletEntry(venue: string, address: string): { ok: boolean; message: string } {
+  const v = venue.toLowerCase().trim();
+  let local: VenueWallets = {};
+  try {
+    if (existsSync(FILE)) local = JSON.parse(readFileSync(FILE, "utf8")) as VenueWallets;
+  } catch { return { ok: false, message: "주소록 파일 없음" }; }
+  const list = local[v] ?? [];
+  const next = list.filter((x) => x.address.toLowerCase() !== address.toLowerCase());
+  if (next.length === list.length) return { ok: false, message: "해당 주소 없음 (시드 주소는 삭제 불가)" };
+  local[v] = next;
+  try { writeFileSync(FILE, JSON.stringify(local, null, 1), "utf8"); } catch { return { ok: false, message: "저장 실패" }; }
+  g.__arbWalletBook = undefined;
+  return { ok: true, message: "삭제됨" };
 }
 
 export function walletBookStats(): Record<string, { hot: number; cold: number }> {

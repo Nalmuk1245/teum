@@ -55,7 +55,7 @@ export function AssetSummary({ isMobile, onOpen }: { isMobile?: boolean; onOpen?
       onClick={onOpen}
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%",
-        background: "var(--card)", border: "1px solid var(--border)",
+        background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)",
         borderRadius: "var(--radius)", padding: isMobile ? "8px 11px" : "9px 14px",
         marginBottom: isMobile ? 10 : 14, cursor: onOpen ? "pointer" : "default",
         color: "var(--text)", textAlign: "left",
@@ -110,7 +110,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 14 }}>
       {/* ── Headline ── */}
-      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+      <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>총자본 (USD 환산)</span>
           {pf.mock && (
@@ -155,7 +155,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
       </div>
 
       {/* ── Aggregated holdings (all venues + wallet) ── */}
-      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+      <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
         <div style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600, marginBottom: 10 }}>자산별 합산</div>
         <AssetTable
           header
@@ -205,7 +205,7 @@ function BridgeCard() {
     finally { setBusy(false); }
   };
   return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>크로스체인 브릿지</div>
       <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginBottom: 9 }}>지갑 스테이블(USDC/USDT)을 체인 간 이동 — OKX 라우팅</div>
       <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
@@ -245,7 +245,7 @@ function WalletHistoryCard() {
     fetch("/api/wallet-history", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => setData({ error: "요청 실패" }));
   }, []);
   return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>지갑 온체인 히스토리</div>
       <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginBottom: 9 }}>개인지갑 최근 전송 (ETH·BSC·Base)</div>
       {!data ? <div style={{ fontSize: 11, color: "var(--text-mute)" }}>조회 중…</div>
@@ -278,7 +278,7 @@ function VenueCard({ v, isMobile, totalUsd }: { v: VenueBalance; isMobile?: bool
   const label = VLABEL[v.venue] ?? v.venue;
   if (!v.connected) {
     return (
-      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontWeight: 700, fontSize: 13.5 }}>{label}</span>
         <span style={{ fontSize: 11.5, color: "var(--text-mute)" }}>키 필요 — .env.local에 API 키를 넣으면 실잔고가 표시됩니다</span>
       </div>
@@ -289,7 +289,7 @@ function VenueCard({ v, isMobile, totalUsd }: { v: VenueBalance; isMobile?: bool
     ...v.coins.map((c) => ({ asset: c.asset, amount: c.amount, usdValue: c.usdValue, sub: undefined as string | undefined, sharePct: v.totalUsd > 0 ? (c.usdValue / v.totalUsd) * 100 : 0 })),
   ];
   return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <span style={{ fontWeight: 700, fontSize: 13.5, whiteSpace: "nowrap" }}>{label}</span>
         {v.venue === "wallet" && <span style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>자체보관 · 전송 중</span>}

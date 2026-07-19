@@ -87,7 +87,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
   );
 
   return (
-    <div className="panel-in" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
+    <div className="panel-in" style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
       {/* 헤더 */}
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
         <span style={{ fontWeight: 700, fontSize: 15 }}>{opp.base}</span>

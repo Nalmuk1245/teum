@@ -227,7 +227,7 @@ export default function Cockpit() {
           padding: isMobile ? "9px 12px" : "9px 16px",
           borderBottom: "1px solid var(--border)",
           background: "var(--header-bg)",
-          backdropFilter: "blur(12px)",
+          backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)",
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>

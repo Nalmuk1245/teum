@@ -125,12 +125,12 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         className="panel-in"
         style={{
           width: 620, maxWidth: "100%", maxHeight: "90dvh", overflowY: "auto",
-          background: "var(--card)", border: "1px solid var(--border-strong)",
+          background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border-strong)",
           borderRadius: "var(--radius)", boxShadow: "var(--shadow-lg)",
         }}
       >
         {/* 헤더 */}
-        <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)", background: "var(--card)", backdropFilter: "blur(10px)" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)", background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)" }}>
           <span style={{ fontWeight: 700, fontSize: 15 }}>⚙ 설정</span>
           <span style={{ fontSize: 11, color: dryRun ? "var(--amber)" : "var(--neg)", fontWeight: 600 }}>
             {dryRun ? "모의 모드 (DRY_RUN)" : "라이브 모드"}

@@ -6,9 +6,10 @@ export const dynamic = "force-dynamic";
 
 // GET ?symbol=PYR → per-venue hot/cold on-chain balances (listing-play supply).
 export async function GET(req: Request) {
-  const symbol = new URL(req.url).searchParams.get("symbol")?.trim();
+  const u = new URL(req.url);
+  const symbol = u.searchParams.get("symbol")?.trim();
   if (!symbol) return NextResponse.json({ error: "symbol 필요", stats: walletBookStats() }, { status: 400 });
-  const r = await fetchHoldings(symbol);
+  const r = await fetchHoldings(symbol, { fresh: u.searchParams.get("fresh") === "1" });
   return "error" in r
     ? NextResponse.json({ error: r.error, stats: walletBookStats() }, { status: 200 })
     : NextResponse.json({ holdings: r, stats: walletBookStats() });

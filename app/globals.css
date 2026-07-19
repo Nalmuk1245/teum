@@ -147,6 +147,23 @@ body::after {
   opacity: var(--blob-cool-o);
 }
 
+/* ── Liquid Glass 표면 ─────────────────────────────────────────────────
+   반투명 배경(--card)만으로는 유리가 아니다 — backdrop-filter blur로 뒤의
+   블롭·콘텐츠가 흐릿하게 비쳐야 유리 재질이 된다. saturate로 뒤 색을
+   살짝 끌어와 생기를 준다. 카드성 표면(.glass)과 그 안의 얕은 표면
+   (.glass-sub)을 나눠, 중첩된 blur가 과해지지 않게 한다. */
+.glass {
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+}
+.glass-sub {
+  backdrop-filter: blur(10px) saturate(1.3);
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* blur는 모션이 아니라 재질이므로 유지 — 접근성 영향 없음 */
+}
+
 button,
 input {
   font-family: inherit;

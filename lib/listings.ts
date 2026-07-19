@@ -373,22 +373,62 @@ async function trackPlays() {
       p.openSoonAlerted = true;
       void notifyNow(`⏰ <b>${p.base}</b> ${p.venue === "upbit" ? "업비트" : "빗썸"} 개장 임박 — T−${Math.ceil((p.opensAt - now) / 60_000)}분. 매도 준비.`);
     }
-    // Hot-wallet inflow surge — arb sellers loading KR exchanges ⇒ dump soon.
-    if (!p.surgeAlerted) {
-      try {
-        const { fetchHoldings } = await import("./holdings");
-        const h = await fetchHoldings(p.base);
-        if (!("error" in h) && h.priceUsd) {
+    // Hot-wallet inflow surge + 개장 전 KR 입금 물량 시계열 — 같은 holdings
+    // 조회를 공유한다 (60s 캐시라 추가 비용 없음).
+    try {
+      const { fetchHoldings } = await import("./holdings");
+      const h = await fetchHoldings(p.base);
+      if (!("error" in h) && h.priceUsd) {
+        if (!p.surgeAlerted) {
           const surge = h.venues.find((v) => v.hotDeltaPerMin != null && v.hotDeltaPerMin * h.priceUsd! > SURGE_USD_PER_MIN);
           if (surge) {
             p.surgeAlerted = true;
             void notifyNow(`🌊 <b>${p.base}</b> ${surge.venue} 핫월렛 급증 +$${Math.round(surge.hotDeltaPerMin! * h.priceUsd / 1000)}K/분 — 덤핑 물량 유입 중`);
           }
         }
-      } catch { /* best-effort */ }
-    }
+        recordKrDeposit(p.base, p.venue, h);
+      }
+    } catch { /* best-effort */ }
   }
   saveSection("listingPlays", [...L.plays.entries()]);
+}
+
+// ── 개장 전 KR 입금 물량 워치 ─────────────────────────────────────────────────
+// 등록된 업비트/빗썸 지갑의 해당 코인 잔고를 60초마다 스냅샷 — "발표→개장
+// 사이 들어온 물량 = 개장 직후 나올 수 있는 매도 재고"의 시계열. 첫 유의미
+// 입금($1K+)은 텔레그램으로 즉시 알린다.
+type KrDepositStore = Record<string, { pts: { ts: number; up: number; bt: number }[]; alerted: { upbit?: boolean; bithumb?: boolean } }>;
+const KR_DEPOSIT_MIN_USD = 1_000;
+
+function krDepositStore(): KrDepositStore {
+  const gk = globalThis as unknown as { __arbKrDeposits?: KrDepositStore };
+  gk.__arbKrDeposits ??= loadSection<KrDepositStore>("krDeposits") ?? {};
+  return gk.__arbKrDeposits;
+}
+
+function recordKrDeposit(base: string, listVenue: "upbit" | "bithumb", h: { priceUsd: number | null; venues: { venue: string; hot: number; cold: number }[] }): void {
+  const px = h.priceUsd ?? 0;
+  const usdOf = (v?: { hot: number; cold: number }) => (v ? (v.hot + v.cold) * px : 0);
+  const up = usdOf(h.venues.find((v) => v.venue === "upbit"));
+  const bt = usdOf(h.venues.find((v) => v.venue === "bithumb"));
+  const store = krDepositStore();
+  const rec = (store[base] ??= { pts: [], alerted: {} });
+  rec.pts.push({ ts: Date.now(), up, bt });
+  if (rec.pts.length > 240) rec.pts = rec.pts.slice(-240); // 4시간
+  // 첫 유의미 입금 알림 — 상장 거래소 우선, 양쪽 다 감시.
+  for (const [venue, usd] of [["upbit", up], ["bithumb", bt]] as const) {
+    if (usd >= KR_DEPOSIT_MIN_USD && !rec.alerted[venue]) {
+      rec.alerted[venue] = true;
+      const star = venue === listVenue ? " ★상장 거래소" : "";
+      void notifyNow(`📥 <b>${base}</b> ${venue === "upbit" ? "업비트" : "빗썸"}${star} 입금 감지 — 잔고 $${(usd / 1000).toFixed(1)}K. 개장 전 물량 유입 시작.`);
+    }
+  }
+  saveSection("krDeposits", store);
+}
+
+/** 상세 패널용 — 코인의 개장 전 입금 시계열. */
+export function krDeposits(base: string): { pts: { ts: number; up: number; bt: number }[] } {
+  return { pts: krDepositStore()[base]?.pts ?? [] };
 }
 
 // ── Telegram public-channel scrape (CF-free fallback) ─────────────────────────
