@@ -1,111 +1,16 @@
 "use client";
 
-// Execution flow — the ordered step plan for a bottari (kimchi) trade and a
-// pausable, DRY_RUN-simulated runner. Conditional on the hedge toggle and the
-// user's automation boundary. Real order/withdraw calls are TODO stubs; each
-// step here just simulates so the whole state machine is exercisable safely.
+// Execution flow — 클라이언트 훅(useFlowRunner)만 남기고 순수 로직은
+// execPlan.ts로 이동 (서버 실행엔진과 공유). 기존 임포트 호환을 위해 재수출.
 
 import { useEffect, useRef, useState } from "react";
-import type { Opportunity } from "./types";
-import { chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
+export * from "./execPlan";
+import {
+  needsConfirmBeforePublic as needsConfirmBefore,
+  type StepId, type ExecStep, type StepPhase, type RunPhase,
+  type StepResult, type AutoLevel, type Revalidation,
+} from "./execPlan";
 
-export type StepId =
-  | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle"
-  | "approve" | "swap"; // cex-dex (transfer-style): DEX approve + swap legs
-
-export type ExecStep = { id: StepId; label: string; desc: string };
-export type StepPhase = "pending" | "running" | "done" | "error" | "rolledback";
-export type RunPhase = "idle" | "running" | "paused" | "done" | "error";
-export type StepResult = {
-  ok: boolean;
-  message?: string;
-  /** On-chain transaction of this step (transfer send / deposit credit). url =
-   *  chain explorer link, null when there's nothing real to open (DRY_RUN). */
-  tx?: { hash: string; url: string | null };
-};
-export type AutoLevel = "manual" | "beforeWithdraw" | "beforeSell" | "auto";
-
-const VENUE: Record<string, string> = {
-  binance: "Binance", upbit: "Upbit", bithumb: "Bithumb",
-  bybit: "Bybit", okx: "OKX", uniswap: "Uniswap", dex: "DEX",
-};
-const vlabel = (v?: string) => (v ? VENUE[v] ?? v : "?");
-
-// Buy on the buy-venue → withdraw to personal wallet → (auto) deposit to the
-// sell-venue → sell. Hedge = short Binance perp for the whole in-flight window.
-export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
-  const buy = opp.legs.find((l) => l.side === "buy");
-  const sell = opp.legs.find((l) => l.side === "sell");
-  const bv = vlabel(buy?.venue);
-  const sv = vlabel(sell?.venue);
-
-  // cex-dex is TRANSFER-style: buy the cheap side, move the coin, sell the
-  // expensive side. buyDex = DEX 매수 → 지갑→CEX 전송 → 매도 / sellDex = CEX
-  // 매수 → 출금 → DEX 매도. In-flight exposure is hedged like kimchi.
-  if (opp.kind === "cex-dex") {
-    const dexLeg = opp.legs.find((l) => l.venue === "dex");
-    const cexLeg = opp.legs.find((l) => l.venue !== "dex");
-    const cv = vlabel(cexLeg?.venue);
-    const dexBuys = dexLeg?.side === "buy";
-    const eta = opp.transfer?.etaMin;
-    const steps: ExecStep[] = [];
-    if (dexBuys) {
-      steps.push({ id: "approve", label: "스테이블 승인", desc: "1회 approve (필요 시)" });
-      steps.push({ id: "swap", label: "DEX 매수 (스왑)", desc: `${opp.base} · 온체인 · minReceive 보호` });
-      if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "전송 구간 가격 잠금" });
-      steps.push({ id: "transfer", label: `개인지갑 → ${cv} 입금 전송`, desc: "온체인 · 되돌릴 수 없음" });
-      steps.push({ id: "deposit", label: `${cv} 입금 확인`, desc: `컨펌 대기${eta ? ` · ~${eta}분` : ""}` });
-      steps.push({ id: "sell", label: `${cv} 현물 매도`, desc: `${opp.base} → USDT` });
-      if (hedge) steps.push({ id: "close", label: "선물 청산", desc: "매도와 동시 · 헷지 해제" });
-    } else {
-      steps.push({ id: "buy", label: `${cv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
-      if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "전송 구간 가격 잠금" });
-      steps.push({ id: "withdraw", label: `${cv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음" });
-      steps.push({ id: "deposit", label: "지갑 수신 확인", desc: `컨펌 대기${eta ? ` · ~${eta}분` : ""}` });
-      steps.push({ id: "approve", label: `${opp.base} 승인`, desc: "1회 approve (필요 시)" });
-      steps.push({ id: "swap", label: "DEX 매도 (스왑)", desc: "온체인 · minReceive 보호" });
-      if (hedge) steps.push({ id: "close", label: "선물 청산", desc: "스왑과 동시 · 헷지 해제" });
-    }
-    steps.push({ id: "settle", label: "정산", desc: "P&L 확정" });
-    return steps;
-  }
-  // Personal-wallet hop is ONLY for overseas → KR deposits (direct Binance→Upbit
-  // stalls on travel-rule verification; wallet-origin deposits credit
-  // automatically). KR → overseas and global ↔ global send DIRECT. Non-EVM
-  // chains also go direct (wallet send not reliable there yet).
-  const evm = getChain(chainKeyFromLabel(opp.transfer?.network?.chain))?.family === "evm";
-  const hop = evm && isGlobal(buy?.venue) && isKr(sell?.venue);
-
-  const steps: ExecStep[] = [];
-  steps.push({ id: "buy", label: `${bv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
-  if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "같은 수량 · 진입가에 가격 잠금" });
-  if (hop) {
-    steps.push({ id: "withdraw", label: `${bv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음" });
-    steps.push({ id: "transfer", label: `개인지갑 → ${sv} 송금`, desc: "트래블룰 우회 · 자동 입금" });
-  } else {
-    steps.push({
-      id: "withdraw", label: `${bv} → ${sv} 직접 출금`,
-      desc: isKr(buy?.venue) ? "국내 → 해외 직접 · 주소 등록(화이트리스트) 필요" : "거래소 간 직접",
-    });
-  }
-  steps.push({ id: "deposit", label: `${sv} 입금 확인`, desc: "컨펌 대기" });
-  steps.push({ id: "sell", label: `${sv} 현물 매도`, desc: `${opp.base} → KRW` });
-  if (hedge) steps.push({ id: "close", label: "Binance 선물 청산", desc: "매도와 동시 · 헷지 해제" });
-  steps.push({ id: "settle", label: "정산", desc: "P&L 확정" });
-  return steps;
-}
-
-function needsConfirmBefore(id: StepId, level: AutoLevel): boolean {
-  if (level === "auto") return false;
-  if (level === "manual") return true; // pause before every step
-  if (level === "beforeWithdraw") return id === "withdraw"; // stop at the irreversible step
-  return id === "sell"; // beforeSell: auto through deposit, stop before selling
-}
-// Re-exported for the background run store (which owns its own loop).
-export const needsConfirmBeforePublic = needsConfirmBefore;
-export const REVALIDATE_STEPS: ReadonlySet<StepId> = new Set<StepId>(["buy", "withdraw", "sell", "swap"]);
-
-export type Revalidation = { ok: boolean; reason?: string };
 // Steps that must re-check the edge right before firing — the quote on screen
 // can be minutes old by the time these run.
 const REVALIDATE_BEFORE = new Set<StepId>(["buy", "withdraw", "sell", "swap"]);

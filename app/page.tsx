@@ -211,8 +211,8 @@ export default function Cockpit() {
       const last = autoCooldown.current.get(o.base) ?? 0;
       if (Date.now() - last < 30 * 60_000) continue; // per-coin cooldown
       autoCooldown.current.set(o.base, Date.now());
-      const res = startRun({ opp: o, sizeUsd: autoEntry.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" });
-      if (!("error" in res)) beep();
+      void startRun({ opp: o, sizeUsd: autoEntry.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" })
+        .then((res) => { if (!("error" in res)) beep(); });
       break; // at most one entry per tick
     }
   }, [liveOverlay, gapOpps, autoEntry, runsStore.killed, activeRuns]);

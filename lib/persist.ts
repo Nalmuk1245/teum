@@ -43,3 +43,15 @@ export function saveSection(key: string, value: unknown): void {
     } catch { /* persistence must never break the app */ }
   }, SAVE_DEBOUNCE_MS);
 }
+
+/** Stage + write NOW — 런 상태처럼 크래시 직전 기록이 돈인 섹션용.
+ *  (30s 디바운스 중이던 다른 섹션 변경도 이 기회에 같이 내려간다.) */
+export function flushSection(key: string, value: unknown): void {
+  loadAll();
+  P.data[key] = value;
+  if (P.timer) { clearTimeout(P.timer); P.timer = null; }
+  try {
+    if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true });
+    writeFileSync(FILE, JSON.stringify(P.data), "utf8");
+  } catch { /* persistence must never break the app */ }
+}

@@ -1,379 +1,121 @@
 "use client";
 
-// Background execution store. The runner used to live inside ExecuteModal, so
-// closing the modal unmounted it and killed the trade. This module-level store
-// owns every run's state machine and drives its loop independently of any
-// component — so runs keep going in the background, and a dashboard can list
-// them. Components subscribe via useRuns() (useSyncExternalStore).
+// 실행 스토어 — 이제 "미러"다. 실행 상태머신은 서버(lib/runEngine)가 소유하고,
+// 여기는 /api/runs를 폴링해 UI에 비추고 액션을 위임할 뿐이다. 탭을 닫아도
+// 런은 서버에서 계속 간다. 기존 컴포넌트 호환을 위해 export 표면은 유지
+// (startRun만 async로 바뀜 — 서버 왕복이 생겼으므로).
 
 import { useSyncExternalStore } from "react";
 import type { Opportunity } from "./types";
-import {
-  buildPlan, needsConfirmBeforePublic as needsConfirmBefore, REVALIDATE_STEPS,
-  type AutoLevel, type ExecStep, type StepId, type StepPhase, type RunPhase,
-} from "./executionPlan";
+import type { AutoLevel } from "./execPlan";
+import type { RunView, TxRef, StartResult } from "./runEngine";
 
-export type TxRef = { hash: string; url: string | null };
-
-export type RunView = {
-  id: string;
-  opp: Opportunity;
-  base: string;
-  kind: string;
-  route: string; // "Binance → Upbit"
-  sizeUsd: number;
-  hedge: boolean;
-  autoLevel: AutoLevel;
-  plan: ExecStep[];
-  statuses: Record<string, StepPhase>;
-  messages: Record<string, string>;
-  txs: Record<string, TxRef>;
-  phase: RunPhase;
-  pauseAt: number;
-  error: string | null;
-  startedAt: number;
-  // Position (smart unwind), meaningful once buy is done and not full-auto.
-  totalQty: number;
-  remaining: number;
-  pnlUsd: number;
-  unwindLog: string[];
-  unwinding: boolean;
-};
-
-// Non-reactive per-run engine record (refs the loop mutates).
-type Engine = {
-  cancelled: boolean;
-  busy: boolean;
-  i: number;
-  confirmed: Set<number>;
-  qty?: number;
-  startTs: number;
-  fills: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
-  durations: Record<string, number>; // stepId → seconds actually taken
-  opp: Opportunity;
-};
+export type { RunView, TxRef, StartResult };
 
 type Store = { runs: Record<string, RunView>; killed: boolean; maxInFlightUsd: number };
+
 const g = globalThis as unknown as {
-  __arbRuns?: { store: Store; engines: Map<string, Engine>; listeners: Set<() => void>; seq: number };
+  __arbRunsMirror?: { store: Store; listeners: Set<() => void>; timer: ReturnType<typeof setInterval> | null; fetching: boolean };
 };
-g.__arbRuns ??= { store: { runs: {}, killed: false, maxInFlightUsd: Infinity }, engines: new Map(), listeners: new Set(), seq: 0 };
-const R = g.__arbRuns;
+g.__arbRunsMirror ??= { store: { runs: {}, killed: false, maxInFlightUsd: Infinity }, listeners: new Set(), timer: null, fetching: false };
+const M = g.__arbRunsMirror;
 
-// ── 런 스냅샷 persist ─────────────────────────────────────────────────────────
-// 실행 루프는 이 탭 안에서 돈다 — 탭/브라우저가 죽으면 루프는 끊기지만 거래소
-// 실포지션은 남는다. 스냅샷을 localStorage에 남겨, 재접속 시 "중단된 런"을
-// 경고와 함께 복원한다 (자동 재개는 안 한다 — 상태를 모르는 재개가 더 위험).
-const LS_RUNS = "ac.runs.v1";
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-function persistRuns() {
-  if (typeof window === "undefined") return;
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    try {
-      const keep = Object.values(R.store.runs).slice(-20);
-      localStorage.setItem(LS_RUNS, JSON.stringify(Object.fromEntries(keep.map((r) => [r.id, r]))));
-    } catch { /* quota/private mode */ }
-  }, 300);
+const POLL_MS = 2500;
+
+// 라이브 액션 인증 토큰 — 설정창에서 localStorage에 저장해둔 값.
+function execToken(): string | null {
+  try { return localStorage.getItem("ac.execToken"); } catch { return null; }
 }
-if (typeof window !== "undefined" && Object.keys(R.store.runs).length === 0) {
+function headers(): Record<string, string> {
+  const t = execToken();
+  return { "content-type": "application/json", ...(t ? { "x-exec-token": t } : {}) };
+}
+
+function apply(j: unknown) {
+  const d = j as { runs?: Record<string, RunView>; killed?: boolean; maxInFlightUsd?: number };
+  if (!d || typeof d !== "object" || !d.runs) return;
+  M.store = {
+    runs: d.runs,
+    killed: !!d.killed,
+    maxInFlightUsd: typeof d.maxInFlightUsd === "number" && d.maxInFlightUsd > 0 ? d.maxInFlightUsd : Infinity,
+  };
+  M.listeners.forEach((l) => l());
+}
+
+async function refresh() {
+  if (M.fetching) return;
+  M.fetching = true;
   try {
-    const saved = JSON.parse(localStorage.getItem(LS_RUNS) ?? "{}") as Record<string, RunView>;
-    for (const [rid, rv] of Object.entries(saved)) {
-      if (rv.phase === "running" || rv.phase === "paused") {
-        rv.phase = "error";
-        rv.error = "⚠ 탭/서버 재시작으로 실행 루프 중단 — 거래소 실포지션·헷지 수동 확인 필요";
-      }
-      R.store.runs[rid] = rv;
-    }
-  } catch { /* malformed */ }
+    const res = await fetch("/api/runs", { cache: "no-store" });
+    apply(await res.json());
+  } catch { /* 다음 폴에서 */ } finally {
+    M.fetching = false;
+  }
 }
 
-function emit() {
-  R.store = { ...R.store, runs: { ...R.store.runs } };
-  R.listeners.forEach((l) => l());
-  persistRuns();
+async function action(body: Record<string, unknown>): Promise<{ error?: string; id?: string }> {
+  try {
+    const res = await fetch("/api/runs", { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    const j = (await res.json()) as { error?: string; id?: string };
+    apply(j); // 액션 응답에 최신 스냅샷 동봉
+    return j;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "요청 실패" };
+  }
 }
 
-/** USD notional currently in-flight (runs started and not finished). */
+function ensurePolling() {
+  if (M.timer || typeof window === "undefined") return;
+  M.timer = setInterval(() => {
+    if (document.visibilityState === "visible") void refresh();
+  }, POLL_MS);
+  void refresh();
+}
+
+// ── 컴포넌트 표면 (기존 API 유지) ─────────────────────────────────────────────
 export function inFlightUsd(): number {
-  return Object.values(R.store.runs)
+  return Object.values(M.store.runs)
     .filter((r) => r.phase === "running" || r.phase === "paused")
     .reduce((s, r) => s + r.sizeUsd, 0);
 }
-/** UI mirrors the server's in-flight cap here so startRun can enforce it. */
+
+/** 서버 리스크 설정 미러 (한도 집행은 서버가 한다 — 여기는 표시용). */
 export function setInFlightLimit(usd: number) {
-  R.store.maxInFlightUsd = Number.isFinite(usd) && usd > 0 ? usd : Infinity;
-  emit();
-}
-function patch(id: string, p: Partial<RunView>) {
-  const cur = R.store.runs[id];
-  if (!cur) return;
-  R.store.runs[id] = { ...cur, ...p };
-  emit();
+  M.store = { ...M.store, maxInFlightUsd: Number.isFinite(usd) && usd > 0 ? usd : Infinity };
+  M.listeners.forEach((l) => l());
 }
 
-
-// ── Step / revalidate primitives (per run) ────────────────────────────────────
-async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollback?: boolean }) {
-  if (stepId === "buy" && !opts?.rollback) {
-    eng.qty = undefined;
-    eng.fills = {};
-    eng.startTs = Date.now();
-  }
-  const res = await fetch("/api/exec-step", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      stepId, opportunity: eng.opp, sizeUsd: R.store.runs[id]?.sizeUsd ?? 0,
-      rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
-      fills: stepId === "settle" ? eng.fills : undefined,
-      durations: stepId === "settle" ? eng.durations : undefined,
-      // 정산 기록용 — 이 런에서 발생한 온체인/출금 tx 전부.
-      txs: stepId === "settle"
-        ? Object.entries(R.store.runs[id]?.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url }))
-        : undefined,
-      // Idempotency: if the network dropped AFTER the server executed, a retry
-      // with the same key replays the cached success instead of double-firing.
-      idempotencyKey: opts?.rollback ? undefined : `${id}:${stepId}`,
-    }),
-  });
-  const j = await res.json();
-  if (typeof j.filledQty === "number" && j.filledQty > 0) eng.qty = j.filledQty;
-  if (j.fill?.quote && !opts?.rollback) {
-    if (stepId === "buy") { eng.fills.buyQuote = j.fill.quote; eng.fills.buyCcy = j.fill.ccy; eng.fills.buyQty = j.fill.qty; }
-    if (stepId === "sell") { eng.fills.sellQuote = j.fill.quote; eng.fills.sellCcy = j.fill.ccy; eng.fills.sellQty = j.fill.qty; }
-    if (stepId === "hedge") eng.fills.hedgeOpenQuote = j.fill.quote;
-    if (stepId === "close") eng.fills.hedgeCloseQuote = j.fill.quote;
-  }
-  return { ok: !!j.ok, message: j.message as string | undefined, tx: j.tx as TxRef | undefined };
+export async function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }): Promise<StartResult> {
+  const j = await action({ action: "start", opp: cfg.opp, sizeUsd: cfg.sizeUsd, hedge: cfg.hedge, autoLevel: cfg.autoLevel });
+  if (j.error) return { error: j.error };
+  if (!j.id) return { error: "시작 실패" };
+  return { id: j.id };
 }
 
-async function revalidate(eng: Engine, sizeUsd: number) {
-  if (eng.opp.mock) return { ok: true };
-  try {
-    const res = await fetch("/api/quote", {
-      method: "POST", headers: { "content-type": "application/json" },
-      // fresh: money is about to move — never decide off a cached book
-      body: JSON.stringify({ opportunity: eng.opp, sizeUsd, fresh: true }),
-    });
-    const j = await res.json();
-    const q = j.quote;
-    if (!q) return { ok: false, reason: "실호가 재조회 실패" };
-    if (q.execNetPct <= 0) return { ok: false, reason: `순수익 ${q.execNetPct.toFixed(2)}%로 하락` };
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: "재견적 요청 실패" };
-  }
-}
+export function confirmRun(id: string) { void action({ action: "confirm", id }); }
+export function retryRun(id: string) { void action({ action: "retry", id }); }
+export function cancelRun(id: string) { void action({ action: "cancel", id }); }
+export function clearFinished() { void action({ action: "clear" }); }
 
-// ── The loop ──────────────────────────────────────────────────────────────────
-async function loop(id: string) {
-  const eng = R.engines.get(id);
-  if (!eng || eng.busy) return;
-  eng.busy = true;
-  const run = () => R.store.runs[id];
-  patch(id, { phase: "running", error: null });
-
-  while (eng.i < run().plan.length) {
-    if (eng.cancelled) { eng.busy = false; return; }
-    const i = eng.i;
-    const step = run().plan[i];
-
-    if (needsConfirmBefore(step.id, run().autoLevel) && !eng.confirmed.has(i)) {
-      patch(id, { pauseAt: i, phase: "paused" });
-      eng.busy = false;
-      return;
-    }
-
-    if (REVALIDATE_STEPS.has(step.id)) {
-      const v = await revalidate(eng, run().sizeUsd);
-      if (eng.cancelled) { eng.busy = false; return; }
-      if (!v.ok) {
-        patch(id, {
-          statuses: { ...run().statuses, [step.id]: "error" },
-          messages: { ...run().messages, [step.id]: `재검증 실패: ${v.reason ?? "엣지 소멸"}` },
-          error: `실행 중단 — ${v.reason ?? "엣지 소멸"} (${step.label} 직전 재확인)`,
-          pauseAt: i, phase: "error",
-        });
-        eng.busy = false;
-        return;
-      }
-    }
-
-    patch(id, { statuses: { ...run().statuses, [step.id]: "running" } });
-    const stepT0 = Date.now();
-    let r: { ok: boolean; message?: string; tx?: TxRef };
-    try { r = await callStep(id, eng, step.id); }
-    catch (e) { r = { ok: false, message: e instanceof Error ? e.message : "실패" }; }
-    eng.durations[step.id] = Math.round((Date.now() - stepT0) / 1000); // real per-step seconds
-    if (eng.cancelled) { eng.busy = false; return; }
-
-    const upd: Partial<RunView> = {};
-    if (r.message) upd.messages = { ...run().messages, [step.id]: r.message };
-    if (r.tx) upd.txs = { ...run().txs, [step.id]: r.tx };
-
-    if (!r.ok) {
-      const statuses = { ...run().statuses, [step.id]: "error" as StepPhase };
-      const withdrawIdx = run().plan.findIndex((s) => s.id === "withdraw");
-      const messages = { ...(upd.messages ?? run().messages) };
-      let allOk = true;
-      if (i <= withdrawIdx) {
-        for (let j = i - 1; j >= 0; j--) {
-          const sid = run().plan[j].id;
-          if (sid === "buy" || sid === "hedge") {
-            let rb: { ok: boolean; message?: string };
-            try { rb = await callStep(id, eng, sid, { rollback: true }); }
-            catch (e) { rb = { ok: false, message: e instanceof Error ? e.message : "롤백 실패" }; }
-            allOk = allOk && rb.ok;
-            statuses[sid] = rb.ok ? "rolledback" : "error";
-            messages[sid] = `${messages[sid] ?? ""} · ${rb.ok ? "롤백됨" : `롤백 실패(${rb.message ?? "?"}) — 수동`}`;
-          }
-        }
-        patch(id, { statuses, messages, error: `${r.message ?? "단계 실패"} — ${allOk ? "진입 롤백 완료" : "⚠ 일부 롤백 실패, 수동 확인"}`, pauseAt: i, phase: "error" });
-      } else {
-        patch(id, { statuses, messages, error: `${r.message ?? "단계 실패"} — 출금 이후: 헷지 유지, 수동 처리 필요`, pauseAt: i, phase: "error" });
-      }
-      eng.busy = false;
-      return;
-    }
-
-    upd.statuses = { ...run().statuses, [step.id]: "done" };
-    // Seed the position when the buy fills (for smart unwind display).
-    if (step.id === "buy") {
-      const price = eng.opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
-      const tq = eng.qty ?? (price ? run().sizeUsd / price : 0);
-      upd.totalQty = tq; upd.remaining = tq;
-    }
-    // The sell step disposes the whole spot position — nothing left to smart-
-    // unwind (settle too, as a backstop for plans without a sell leg).
-    if (step.id === "sell" || step.id === "settle") upd.remaining = 0;
-    patch(id, upd);
-    eng.i = i + 1;
-  }
-  patch(id, { phase: "done", pauseAt: -1 });
-  eng.busy = false;
-}
-
-// ── 헷지 마진 워치 ────────────────────────────────────────────────────────────
-// 전송 대기 중(헷지 열림·미청산) 급등이 오면 숏 증거금이 쪼인다. 60초마다
-// 서버(/api/hedge-health)에 위임 — 임계 미달이면 서버가 텔레그램을 쏜다.
-if (typeof window !== "undefined") {
-  const gW = globalThis as unknown as { __arbHedgeWatch?: boolean };
-  if (!gW.__arbHedgeWatch) {
-    gW.__arbHedgeWatch = true;
-    setInterval(() => {
-      const active = Object.values(R.store.runs).filter(
-        (r) => r.hedge && r.statuses.hedge === "done" && r.statuses.close !== "done"
-          && (r.phase === "running" || r.phase === "paused" || r.phase === "error"),
-      );
-      if (!active.length) return;
-      const notional = active.reduce((s2, r) => s2 + r.sizeUsd, 0);
-      void fetch(`/api/hedge-health?notional=${Math.round(notional)}`).catch(() => {});
-    }, 60_000);
-  }
-}
-
-// ── Public actions ────────────────────────────────────────────────────────────
-export type StartResult = { id: string } | { error: string };
-export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }): StartResult {
-  if (R.store.killed) return { error: "킬 스위치 활성 — 신규 실행 차단" };
-  const cap = R.store.maxInFlightUsd;
-  if (Number.isFinite(cap) && inFlightUsd() + cfg.sizeUsd > cap) {
-    return { error: `총 노출 한도 초과 (진행 중 $${inFlightUsd().toFixed(0)} + $${cfg.sizeUsd.toFixed(0)} > $${cap.toFixed(0)})` };
-  }
-  const id = `run_${++R.seq}_${cfg.opp.base}`;
-  const plan = buildPlan(cfg.opp, cfg.hedge);
-  const buy = cfg.opp.legs.find((l) => l.side === "buy");
-  const sell = cfg.opp.legs.find((l) => l.side === "sell");
-  R.store.runs[id] = {
-    id, opp: cfg.opp, base: cfg.opp.base, kind: cfg.opp.kind,
-    route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
-    sizeUsd: cfg.sizeUsd, hedge: cfg.hedge, autoLevel: cfg.autoLevel, plan,
-    statuses: {}, messages: {}, txs: {}, phase: "running", pauseAt: -1, error: null,
-    startedAt: Date.now(), totalQty: 0, remaining: 0, pnlUsd: 0, unwindLog: [], unwinding: false,
-  };
-  R.engines.set(id, {
-    cancelled: false, busy: false, i: 0, confirmed: new Set(),
-    startTs: 0, fills: {}, durations: {}, opp: cfg.opp,
-  });
-  emit();
-  void loop(id);
-  return { id };
-}
-
-export function confirmRun(id: string) {
-  const eng = R.engines.get(id);
-  if (!eng || eng.busy) return;
-  eng.confirmed.add(eng.i);
-  patch(id, { pauseAt: -1 });
-  void loop(id);
-}
-
-export function retryRun(id: string) {
-  const eng = R.engines.get(id);
-  if (!eng || eng.busy || R.store.runs[id]?.phase !== "error") return;
-  patch(id, { error: null, pauseAt: -1 });
-  void loop(id);
-}
-
-export function cancelRun(id: string) {
-  const eng = R.engines.get(id);
-  if (eng) eng.cancelled = true;
-  delete R.store.runs[id];
-  R.engines.delete(id);
-  emit();
-}
-
-export function clearFinished() {
-  for (const [id, run] of Object.entries(R.store.runs)) {
-    if (run.phase === "done") { R.engines.delete(id); delete R.store.runs[id]; }
-  }
-  emit();
-}
-
-/** Partial smart-unwind on a run's remaining position (calls /api/unwind). */
 export async function unwindRun(id: string, fraction: number) {
-  const run = R.store.runs[id];
-  const eng = R.engines.get(id);
-  if (!run || !eng || run.unwinding || run.remaining <= 0) return;
-  patch(id, { unwinding: true });
-  try {
-    const res = await fetch("/api/unwind", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ opportunity: eng.opp, remainingQty: run.remaining, fraction }),
-    });
-    const j = await res.json();
-    if (j.result) {
-      patch(id, {
-        remaining: j.result.remainingQty,
-        pnlUsd: run.pnlUsd + (j.result.pnlUsd ?? 0),
-        unwindLog: [...run.unwindLog, ...(j.result.log ?? [])],
-        unwinding: false,
-      });
-    } else {
-      patch(id, { unwindLog: [...run.unwindLog, `청산 실패: ${j.error ?? "?"}`], unwinding: false });
-    }
-  } catch (e) {
-    patch(id, { unwindLog: [...run.unwindLog, `청산 오류: ${e instanceof Error ? e.message : "?"}`], unwinding: false });
-  }
+  await action({ action: "unwind", id, fraction });
 }
 
-// ── Kill switch (mirrors server flag, halts all local loops) ──────────────────
 export async function setKillSwitch(v: boolean) {
-  R.store.killed = v;
-  if (v) for (const eng of R.engines.values()) eng.cancelled = true;
-  emit();
-  try {
-    await fetch("/api/kill", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ killed: v }) });
-  } catch { /* ignore */ }
+  // 낙관적 반영 — 비상 정지는 화면이 즉시 바뀌어야 한다
+  M.store = { ...M.store, killed: v };
+  M.listeners.forEach((l) => l());
+  await action({ action: "kill", killed: v });
 }
 
-// ── Subscription ──────────────────────────────────────────────────────────────
-function subscribe(cb: () => void) { R.listeners.add(cb); return () => R.listeners.delete(cb); }
-function getSnapshot() { return R.store; }
+// ── 구독 ──────────────────────────────────────────────────────────────────────
 const server: Store = { runs: {}, killed: false, maxInFlightUsd: Infinity };
+function subscribe(cb: () => void) {
+  M.listeners.add(cb);
+  ensurePolling();
+  return () => M.listeners.delete(cb);
+}
+function getSnapshot() { return M.store; }
 
 export function useRuns() {
   return useSyncExternalStore(subscribe, getSnapshot, () => server);

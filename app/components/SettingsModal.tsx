@@ -28,6 +28,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [dryRun, setDryRun] = useState(true);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [authToken, setAuthToken] = useState("");
+  // 라이브 실행 인증 토큰은 실행 미러(runStore)도 써야 해서 localStorage에 동기화.
+  useEffect(() => {
+    try { const t = localStorage.getItem("ac.execToken"); if (t && !authToken) setAuthToken(t); } catch { /* private */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    try { if (authToken) localStorage.setItem("ac.execToken", authToken); } catch { /* private */ }
+  }, [authToken]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [tgMsg, setTgMsg] = useState<string | null>(null);

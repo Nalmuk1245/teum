@@ -280,9 +280,9 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
             {phase === "idle" || phase === "done" ? (
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (run) { cancelRun(run.id); } // clear a finished run before a fresh one
-                  const res = startRun({ opp, sizeUsd, hedge: hedgeOn, autoLevel });
+                  const res = await startRun({ opp, sizeUsd, hedge: hedgeOn, autoLevel });
                   if ("error" in res) { setStartErr(res.error); return; }
                   setStartErr(null);
                   setRunId(res.id);
