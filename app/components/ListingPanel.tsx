@@ -427,7 +427,7 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
     })),
   ];
   const [sel, setSel] = useState<string | null>(null);
-  const [open, setOpen] = useState(false); // 상장 순간엔 실행정보 우선 — 차트는 접어둠
+  const [open, setOpen] = useState(true);
   const active = opts.find((o) => o.key === sel) ?? opts[0];
   if (!opts.length) return null;
   return (
@@ -651,6 +651,9 @@ function DetailPanel({ base }: { base: string }) {
         {signal("24h 피크", play?.peakPct != null ? `+${play.peakPct.toFixed(1)}%` : "—", (play?.peakPct ?? 0) > 0 ? "var(--pos)" : undefined)}
       </div>
 
+      {/* ② 차트 */}
+      <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
+
       {/* ③ 매수·매도 — CEX+DEX 통합 표, 금액 입력은 표 머리에 */}
       {sec("매수 · 매도", (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -781,9 +784,6 @@ function DetailPanel({ base }: { base: string }) {
       {holdings && holdings.venues.some((v) => (v.hotDeltaPerMin ?? 0) > 0) && (
         <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--amber)" }}>▲ 핫월렛 유입 = 거래소가 매도 물량을 준비 중일 수 있음 (덤프 경계)</div>
       )}
-
-      {/* ② 차트 */}
-      <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
 
       {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (
