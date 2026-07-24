@@ -256,6 +256,36 @@ export async function upbitWithdrawTx(uuid: string): Promise<string | null> {
   }
 }
 
+export async function bybitWithdrawTx(wdId: string): Promise<string | null> {
+  const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
+  if (CONFIG.DRY_RUN || !key || !secret) return null;
+  try {
+    const j = await bybitSigned("GET", "/v5/asset/withdraw/query-record", { withdrawID: wdId });
+    const rec = j?.result?.rows?.[0] as { txID?: string } | undefined;
+    return rec?.txID || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function okxWithdrawTx(wdId: string): Promise<string | null> {
+  const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
+  if (CONFIG.DRY_RUN || !key || !secret || !pass) return null;
+  try {
+    const path = `/api/v5/asset/withdrawal-history?wdId=${wdId}`;
+    const ts = new Date().toISOString();
+    const sign = crypto.createHmac("sha256", secret!).update(ts + "GET" + path).digest("base64");
+    const res = await fetch(`https://www.okx.com${path}`, {
+      headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sign, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
+      cache: "no-store",
+    });
+    const j = (await res.json()) as { code: string; data?: Array<{ txId?: string }> };
+    return j.code === "0" ? (j.data?.[0]?.txId || null) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function binanceWithdraw(base: string, network: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
   const { key } = bnKeys();
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 출금 → ${address.slice(0, 10)}…${tag ? ` (tag:${tag})` : ""}`, !!key);
@@ -463,6 +493,41 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
         (d: { transfer_date?: number | string }) => Number(d.transfer_date ?? 0) / 1000 >= sinceTs,
       );
       return { ok: !!rec, dryRun: false, id: null, message: rec ? `Bithumb ${base} 입금 확인` : "입금 대기" };
+    } catch (e) {
+      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+    }
+  }
+  if (venue === "bybit") {
+    const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
+    if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bybit ${base} 입금 확인`, !!(key && secret));
+    try {
+      const j = await bybitSigned("GET", "/v5/asset/deposit/query-record", { coin: base });
+      const rec = (j?.result?.rows ?? []).find(
+        (d: { status?: number; successAt?: string; txID?: string; amount?: string }) =>
+          d.status === 3 && Number(d.successAt ?? 0) >= sinceTs, // 3 = success
+      );
+      const credited = rec?.amount ? Number(rec.amount) : undefined;
+      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txID, filledQty: credited, message: rec ? `Bybit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
+    } catch (e) {
+      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+    }
+  }
+  if (venue === "okx") {
+    const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
+    if (CONFIG.DRY_RUN || !key || !secret || !pass) return sim(`OKX ${base} 입금 확인`, !!(key && secret && pass));
+    try {
+      const path = `/api/v5/asset/deposit-history?ccy=${base}`;
+      const ts = new Date().toISOString();
+      const sign = crypto.createHmac("sha256", secret).update(ts + "GET" + path).digest("base64");
+      const res = await fetch(`https://www.okx.com${path}`, {
+        headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sign, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
+        cache: "no-store",
+      });
+      const j = (await res.json()) as { code: string; data?: Array<{ state?: string; ts?: string; txId?: string; amt?: string }> };
+      if (j.code !== "0") return { ok: false, dryRun: false, id: null, message: "입금 조회 실패" };
+      const rec = (j.data ?? []).find((d) => d.state === "2" && Number(d.ts ?? 0) >= sinceTs); // 2 = credited
+      const credited = rec?.amt ? Number(rec.amt) : undefined;
+      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `OKX ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }

@@ -7,7 +7,7 @@ import { CONFIG, TAG_REQUIRED } from "./config";
 import { sendToken, walletAddress } from "./wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 import { fetchDepositAddress } from "./deposits";
-import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, okxOrder, okxWithdraw, checkDeposit } from "./orders";
+import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, bybitWithdrawTx, okxOrder, okxWithdraw, okxWithdrawTx, checkDeposit } from "./orders";
 import { resolveWalletAsset } from "./tokens";
 import { dexConfigured, approveDex, swapDex, CEXDEX_CHAINS, allTokens, QUOTE_STABLES } from "./dex";
 import { sendRawEvmTx } from "./wallet";
@@ -284,6 +284,8 @@ export async function runStep(
           await new Promise((res) => setTimeout(res, 2000));
           txId = buy?.venue === "binance" ? await binanceWithdrawTx(opp.base, r.id)
             : buy?.venue === "upbit" ? await upbitWithdrawTx(r.id)
+            : buy?.venue === "bybit" ? await bybitWithdrawTx(r.id)
+            : buy?.venue === "okx" ? await okxWithdrawTx(r.id)
             : null;
         }
         wtx = txId ? txInfo(opp.transfer?.network?.chain, txId, false) : undefined;
@@ -452,6 +454,8 @@ async function undoStep(stepId: StepId, opp: Opportunity, qty: number): Promise<
       }
     }
     if (buy?.venue === "binance") return await binanceSpot(opp.base, "SELL", { qty });
+    if (buy?.venue === "bybit") return await bybitOrder(opp.base, "SELL", { qty });
+    if (buy?.venue === "okx") return await okxOrder(opp.base, "SELL", { qty });
     if (buy?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });
     if (buy?.venue === "bithumb") return await bithumbOrder(opp.base, "ask", qty);
   }

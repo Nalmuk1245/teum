@@ -7,6 +7,8 @@
 //   • Bithumb — PUBLIC (/public/assetsstatus/ALL), always on.
 //   • Upbit   — SIGNED (/v1/status/wallet, JWT). Needs UPBIT_KEY/SECRET.
 //   • Binance — SIGNED (/sapi/v1/capital/config/getall, HMAC). Needs BINANCE_KEY/SECRET.
+//   • Bybit   — SIGNED (/v5/asset/coin/query-info, HMAC). Needs BYBIT_KEY/SECRET.
+//   • OKX     — SIGNED (/api/v5/asset/currencies, HMAC+passphrase). Needs OKX_* keys.
 //
 // The signed calls are FULLY WIRED but dormant: with no keys in env they return
 // null (surfaced as "키 필요"). Drop keys into .env.local and they light up — no
@@ -135,16 +137,113 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
   }
 }
 
+// The transfer chain we'd actually use for a coin (same choice fetchBinance
+// makes) — per-network gates must look at THIS chain, not "any chain works".
+const wantedChainKey = (coin: string) =>
+  chainKeyFromLabel((COIN_NETWORK[coin] ?? COIN_NETWORK_DEFAULT).chain);
+
+// ── Bybit (signed, HMAC-SHA256) ───────────────────────────────────────────────
+// Bybit's chain codes largely coincide with Binance's (ETH/BSC/TRX/SOL/XRP…),
+// so BINANCE_NET doubles as the match key. No coin-level flags exist — when our
+// chain isn't listed, OR across chains (= Binance's coin-level fallback).
+async function fetchBybit(): Promise<Map<string, WalletStatus> | null> {
+  const key = process.env.BYBIT_KEY;
+  const secret = process.env.BYBIT_SECRET;
+  if (!key || !secret) return null; // dormant until keys added
+  try {
+    const ts = String(Date.now()), recv = "5000", query = "";
+    const sig = crypto.createHmac("sha256", secret).update(ts + key + recv + query).digest("hex");
+    const res = await fetch("https://api.bybit.com/v5/asset/coin/query-info", {
+      headers: { "X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sig },
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
+    });
+    const j = (await res.json()) as {
+      retCode: number;
+      result?: { rows?: Array<{ coin: string; chains?: Array<{ chain: string; chainDeposit: string; chainWithdraw: string }> }> };
+    };
+    if (j.retCode !== 0 || !j.result?.rows) return null;
+    const m = new Map<string, WalletStatus>();
+    for (const r of j.result.rows) {
+      const chains = r.chains ?? [];
+      if (!chains.length) continue;
+      const wanted = BINANCE_NET[wantedChainKey(r.coin)];
+      const net = wanted ? chains.find((c) => c.chain?.toUpperCase() === wanted.toUpperCase()) : undefined;
+      m.set(r.coin, net
+        ? { deposit: net.chainDeposit === "1", withdraw: net.chainWithdraw === "1" }
+        : {
+            deposit: chains.some((c) => c.chainDeposit === "1"),
+            withdraw: chains.some((c) => c.chainWithdraw === "1"),
+          });
+    }
+    return m;
+  } catch {
+    return null;
+  }
+}
+
+// ── OKX (signed, HMAC-SHA256 + passphrase) ────────────────────────────────────
+// OKX names chains "CCY-Network" (USDT-ERC20, SOL-Solana…) — map our chain key
+// to its network word and substring-match, same tolerance as okxDeposit.
+const OKX_NET: Record<string, string> = {
+  ethereum: "ERC20", bsc: "BEP20", tron: "TRC20", solana: "Solana",
+  xrp: "XRP", polygon: "Polygon", arbitrum: "Arbitrum", optimism: "Optimism",
+  base: "Base", avalanche: "Avalanche",
+};
+async function fetchOkx(): Promise<Map<string, WalletStatus> | null> {
+  const key = process.env.OKX_KEY;
+  const secret = process.env.OKX_SECRET;
+  const pass = process.env.OKX_PASSPHRASE;
+  if (!key || !secret || !pass) return null; // dormant until keys added
+  try {
+    const path = "/api/v5/asset/currencies";
+    const ts = new Date().toISOString();
+    const sig = crypto.createHmac("sha256", secret).update(ts + "GET" + path).digest("base64");
+    const res = await fetch(`https://www.okx.com${path}`, {
+      headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sig, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
+    });
+    const j = (await res.json()) as {
+      code: string;
+      data?: Array<{ ccy: string; chain?: string; canDep: boolean; canWd: boolean }>;
+    };
+    if (j.code !== "0" || !j.data) return null;
+    // Group rows (one per chain) by coin, then pick our chain / OR-fallback.
+    const byCoin = new Map<string, Array<{ chain?: string; canDep: boolean; canWd: boolean }>>();
+    for (const d of j.data) {
+      const arr = byCoin.get(d.ccy) ?? [];
+      arr.push(d);
+      byCoin.set(d.ccy, arr);
+    }
+    const m = new Map<string, WalletStatus>();
+    for (const [coin, rows] of byCoin) {
+      const wanted = OKX_NET[wantedChainKey(coin)];
+      const net = wanted
+        ? rows.find((r) => r.chain?.toUpperCase().includes(wanted.toUpperCase()))
+        : undefined;
+      m.set(coin, net
+        ? { deposit: !!net.canDep, withdraw: !!net.canWd }
+        : { deposit: rows.some((r) => r.canDep), withdraw: rows.some((r) => r.canWd) });
+    }
+    return m;
+  } catch {
+    return null;
+  }
+}
+
 // ── Aggregate ─────────────────────────────────────────────────────────────────
 export async function fetchTransferStatus(): Promise<TransferStatus> {
-  const [bithumb, upbit, binance] = await Promise.all([
+  const [bithumb, upbit, binance, bybit, okx] = await Promise.all([
     fetchBithumb(),
     fetchUpbit(),
     fetchBinance(),
+    fetchBybit(),
+    fetchOkx(),
   ]);
   const byVenue: TransferStatus["byVenue"] = { bithumb };
   if (upbit) byVenue.upbit = upbit;
   if (binance) byVenue.binance = binance;
+  if (bybit) byVenue.bybit = bybit;
+  if (okx) byVenue.okx = okx;
   return { byVenue };
 }
 

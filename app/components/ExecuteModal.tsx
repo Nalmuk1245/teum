@@ -563,7 +563,7 @@ export function QuotePanel({
           <Line label="체결 총차익 (VWAP)" value={pct(quote.execGrossPct)} />
           <Line label="테이커 ×2" value={`−${quote.takerPct.toFixed(2)}%`} dim />
           {quote.fxSpreadPct > 0 && <Line label="환 스프레드" value={`−${quote.fxSpreadPct.toFixed(2)}%`} dim />}
-          <Line label={`${opp.base} 출금비`} value={`−${quote.withdrawalPct.toFixed(2)}%`} dim />
+          {quote.withdrawalPct > 0 && <Line label={`${opp.base} 출금비`} value={`−${quote.withdrawalPct.toFixed(2)}%`} dim />}
           <div style={{ borderTop: "1px solid var(--border)", margin: "8px 0" }} />
           <Line label="순수익" value={`${pct(quote.execNetPct)} · ${pnl(quote.execNetPct)}`} valueColor={netColor} strong />
 

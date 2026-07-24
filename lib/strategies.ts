@@ -1,9 +1,9 @@
 // Arbitrage strategies. Each implements the same Strategy interface; the scanner
 // runs them all over a shared ScanContext and merges the results.
 //
-// Only `kimchi` carries real logic today. The other three are structural stubs
-// that document their data source and return [] (plus mock samples via the
-// scanner when USE_MOCK is on).
+// kimchi / cross-cex / cex-dex detect AND execute; funding-basis detects only
+// (perp-DEX order routing not wired). Mock samples fill empty strategies via
+// the scanner when USE_MOCK is on.
 
 import type { Opportunity, ScanContext, StrategyKind, TransferGate, Venue } from "./types";
 import {
@@ -183,9 +183,10 @@ const kimchi: Strategy = {
 };
 
 // ── CROSS-CEX — same coin, price gap between two global CEXes ──────────────────
-// Both legs are USDT so there's no FX; cost = taker×2 + on-chain transfer +
-// slippage. Majors rarely gap >0.1% — the tail (new listings, depegs) is where
-// this fires.
+// TRANSFER-style: buy the cheap venue, move the coin on-chain, sell the rich
+// venue. Both legs are USDT so there's no FX; cost = taker×2 + on-chain
+// transfer + slippage. Majors rarely gap >0.1% — the tail (new listings,
+// depegs) is where this fires.
 const CROSS_VENUES: Venue[] = ["binance", "bybit", "okx"];
 const CROSS_MIN_GROSS = 0.1; // % — below this it's noise, not an edge
 const crossSymbol = (venue: Venue, base: string) =>
@@ -241,7 +242,6 @@ const crossCex: Strategy = {
       const net = gross - cost;
 
       const transfer: TransferGate = {
-        // Wallet status for bybit/okx isn't wired → null (unknown).
         withdraw: { venue: lo.v, enabled: walletStatus(ctx.transfers, lo.v, base)?.withdraw ?? null },
         deposit: { venue: hi.v, enabled: walletStatus(ctx.transfers, hi.v, base)?.deposit ?? null },
         etaMin: TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN,

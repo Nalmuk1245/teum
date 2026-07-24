@@ -85,7 +85,7 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
     });
   }
   steps.push({ id: "deposit", label: `${sv} 입금 확인`, desc: "컨펌 대기" });
-  steps.push({ id: "sell", label: `${sv} 현물 매도`, desc: `${opp.base} → KRW` });
+  steps.push({ id: "sell", label: `${sv} 현물 매도`, desc: `${opp.base} → ${sell?.quote ?? "KRW"}` });
   if (hedge) steps.push({ id: "close", label: "Binance 선물 청산", desc: "매도와 동시 · 헷지 해제" });
   steps.push({ id: "settle", label: "정산", desc: "P&L 확정" });
   return steps;
