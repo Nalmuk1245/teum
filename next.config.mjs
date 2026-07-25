@@ -1,12 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    // instrumentation.ts를 부팅 시 실행 — 스캔 루프·상장 감시·워치독이
-    // "첫 HTTP 요청"이 아니라 프로세스 기동 시점에 무장된다. (무인 재시작 후
-    // 브라우저를 아무도 열지 않으면 모트인 공지 감시가 꺼져 있던 문제)
-    instrumentationHook: true,
-  },
   // 프로덕션 최적화
   poweredByHeader: false,            // X-Powered-By 헤더 제거
   compress: true,                    // gzip 응답
