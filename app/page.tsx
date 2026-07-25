@@ -119,8 +119,23 @@ export default function Cockpit() {
 
   useEffect(() => {
     void load();
-    const id = setInterval(load, 3000); // matches the server refresh cadence
-    return () => clearInterval(id);
+    // Pause polling while the tab is hidden (and refetch immediately on return).
+    // The scan keeps running server-side, so nothing is missed — this only stops
+    // the browser from fetching a board nobody is looking at.
+    let id: ReturnType<typeof setInterval> | null = setInterval(load, 3000);
+    const onVis = () => {
+      if (document.visibilityState === "hidden") {
+        if (id) { clearInterval(id); id = null; }
+      } else if (!id) {
+        void load();
+        id = setInterval(load, 3000);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      if (id) clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [load]);
 
   // Funding lives in its own tab — APR yields don't belong on a one-shot gap board.

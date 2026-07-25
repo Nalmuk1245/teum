@@ -20,6 +20,9 @@ export type LiveAges = { binance: number | null; upbit: number | null; bithumb: 
 // renders (2 decimals), so treating it as "unchanged" avoids a full re-render
 // for a difference nobody can see.
 const EPS = 0.005;
+// Module-scope decoder: Upbit orderbook frames arrive many times per second and
+// a fresh TextDecoder was being allocated for each one.
+const UTF8 = new TextDecoder();
 function sameOverlay(a: Record<string, LiveGap>, b: Record<string, LiveGap>): boolean {
   const ka = Object.keys(a);
   if (ka.length !== Object.keys(b).length) return false;
@@ -71,34 +74,73 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       return out;
     };
 
-    // ── Binance: one array stream covers every USDT ticker (~1s cadence) ──
+    // ── Binance: a COMBINED stream of only the symbols we actually need ──
+    //
+    // This used to subscribe to `!ticker@arr` — the all-symbols 24h ticker array,
+    // ~2800 symbols pushed every second, hundreds of KB to low-MB per message —
+    // and JSON.parse'd the whole thing on the main thread to keep the ~30 bases
+    // on the board. On a phone that is a recurring tens-of-ms main-thread block
+    // every second, independent of how many rows are displayed, and it competed
+    // directly with the render tick. `@bookTicker` per symbol gives exactly the
+    // best bid/ask we use, in ~200-byte messages.
+    let bnWs: WebSocket | null = null;
+    let bnStreamKey = "";
+    const bnBases = () => {
+      const out = new Set<string>();
+      for (const o of oppsRef.current) {
+        if (o.mock) continue;
+        // Any USDT-quoted leg is priced off Binance in the overlay math.
+        if (o.legs.some((l) => l.quote === "USDT")) out.add(o.base);
+      }
+      return [...out].sort();
+    };
     const connectBinance = () => {
       if (closed) return;
-      const ws = new WebSocket("wss://stream.binance.com:9443/ws/!ticker@arr");
+      const bases = bnBases();
+      bnStreamKey = bases.join(",");
+      if (!bases.length) {
+        // Nothing to watch yet — retry once the first scan lands.
+        setTimeout(() => { if (!closed) connectBinance(); }, 1500);
+        return;
+      }
+      // Combined-stream URL cap: keep it sane by chunking to 200 symbols.
+      const streams = bases.slice(0, 200).map((b) => `${b.toLowerCase()}usdt@bookTicker`).join("/");
+      const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+      bnWs = ws;
       sockets.push(ws);
       ws.onerror = () => ws.close();
       ws.onclose = () => {
         set("binance", false);
-        if (!closed) setTimeout(connectBinance, 2000);
+        if (!closed && bnWs === ws) setTimeout(connectBinance, 2000);
       };
       ws.onmessage = (e) => {
         try {
-          const arr = JSON.parse(e.data as string);
-          if (!Array.isArray(arr)) return;
+          const m = JSON.parse(e.data as string) as { data?: { s?: string; b?: string; a?: string } };
+          const d = m.data;
+          if (!d?.s || !d.s.endsWith("USDT")) return;
           lastMsg.current.binance = Date.now();
           set("binance", true); // green only once data actually arrives
-          for (const t of arr) {
-            if (typeof t.s === "string" && t.s.endsWith("USDT")) {
-              const base = t.s.slice(0, -4);
-              bn.current.set(base, Number(t.c));
-              const bid = Number(t.b), ask = Number(t.a);
-              if (bid > 0 && ask > 0) bnBook.current.set(base, { bid, ask });
-            }
+          const base = d.s.slice(0, -4);
+          const bid = Number(d.b), ask = Number(d.a);
+          if (bid > 0 && ask > 0) {
+            bnBook.current.set(base, { bid, ask });
+            bn.current.set(base, (bid + ask) / 2); // mid stands in for "last"
           }
         } catch {
           /* ignore */
         }
       };
+    };
+    // The needed symbol set changes as the board changes — reconnect only when it
+    // ACTUALLY differs (a reconnect per tick would be worse than the firehose).
+    const resyncBinance = () => {
+      if (closed) return;
+      const key = bnBases().join(",");
+      if (key === bnStreamKey || !key) return;
+      const old = bnWs;
+      bnWs = null; // suppress the old socket's reconnect
+      try { old?.close(); } catch { /* already closing */ }
+      connectBinance();
     };
 
     // ── Upbit ─────────────────────────────────────────────────────────────
@@ -108,17 +150,26 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       if (!upWs || upWs.readyState !== WebSocket.OPEN) return;
       const codes = new Set<string>(["KRW-USDT"]);
       for (const base of krCodes("upbit")) codes.add(`KRW-${base}`);
-      // Delta-only: re-sending the subscription frame every tick counts against
-      // Upbit's WS rate limit and gets the connection dropped. Only send when a
-      // genuinely new code appeared.
-      const hasNew = [...codes].some((c) => !upSubbed.has(c));
-      if (!hasNew && upSubbed.size > 0) return;
+      // Sync to the EXACT desired set — additions AND removals. Upbit's
+      // subscription frame is declarative (the last one replaces the previous),
+      // but this only ever ADDED, so the orderbook subscription ratcheted upward
+      // with every transient candidate for the life of the tab: inbound message
+      // rate and main-thread parse cost grew all session (which is why a reload
+      // made the app feel fast again). Still send only on a real change — a frame
+      // per tick counts against Upbit's rate limit and drops the connection.
+      const same = codes.size === upSubbed.size && [...codes].every((c) => upSubbed.has(c));
+      if (same && upSubbed.size > 0) return;
+      upSubbed.clear();
       for (const c of codes) upSubbed.add(c);
       upWs.send(JSON.stringify([
         { ticket: "arb-cockpit" },
         { type: "ticker", codes: [...upSubbed] },
         { type: "orderbook", codes: [...upSubbed] }, // best bid/ask → executable overlay
       ]));
+      // Drop cached prices for codes we no longer follow (they'd go stale and the
+      // overlay would keep using them).
+      for (const b of [...upBook.current.keys()]) if (!codes.has(`KRW-${b}`)) upBook.current.delete(b);
+      for (const b of [...up.current.keys()]) if (!codes.has(`KRW-${b}`)) up.current.delete(b);
     };
     const connectUpbit = () => {
       if (closed) return;
@@ -137,7 +188,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       };
       ws.onmessage = (e) => {
         try {
-          const text = new TextDecoder().decode(e.data as ArrayBuffer);
+          const text = UTF8.decode(e.data as ArrayBuffer);
           const m = JSON.parse(text);
           if (m.type === "orderbook" && m.code && Array.isArray(m.orderbook_units)) {
             const u = m.orderbook_units[0];
@@ -168,11 +219,16 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       if (!btWs || btWs.readyState !== WebSocket.OPEN) return;
       const syms = new Set<string>(["USDT_KRW"]);
       for (const base of krCodes("bithumb")) syms.add(`${base}_KRW`);
-      const hasNew = [...syms].some((s) => !btSubbed.has(s)); // delta-only (rate limit)
-      if (!hasNew && btSubbed.size > 0) return;
+      // Sync to the exact set (see subUpbit) — this only added, so the
+      // subscription grew monotonically for the whole session.
+      const same = syms.size === btSubbed.size && [...syms].every((s) => btSubbed.has(s));
+      if (same && btSubbed.size > 0) return;
+      btSubbed.clear();
       for (const s of syms) btSubbed.add(s);
       btWs.send(JSON.stringify({ type: "ticker", symbols: [...btSubbed], tickTypes: ["24H"] }));
       btWs.send(JSON.stringify({ type: "orderbookdepth", symbols: [...btSubbed] })); // 실호가 (델타)
+      for (const b of [...btDepth.current.keys()]) if (!syms.has(`${b}_KRW`)) btDepth.current.delete(b);
+      for (const b of [...bt.current.keys()]) if (!syms.has(`${b}_KRW`)) bt.current.delete(b);
     };
     const connectBithumb = () => {
       if (closed) return;
@@ -240,9 +296,11 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
 
     // Recompute the live overlay from the latest prices + latest opps.
     const recompute = () => {
-      // pick up any newly-listed KR bases since last tick
+      // pick up any newly-listed KR bases since last tick (both are no-ops when
+      // the desired set is unchanged)
       subUpbit();
       subBithumb();
+      resyncBinance();
       const ov: Record<string, LiveGap> = {};
       for (const o of oppsRef.current) {
         if (o.mock || o.kind !== "kimchi") continue;
@@ -297,7 +355,21 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
           : nextAges,
       );
     };
-    timers.push(setInterval(recompute, 600));
+    // Pause the recompute while the tab is hidden. The 600ms loop, the WS parse
+    // work and the render churn all kept running with the screen off — pure
+    // battery and cellular drain for a view nobody is looking at, and it left a
+    // backlog to flush on return (which is what made switching back feel slow).
+    let tick: ReturnType<typeof setInterval> | null = setInterval(recompute, 600);
+    const onVisibility = () => {
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      if (hidden) {
+        if (tick) { clearInterval(tick); tick = null; }
+      } else if (!tick) {
+        recompute(); // catch up immediately, then resume the cadence
+        tick = setInterval(recompute, 600);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     // Keepalive pings (Upbit/Bithumb drop idle sockets).
     timers.push(
@@ -313,7 +385,9 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
 
     return () => {
       closed = true;
+      if (tick) clearInterval(tick);
       timers.forEach(clearInterval);
+      document.removeEventListener("visibilitychange", onVisibility);
       sockets.forEach((ws) => {
         try {
           ws.onclose = null;
@@ -322,6 +396,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
           /* ignore */
         }
       });
+      sockets.length = 0; // 재연결마다 죽은 소켓 객체가 누적되던 것 정리
     };
   }, [enabled]);
 
