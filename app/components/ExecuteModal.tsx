@@ -281,7 +281,9 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
               <button
                 type="button"
                 onClick={async () => {
-                  if (run) { cancelRun(run.id); } // clear a finished run before a fresh one
+                  // clear a finished run before a fresh one (server refuses if it
+                  // still holds a position, which startRun would reject anyway)
+                  if (run) await cancelRun(run.id);
                   const res = await startRun({ opp, sizeUsd, hedge: hedgeOn, autoLevel });
                   if ("error" in res) { setStartErr(res.error); return; }
                   setStartErr(null);
@@ -313,7 +315,12 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
                 </button>
                 <button
                   type="button"
-                  onClick={() => { if (runId) { cancelRun(runId); setRunId(null); } }}
+                  onClick={async () => {
+                    if (!runId) return;
+                    const r = await cancelRun(runId);
+                    if (r.error) { setStartErr(r.error); return; } // 포지션 남으면 삭제 거부
+                    setRunId(null);
+                  }}
                   style={{
                     padding: "12px 16px", borderRadius: "var(--radius-sm)",
                     border: "1px solid var(--border-strong)", background: "transparent",
@@ -327,7 +334,13 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
               <>
                 <button
                   type="button"
-                  onClick={() => runId && retryRun(runId)}
+                  onClick={async () => {
+                    if (!runId) return;
+                    setStartErr(null);
+                    // 롤백된 런·결과 불명 단계·킬 활성이면 서버가 거부한다.
+                    const r = await retryRun(runId);
+                    if (r.error) setStartErr(r.error);
+                  }}
                   style={{
                     flex: 1, padding: 12, borderRadius: "var(--radius-sm)", border: "none",
                     background: "var(--brand-grad)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 14, cursor: "pointer",
@@ -337,7 +350,12 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
                 </button>
                 <button
                   type="button"
-                  onClick={() => { if (runId) { cancelRun(runId); setRunId(null); } }}
+                  onClick={async () => {
+                    if (!runId) return;
+                    const r = await cancelRun(runId);
+                    if (r.error) { setStartErr(r.error); return; }
+                    setRunId(null);
+                  }}
                   style={{
                     padding: "12px 14px", borderRadius: "var(--radius-sm)",
                     border: "1px solid var(--border-strong)", background: "transparent",

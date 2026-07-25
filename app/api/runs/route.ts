@@ -14,7 +14,8 @@ export async function GET() {
 
 type Action =
   | { action: "start"; opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }
-  | { action: "confirm" | "retry" | "cancel"; id: string }
+  | { action: "confirm" | "retry"; id: string }
+  | { action: "cancel"; id: string; force?: boolean }
   | { action: "unwind"; id: string; fraction: number }
   | { action: "clear" }
   | { action: "kill"; killed: boolean };
@@ -41,8 +42,18 @@ export async function POST(req: Request) {
         return NextResponse.json("error" in r ? { error: r.error } : { id: r.id, ...snapshot() });
       }
       case "confirm": confirmRun(body.id); break;
-      case "retry": retryRun(body.id); break;
-      case "cancel": cancelRun(body.id); break;
+      // retry/cancel can now REFUSE (rolled-back run, ambiguous step, position
+      // still open) — surface the reason instead of silently doing nothing.
+      case "retry": {
+        const r = retryRun(body.id);
+        if ("error" in r) return NextResponse.json({ error: r.error, ...snapshot() }, { status: 409 });
+        break;
+      }
+      case "cancel": {
+        const r = cancelRun(body.id, !!body.force);
+        if ("error" in r) return NextResponse.json({ error: r.error, ...snapshot() }, { status: 409 });
+        break;
+      }
       case "clear": clearFinished(); break;
       case "unwind": await unwindRun(body.id, body.fraction); break;
       case "kill": setEngineKill(!!body.killed); break;

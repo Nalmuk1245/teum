@@ -67,7 +67,7 @@ export function useFlowRunner(
     while (iRef.current < S.steps.length) {
       const i = iRef.current;
       const step = S.steps[i];
-      if (needsConfirmBefore(step.id, S.level) && !confirmed.current.has(i)) {
+      if (needsConfirmBefore(step, S.level) && !confirmed.current.has(i)) {
         if (alive.current) { setPauseAt(i); setPhase("paused"); }
         busy.current = false;
         return;

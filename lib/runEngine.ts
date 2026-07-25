@@ -13,7 +13,7 @@
 
 import type { Opportunity } from "./types";
 import {
-  buildPlan, needsConfirmBeforePublic as needsConfirmBefore, REVALIDATE_STEPS,
+  buildPlan, needsConfirmBeforePublic as needsConfirmBefore, REVALIDATE_STEPS, firstIrreversibleIdx,
   type AutoLevel, type ExecStep, type StepId, type StepPhase, type RunPhase,
 } from "./execPlan";
 import { runStep } from "./execStep";
@@ -53,22 +53,65 @@ export type RunView = {
 
 type Engine = {
   cancelled: boolean;
+  /** Kill-switch generation this engine was created in. The loop compares it
+   *  against the current epoch instead of reading a sticky `cancelled` flag —
+   *  that flag was never reset anywhere, so a breaker trip permanently bricked
+   *  every run even after the operator released the kill switch. */
+  killEpoch: number;
   busy: boolean;
   i: number;
   confirmed: Set<number>;
   qty?: number;
   startTs: number;
+  /** Hedge fill quantity — `close` must reduce exactly what was opened. Sizing
+   *  the close off the threaded qty (deposit-credited amount) can exceed the
+   *  position and get rejected by reduceOnly, leaving a naked short after the
+   *  spot leg is already sold. */
+  hedgeQty?: number;
   fills: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
   durations: Record<string, number>;
+  /** Successful step results by step index — replay protection. Retrying a step
+   *  that already succeeded must NOT re-send it. */
+  done: Map<number, { ok: boolean; message?: string; tx?: TxRef }>;
+  /** Set once a rollback has run: the run is terminal and cannot be retried
+   *  (retrying after an unwind re-opened hedges and re-dumped spot). */
+  rolledBack: boolean;
+  /** An unwind is touching this run's position — the loop must not sell too. */
+  unwindLock: boolean;
   opp: Opportunity;
 };
 
 const g = globalThis as unknown as {
-  __arbRunEngine?: { runs: Record<string, RunView>; engines: Map<string, Engine>; seq: number; booted: boolean; saveTimer: ReturnType<typeof setTimeout> | null; fails: number[] };
+  __arbRunEngine?: { runs: Record<string, RunView>; engines: Map<string, Engine>; seq: number; booted: boolean; saveTimer: ReturnType<typeof setTimeout> | null; fails: number[]; killEpoch: number };
 };
-g.__arbRunEngine ??= { runs: {}, engines: new Map(), seq: 0, booted: false, saveTimer: null, fails: [] };
+g.__arbRunEngine ??= { runs: {}, engines: new Map(), seq: 0, booted: false, saveTimer: null, fails: [], killEpoch: 0 };
 const E = g.__arbRunEngine;
 E.fails ??= [];
+E.killEpoch ??= 0;
+
+/** Max runs kept in memory. The map was never trimmed (only user-initiated
+ *  cancel/clear removed entries), so finished runs — each embedding a full
+ *  Opportunity — accumulated for the process lifetime AND were re-serialized
+ *  into every 2.5s /api/runs poll. */
+const MAX_RUNS = 30;
+function trimRuns() {
+  const ids = Object.keys(E.runs);
+  if (ids.length <= MAX_RUNS) return;
+  // Drop the oldest FINISHED runs first; never evict one that still has a
+  // position or an open hedge (it needs to stay visible and unwindable).
+  const evictable = ids
+    .filter((id) => {
+      const r = E.runs[id];
+      const openHedge = r.statuses.hedge === "done" && r.statuses.close !== "done";
+      return r.phase === "done" && r.remaining <= 0 && !openHedge;
+    })
+    .sort((a, b) => (E.runs[a].startedAt ?? 0) - (E.runs[b].startedAt ?? 0));
+  for (const id of evictable) {
+    if (Object.keys(E.runs).length <= MAX_RUNS) break;
+    delete E.runs[id];
+    E.engines.delete(id);
+  }
+}
 
 // ── 서킷 브레이커 ─────────────────────────────────────────────────────────────
 // 실행 단계가 연속 실패하면(거래소 장애·키 문제·버그) 같은 실수를 반복하며
@@ -77,15 +120,28 @@ E.fails ??= [];
 // 세지 않는다 — 오직 주문/출금/전송의 실집행 실패만.
 const CB_WINDOW_MS = Number(process.env.CIRCUIT_FAIL_WINDOW_MIN ?? 10) * 60_000;
 const CB_MAX = Number(process.env.CIRCUIT_FAIL_MAX ?? 3);
+// Deposit confirmation is a WAIT, not a failure: poll until the chain credits it.
+const DEPOSIT_POLL_MS = Number(process.env.DEPOSIT_POLL_SEC ?? 20) * 1000;
+const DEPOSIT_WAIT_MAX_SEC = Number(process.env.DEPOSIT_WAIT_MAX_MIN ?? 90) * 60;
+const sleep = (ms: number) => new Promise<void>((res) => { setTimeout(res, ms).unref?.(); });
 function recordExecFailure(base: string, stepLabel: string) {
   const now = Date.now();
   E.fails = E.fails.filter((t) => now - t < CB_WINDOW_MS);
   E.fails.push(now);
   if (E.fails.length >= CB_MAX && !isKilled()) {
-    setKilled(true);
-    for (const eng of E.engines.values()) eng.cancelled = true;
+    setEngineKill(true); // epoch 증가 + 킬 — cancelled 플래그를 직접 만지지 않는다
     void notify("circuit", `🛑 서킷 브레이커 — 최근 ${Math.round(CB_WINDOW_MS / 60_000)}분 내 실행 실패 ${E.fails.length}회 (마지막: ${base} ${stepLabel}). 킬 스위치 자동 활성 — 원인 확인 후 운영 탭에서 해제.`);
   }
+}
+
+/** Does this failure mean "the tool tried to execute and the venue/network broke"?
+ *  Defensive aborts (risk limit, slippage cap, stale snapshot, missing key, gate
+ *  closed) are the guards WORKING — counting them tripped the breaker on healthy
+ *  refusals. Deposit-still-confirming isn't a failure at all. */
+function isExecFailure(r: { message?: string; pending?: boolean }): boolean {
+  if (r.pending) return false;
+  const m = r.message ?? "";
+  return !/리스크 한도|슬리피지|스냅샷 2분 초과|키 없음|미배선|재검증|차단|중단됨|한도 초과|최소 출금|재고 부족/.test(m);
 }
 
 // ── persist (서버 파일) ───────────────────────────────────────────────────────
@@ -132,30 +188,71 @@ function patch(id: string, p: Partial<RunView>) {
   persistRuns();
 }
 
-/** USD notional currently in-flight (runs started and not finished). */
+/** USD notional currently at risk. Counts errored/interrupted runs that still
+ *  hold coin or an open hedge — they were excluded, so after a restart (which
+ *  rewrites interrupted runs to `error`) the cap saw $0 while real positions were
+ *  open and would authorize another full-size run on top. */
 export function inFlightUsd(): number {
   return Object.values(E.runs)
-    .filter((r) => r.phase === "running" || r.phase === "paused")
+    .filter((r) => {
+      if (r.phase === "running" || r.phase === "paused") return true;
+      const openHedge = r.statuses.hedge === "done" && r.statuses.close !== "done";
+      return r.remaining > 0 || openHedge;
+    })
     .reduce((s, r) => s + r.sizeUsd, 0);
+}
+
+/** Is there an unresolved position on this coin? Blocks a second run on the same
+ *  base — compounding shorts on one symbol makes their reduceOnly closes fight. */
+function hasOpenPosition(base: string): RunView | undefined {
+  return Object.values(E.runs).find((r) => {
+    if (r.base !== base) return false;
+    if (r.phase === "running" || r.phase === "paused") return true;
+    const openHedge = r.statuses.hedge === "done" && r.statuses.close !== "done";
+    return r.remaining > 0 || openHedge;
+  });
 }
 
 // ── step / revalidate ─────────────────────────────────────────────────────────
 async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollback?: boolean }) {
-  if (stepId === "buy" && !opts?.rollback) {
+  // Entry step resets the run's derived state and stamps startTs. `buy` is not
+  // the entry on every plan — cex-dex buyDex enters via `swap`, and there
+  // startTs stayed 0, so the deposit check fell back to "any deposit in the last
+  // hour" and could advance to `sell` while the coin was still in flight.
+  const dexSide = eng.opp.legs.find((l) => l.venue === "dex")?.side;
+  const isEntry = stepId === "buy" || (stepId === "swap" && dexSide === "buy");
+  if (isEntry && !opts?.rollback) {
     eng.qty = undefined;
     eng.fills = {};
     eng.startTs = Date.now();
   }
+  // Replay protection. The idempotency cache in execStep was only wired into
+  // /api/exec-step, which nothing calls — the engine path (the one the UI drives
+  // via retry) had none, so retrying a step whose HTTP call had timed out
+  // re-sent it: a second withdrawal, a second on-chain transfer, a second swap.
+  if (!opts?.rollback) {
+    const hit = eng.done.get(eng.i);
+    if (hit) return { ...hit, replayed: true };
+  }
+
   const run = E.runs[id];
   const r = await runStep(stepId, eng.opp, run?.sizeUsd ?? 0, {
     rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
+    // `close` reduces exactly the hedge that was opened, not the threaded qty.
+    hedgeQty: stepId === "close" ? eng.hedgeQty : undefined,
     fills: stepId === "settle" ? eng.fills : undefined,
     durations: stepId === "settle" ? eng.durations : undefined,
     txs: stepId === "settle"
       ? Object.entries(run?.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url }))
       : undefined,
   });
-  if (typeof r.filledQty === "number" && r.filledQty > 0) eng.qty = r.filledQty;
+  // The hedge's own fill must not overwrite the carried spot quantity — that
+  // coupling is what made the transfer amount fee-adjusted only when hedging was
+  // on (and LOT-floored to the PERP step size, stranding the remainder).
+  if (typeof r.filledQty === "number" && r.filledQty > 0) {
+    if (stepId === "hedge") eng.hedgeQty = r.filledQty;
+    else eng.qty = r.filledQty;
+  }
   if (r.fill?.quote && !opts?.rollback) {
     if (stepId === "buy") { eng.fills.buyQuote = r.fill.quote; eng.fills.buyCcy = r.fill.ccy; eng.fills.buyQty = r.fill.qty; }
     if (stepId === "sell") { eng.fills.sellQuote = r.fill.quote; eng.fills.sellCcy = r.fill.ccy; eng.fills.sellQty = r.fill.qty; }
@@ -163,10 +260,16 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     if (stepId === "close") eng.fills.hedgeCloseQuote = r.fill.quote;
   }
   // 라이브 실패 = 폰 알림 (기존 라우트 경유 시절의 동작을 엔진 경로에서도 유지)
-  if (!r.ok && !CONFIG.DRY_RUN && !opts?.rollback) {
+  if (!r.ok && !r.pending && !CONFIG.DRY_RUN && !opts?.rollback) {
     void notifyNow(`⚠️ <b>${eng.opp.base}</b> ${stepId} 실패\n${r.message ?? ""}`);
   }
-  return { ok: r.ok, message: r.message, tx: r.tx as TxRef | undefined };
+  const out = {
+    ok: r.ok, message: r.message, tx: r.tx as TxRef | undefined,
+    ambiguous: r.ambiguous, pending: r.pending,
+  };
+  // Remember only real successes, and never for the polling deposit step.
+  if (r.ok && !opts?.rollback && stepId !== "deposit") eng.done.set(eng.i, out);
+  return out;
 }
 
 async function revalidate(eng: Engine, sizeUsd: number) {
@@ -191,15 +294,34 @@ async function loop(id: string) {
   patch(id, { phase: "running", error: null });
 
   while (run() && eng.i < run().plan.length) {
-    if (eng.cancelled || isKilled()) {
-      if (isKilled() && !eng.cancelled) patch(id, { phase: "error", error: "킬 스위치 — 루프 정지 (포지션 수동 확인)" });
+    // Stop on explicit cancel, or when the kill switch has been flipped since
+    // this engine started. Always surface WHY — the old guard was
+    // `if (isKilled() && !eng.cancelled)`, and the breaker set both flags, so the
+    // error patch was skipped in exactly the case that mattered: the run sat at
+    // "running" forever, retry refused it (needs phase "error"), and it kept
+    // consuming the in-flight exposure cap.
+    if (eng.cancelled || eng.killEpoch !== E.killEpoch || isKilled()) {
+      patch(id, {
+        phase: "error",
+        error: eng.cancelled
+          ? "실행 취소 — 루프 정지 (포지션 수동 확인)"
+          : "킬 스위치 — 루프 정지 (포지션 수동 확인). 해제 후 재시도하면 실패 지점부터 이어갑니다",
+      });
+      if (!CONFIG.DRY_RUN) {
+        void notifyNow(`🛑 <b>${eng.opp.base}</b> 실행 정지 — 킬 스위치/취소. 거래소 실포지션·헷지 수동 확인 필요`);
+      }
+      eng.busy = false;
+      return;
+    }
+    if (eng.unwindLock) { // 청산이 이 런의 물량을 만지는 중 — 매도 경합 금지
+      patch(id, { phase: "paused", pauseAt: eng.i, error: "청산 진행 중 — 실행 일시 정지" });
       eng.busy = false;
       return;
     }
     const i = eng.i;
     const step = run().plan[i];
 
-    if (needsConfirmBefore(step.id, run().autoLevel) && !eng.confirmed.has(i)) {
+    if (needsConfirmBefore(step, run().autoLevel) && !eng.confirmed.has(i)) {
       patch(id, { pauseAt: i, phase: "paused" });
       eng.busy = false;
       return;
@@ -222,7 +344,7 @@ async function loop(id: string) {
 
     patch(id, { statuses: { ...run().statuses, [step.id]: "running" } });
     const stepT0 = Date.now();
-    let r: { ok: boolean; message?: string; tx?: TxRef };
+    let r: { ok: boolean; message?: string; tx?: TxRef; ambiguous?: boolean; pending?: boolean; replayed?: boolean };
     try { r = await callStep(id, eng, step.id); }
     catch (e) { r = { ok: false, message: e instanceof Error ? e.message : "실패" }; }
     eng.durations[step.id] = Math.round((Date.now() - stepT0) / 1000);
@@ -232,34 +354,81 @@ async function loop(id: string) {
     if (r.message) upd.messages = { ...run().messages, [step.id]: r.message };
     if (r.tx) upd.txs = { ...run().txs, [step.id]: r.tx };
 
+    // Deposit not credited yet is NOT a failure — a transfer takes minutes.
+    // Wait and poll instead of erroring out. Previously each "입금 대기" counted
+    // toward the circuit breaker, so the normal kimchi flow auto-enabled the kill
+    // switch after three retries.
+    if (!r.ok && r.pending) {
+      const waited = Math.round((Date.now() - (eng.startTs || stepT0)) / 1000);
+      if (waited > DEPOSIT_WAIT_MAX_SEC) {
+        patch(id, {
+          statuses: { ...run().statuses, [step.id]: "error" },
+          messages: upd.messages ?? run().messages,
+          error: `입금 미확인 ${Math.round(waited / 60)}분 초과 — 수동 확인 필요 (헷지 유지)`,
+          pauseAt: i, phase: "error",
+        });
+        if (!CONFIG.DRY_RUN) void notifyNow(`⏰ <b>${eng.opp.base}</b> 입금이 ${Math.round(waited / 60)}분째 미확인 — 수동 확인 필요`);
+        eng.busy = false;
+        return;
+      }
+      patch(id, {
+        statuses: { ...run().statuses, [step.id]: "running" },
+        messages: { ...(upd.messages ?? run().messages), [step.id]: `${r.message ?? "입금 대기"} (${waited}초 경과 · 자동 재확인)` },
+        phase: "running", error: null,
+      });
+      await sleep(DEPOSIT_POLL_MS);
+      continue; // 같은 단계 재확인 — eng.i 전진하지 않음
+    }
+
     if (!r.ok) {
       const statuses = { ...run().statuses, [step.id]: "error" as StepPhase };
-      const withdrawIdx = run().plan.findIndex((s) => s.id === "withdraw");
       const messages = { ...(upd.messages ?? run().messages) };
+      // Rollback is allowed only BEFORE the first irreversible step, and never
+      // when the outcome is ambiguous (the venue may have accepted it — rolling
+      // back would dump coin that is already gone).
+      const irrIdx = firstIrreversibleIdx(run().plan);
+      const beforeIrreversible = irrIdx === -1 ? true : i <= irrIdx;
+      const canRollback = beforeIrreversible && !r.ambiguous;
       let allOk = true;
-      if (i <= withdrawIdx) {
+      if (canRollback) {
         for (let j = i - 1; j >= 0; j--) {
           const sid = run().plan[j].id;
-          if (sid === "buy" || sid === "hedge") {
+          // Only undo steps that actually COMPLETED. Dispatching on step id alone
+          // re-sold an entry that a previous rollback had already unwound.
+          if ((sid === "buy" || sid === "hedge") && run().statuses[sid] === "done") {
             let rb: { ok: boolean; message?: string };
             try { rb = await callStep(id, eng, sid, { rollback: true }); }
             catch (e) { rb = { ok: false, message: e instanceof Error ? e.message : "롤백 실패" }; }
             allOk = allOk && rb.ok;
             statuses[sid] = rb.ok ? "rolledback" : "error";
             messages[sid] = `${messages[sid] ?? ""} · ${rb.ok ? "롤백됨" : `롤백 실패(${rb.message ?? "?"}) — 수동`}`;
+            eng.done.delete(j); // 되돌린 단계는 "완료"가 아니다
+            eng.rolledBack = true;
           }
         }
-        patch(id, { statuses, messages, txs: upd.txs ?? run().txs, error: `${r.message ?? "단계 실패"} — ${allOk ? "진입 롤백 완료" : "⚠ 일부 롤백 실패, 수동 확인"}`, pauseAt: i, phase: "error" });
+        patch(id, {
+          statuses, messages, txs: upd.txs ?? run().txs,
+          error: `${r.message ?? "단계 실패"} — ${allOk ? "진입 롤백 완료 (재시도 불가: 새 실행으로 진입하세요)" : "⚠ 일부 롤백 실패, 수동 확인"}`,
+          pauseAt: i, phase: "error", remaining: allOk ? 0 : run().remaining,
+        });
       } else {
-        patch(id, { statuses, messages, txs: upd.txs ?? run().txs, error: `${r.message ?? "단계 실패"} — 출금 이후: 헷지 유지, 수동 처리 필요`, pauseAt: i, phase: "error" });
+        const why = r.ambiguous
+          ? "결과 불명(전송 후 오류) — 거래소에서 실제 처리 여부를 먼저 확인하세요. 자동 재시도·롤백 모두 차단"
+          : "비가역 단계 이후: 헷지 유지, 수동 처리 필요";
+        patch(id, { statuses, messages, txs: upd.txs ?? run().txs, error: `${r.message ?? "단계 실패"} — ${why}`, pauseAt: i, phase: "error" });
+        if (r.ambiguous && !CONFIG.DRY_RUN) {
+          void notifyNow(`❓ <b>${eng.opp.base}</b> ${step.label} 결과 불명 — 거래소 내역 확인 필요 (자동 재시도 차단)`);
+        }
       }
-      recordExecFailure(run().base, step.label); // 서킷 브레이커 — 실집행 실패만
+      // 서킷 브레이커 — 실집행 실패만. 방어적 중단(리스크·슬리피지·게이트)은 제외.
+      if (isExecFailure(r)) recordExecFailure(run().base, step.label);
       eng.busy = false;
       return;
     }
 
     upd.statuses = { ...run().statuses, [step.id]: "done" };
-    if (step.id === "buy") {
+    // Entry step (buy, or swap on the buyDex plan) establishes the position size.
+    if (step.id === "buy" || (step.id === "swap" && eng.opp.legs.find((l) => l.venue === "dex")?.side === "buy")) {
       const price = eng.opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
       const tq = eng.qty ?? (price ? run().sizeUsd / price : 0);
       upd.totalQty = tq; upd.remaining = tq;
@@ -280,10 +449,14 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   if (cfg.opp.mock && !CONFIG.DRY_RUN) return { error: "목업 기회는 실행 불가" };
   // 같은 코인으로 활성 런이 이미 있으면 거부 — 동시 진행은 헷지 수량·재고를
   // 꼬이게 한다. (error 런은 사용자가 인지·정리하는 상태라 허용.)
-  const dup = Object.values(E.runs).find(
-    (r) => r.base === cfg.opp.base && (r.phase === "running" || r.phase === "paused"),
-  );
-  if (dup) return { error: `${cfg.opp.base} 이미 실행 중 — 중복 실행 차단 (진행 중 런을 먼저 처리)` };
+  const dup = hasOpenPosition(cfg.opp.base);
+  if (dup) {
+    return {
+      error: dup.phase === "running" || dup.phase === "paused"
+        ? `${cfg.opp.base} 이미 실행 중 — 중복 실행 차단 (진행 중 런을 먼저 처리)`
+        : `${cfg.opp.base} 미정리 포지션 있음 (${dup.remaining > 0 ? `잔량 ${dup.remaining.toFixed(6)}` : "헷지 열림"}) — 청산·정리 후 실행하세요`,
+    };
+  }
   const cap = getLimits().maxInFlightUsd;
   if (Number.isFinite(cap) && cap > 0 && inFlightUsd() + cfg.sizeUsd > cap) {
     return { error: `총 노출 한도 초과 (진행 중 $${inFlightUsd().toFixed(0)} + $${cfg.sizeUsd.toFixed(0)} > $${cap.toFixed(0)})` };
@@ -300,9 +473,11 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
     startedAt: Date.now(), totalQty: 0, remaining: 0, pnlUsd: 0, unwindLog: [], unwinding: false,
   };
   E.engines.set(id, {
-    cancelled: false, busy: false, i: 0, confirmed: new Set(),
-    startTs: 0, fills: {}, durations: {}, opp: cfg.opp,
+    cancelled: false, killEpoch: E.killEpoch, busy: false, i: 0, confirmed: new Set(),
+    startTs: 0, fills: {}, durations: {}, done: new Map(),
+    rolledBack: false, unwindLock: false, opp: cfg.opp,
   });
+  trimRuns();
   persistRuns();
   void loop(id);
   return { id };
@@ -316,19 +491,55 @@ export function confirmRun(id: string) {
   void loop(id);
 }
 
-export function retryRun(id: string) {
+export type RetryResult = { ok: true } | { error: string };
+export function retryRun(id: string): RetryResult {
   const eng = E.engines.get(id);
-  if (!eng || eng.busy || E.runs[id]?.phase !== "error") return;
+  if (!eng) return { error: "엔진 없음 — 재시작으로 끊긴 런은 재개할 수 없습니다 (수동 확인)" };
+  if (eng.busy) return { error: "실행 중" };
+  if (E.runs[id]?.phase !== "error") return { error: "오류 상태의 런만 재시도할 수 있습니다" };
+  // A run whose entry was already unwound must not be resumed: the next step
+  // would re-open the hedge against a position that no longer exists, and the
+  // following failure would market-sell again.
+  if (eng.rolledBack) {
+    return { error: "진입이 롤백된 런입니다 — 재시도 불가. 보드에서 새로 실행하세요" };
+  }
+  const st = E.runs[id]?.statuses ?? {};
+  const amb = Object.entries(st).find(([, v]) => v === "error");
+  if (amb && /결과 불명/.test(E.runs[id]?.error ?? "")) {
+    return { error: "결과 불명 단계 — 거래소 내역을 먼저 확인하고, 필요하면 수동 처리하세요" };
+  }
+  if (isKilled()) return { error: "킬 스위치 활성 — 먼저 해제하세요" };
+  eng.killEpoch = E.killEpoch; // 해제된 킬 세대에 맞춰 재개 허용
+  eng.cancelled = false;
   patch(id, { error: null, pauseAt: -1 });
   void loop(id);
+  return { ok: true };
 }
 
-export function cancelRun(id: string) {
+export type CancelResult = { ok: true } | { error: string };
+/** Stop the loop and remove the run. Refuses while the run still holds a
+ *  position or an open hedge — deleting it made the exposure invisible: unwind
+ *  became unreachable and the hedge-margin watcher (which iterates E.runs)
+ *  stopped watching it. `force` is the operator saying "I closed it manually". */
+export function cancelRun(id: string, force = false): CancelResult {
+  const run = E.runs[id];
   const eng = E.engines.get(id);
+  if (run && !force) {
+    const openHedge = run.statuses.hedge === "done" && run.statuses.close !== "done";
+    if (run.remaining > 0 || openHedge) {
+      if (eng) eng.cancelled = true; // 루프는 즉시 세우되 런은 남긴다
+      patch(id, {
+        phase: "error",
+        error: `실행 중단됨 — ${run.remaining > 0 ? `잔량 ${run.remaining.toFixed(6)} ${run.base}` : ""}${openHedge ? " · 헷지 열림" : ""} 보유. 청산하거나 수동 정리 후 삭제하세요`,
+      });
+      return { error: "포지션/헷지가 남아 있어 삭제하지 않았습니다 — 청산 또는 수동 정리 후 삭제" };
+    }
+  }
   if (eng) eng.cancelled = true;
   delete E.runs[id];
   E.engines.delete(id);
   persistRuns();
+  return { ok: true };
 }
 
 export function clearFinished() {
@@ -345,23 +556,39 @@ export function clearFinished() {
 export async function unwindRun(id: string, fraction: number) {
   const run = E.runs[id];
   if (!run || run.unwinding || run.remaining <= 0) return;
+  const eng = E.engines.get(id);
+  // The loop and an unwind must never touch the same position concurrently:
+  // unwinding while the loop is mid-`sell` (or paused right before it) sold the
+  // same quantity twice, and the loop's `remaining = 0` could be overwritten by
+  // this function's stale captured value, resurrecting a phantom position.
+  if (eng?.busy) return;
+  if (eng) eng.unwindLock = true;
   patch(id, { unwinding: true });
   try {
     const result = await unwind(run.opp, run.remaining, fraction);
+    // Re-read: `run` was captured before a multi-second await.
+    const cur = E.runs[id] ?? run;
     patch(id, {
       remaining: result.remainingQty,
-      pnlUsd: run.pnlUsd + (result.pnlUsd ?? 0),
-      unwindLog: [...run.unwindLog, ...(result.log ?? [])],
+      pnlUsd: cur.pnlUsd + (result.pnlUsd ?? 0),
+      unwindLog: [...cur.unwindLog, ...(result.log ?? [])],
       unwinding: false,
     });
   } catch (e) {
-    patch(id, { unwindLog: [...run.unwindLog, `청산 오류: ${e instanceof Error ? e.message : "?"}`], unwinding: false });
+    const cur = E.runs[id] ?? run;
+    patch(id, { unwindLog: [...cur.unwindLog, `청산 오류: ${e instanceof Error ? e.message : "?"}`], unwinding: false });
+  } finally {
+    if (eng) eng.unwindLock = false;
   }
 }
 
+/** Kill switch. Enabling bumps the epoch so every RUNNING loop stops at its next
+ *  checkpoint; releasing does NOT resurrect them (the operator retries
+ *  explicitly), but it no longer leaves them permanently unretryable — the old
+ *  version set a per-engine `cancelled` flag that was never cleared anywhere. */
 export function setEngineKill(v: boolean) {
   setKilled(v);
-  if (v) for (const eng of E.engines.values()) eng.cancelled = true;
+  if (v) E.killEpoch++;
 }
 
 export function snapshot() {

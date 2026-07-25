@@ -32,7 +32,7 @@ async function upbitDeposit(base: string, netType: string): Promise<DepositAddre
     // Build with URLSearchParams so the signed string is exactly what's sent.
     const query = new URLSearchParams({ currency: base, net_type: netType }).toString();
     const res = await fetch(`https://api.upbit.com/v1/deposits/coin_address?${query}`, {
-      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as { deposit_address?: string; secondary_address?: string | null };
     if (!j.deposit_address) return null;
@@ -51,7 +51,7 @@ async function binanceDeposit(base: string, network: string): Promise<DepositAdd
     }).toString();
     const sig = crypto.createHmac("sha256", secret).update(query).digest("hex");
     const res = await fetch(`https://api.binance.com/sapi/v1/capital/deposit/address?${query}&signature=${sig}`, {
-      headers: { "X-MBX-APIKEY": key }, cache: "no-store",
+      headers: { "X-MBX-APIKEY": key }, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as { address?: string; tag?: string };
     if (!j.address) return null;
@@ -70,7 +70,7 @@ async function bybitDeposit(base: string, chain: string): Promise<DepositAddress
     const sig = crypto.createHmac("sha256", secret).update(ts + key + recv + query).digest("hex");
     const res = await fetch(`https://api.bybit.com/v5/asset/deposit/query-address?${query}`, {
       headers: { "X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sig },
-      cache: "no-store",
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as { retCode: number; result?: { chains?: Array<{ addressDeposit?: string; tagDeposit?: string }> } };
     const c = j.result?.chains?.[0];
@@ -88,7 +88,7 @@ async function okxDeposit(base: string, chain: string): Promise<DepositAddress |
     const sig = crypto.createHmac("sha256", secret).update(ts + "GET" + path).digest("base64");
     const res = await fetch(`https://www.okx.com${path}`, {
       headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sig, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
-      cache: "no-store",
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as { code: string; data?: Array<{ addr: string; chain: string; selected: boolean; tag?: string; memo?: string }> };
     if (j.code !== "0") return null;
@@ -123,7 +123,7 @@ async function bithumbDeposit(base: string, net: string): Promise<DepositAddress
     const res = await fetch(`https://api.bithumb.com${endpoint}`, {
       method: "POST",
       headers: { "Api-Key": key, "Api-Sign": sign, "Api-Nonce": nonce, "Content-Type": "application/x-www-form-urlencoded", "api-client-type": "2" },
-      body, cache: "no-store",
+      body, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as { status: string; data?: { wallet_address?: string } };
     if (j.status !== "0000" || !j.data?.wallet_address) return null;

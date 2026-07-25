@@ -9,7 +9,25 @@ export type StepId =
   | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle"
   | "approve" | "swap"; // cex-dex (transfer-style): DEX approve + swap legs
 
-export type ExecStep = { id: StepId; label: string; desc: string };
+export type ExecStep = {
+  id: StepId; label: string; desc: string;
+  /** Money leaves our control here and we cannot undo it: an on-chain send, an
+   *  exchange withdrawal, a DEX swap. Everything BEFORE the first irreversible
+   *  step can be unwound by selling the entry back; at or after it, the machine
+   *  must hold and call a human instead of dumping.
+   *
+   *  This used to be derived as `findIndex(s => s.id === "withdraw")`, which
+   *  returned -1 on the cex-dex buyDex plan (it has no withdraw step) — so on
+   *  that plan the rollback branch could never run at all, and the automation
+   *  level labelled "출금 전(권장)" never paused, letting the irreversible
+   *  `transfer` fire with no confirmation. */
+  irreversible?: boolean;
+};
+
+/** Index of the first irreversible step, or -1 if the plan has none. */
+export function firstIrreversibleIdx(plan: ExecStep[]): number {
+  return plan.findIndex((s) => s.irreversible);
+}
 export type StepPhase = "pending" | "running" | "done" | "error" | "rolledback";
 export type RunPhase = "idle" | "running" | "paused" | "done" | "error";
 export type StepResult = {
@@ -47,19 +65,19 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
     const steps: ExecStep[] = [];
     if (dexBuys) {
       steps.push({ id: "approve", label: "스테이블 승인", desc: "1회 approve (필요 시)" });
-      steps.push({ id: "swap", label: "DEX 매수 (스왑)", desc: `${opp.base} · 온체인 · minReceive 보호` });
+      steps.push({ id: "swap", label: "DEX 매수 (스왑)", desc: `${opp.base} · 온체인 · minReceive 보호`, irreversible: true });
       if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "전송 구간 가격 잠금" });
-      steps.push({ id: "transfer", label: `개인지갑 → ${cv} 입금 전송`, desc: "온체인 · 되돌릴 수 없음" });
+      steps.push({ id: "transfer", label: `개인지갑 → ${cv} 입금 전송`, desc: "온체인 · 되돌릴 수 없음", irreversible: true });
       steps.push({ id: "deposit", label: `${cv} 입금 확인`, desc: `컨펌 대기${eta ? ` · ~${eta}분` : ""}` });
       steps.push({ id: "sell", label: `${cv} 현물 매도`, desc: `${opp.base} → USDT` });
       if (hedge) steps.push({ id: "close", label: "선물 청산", desc: "매도와 동시 · 헷지 해제" });
     } else {
       steps.push({ id: "buy", label: `${cv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
       if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "전송 구간 가격 잠금" });
-      steps.push({ id: "withdraw", label: `${cv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음" });
+      steps.push({ id: "withdraw", label: `${cv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음", irreversible: true });
       steps.push({ id: "deposit", label: "지갑 수신 확인", desc: `컨펌 대기${eta ? ` · ~${eta}분` : ""}` });
       steps.push({ id: "approve", label: `${opp.base} 승인`, desc: "1회 approve (필요 시)" });
-      steps.push({ id: "swap", label: "DEX 매도 (스왑)", desc: "온체인 · minReceive 보호" });
+      steps.push({ id: "swap", label: "DEX 매도 (스왑)", desc: "온체인 · minReceive 보호", irreversible: true });
       if (hedge) steps.push({ id: "close", label: "선물 청산", desc: "스왑과 동시 · 헷지 해제" });
     }
     steps.push({ id: "settle", label: "정산", desc: "P&L 확정" });
@@ -76,12 +94,13 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
   steps.push({ id: "buy", label: `${bv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
   if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "같은 수량 · 진입가에 가격 잠금" });
   if (hop) {
-    steps.push({ id: "withdraw", label: `${bv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음" });
-    steps.push({ id: "transfer", label: `개인지갑 → ${sv} 송금`, desc: "트래블룰 우회 · 자동 입금" });
+    steps.push({ id: "withdraw", label: `${bv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음", irreversible: true });
+    steps.push({ id: "transfer", label: `개인지갑 → ${sv} 송금`, desc: "트래블룰 우회 · 자동 입금", irreversible: true });
   } else {
     steps.push({
       id: "withdraw", label: `${bv} → ${sv} 직접 출금`,
       desc: isKr(buy?.venue) ? "국내 → 해외 직접 · 주소 등록(화이트리스트) 필요" : "거래소 간 직접",
+      irreversible: true,
     });
   }
   steps.push({ id: "deposit", label: `${sv} 입금 확인`, desc: "컨펌 대기" });
@@ -91,14 +110,22 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
   return steps;
 }
 
-function needsConfirmBefore(id: StepId, level: AutoLevel): boolean {
+// `step` (not just its id) so the boundary follows the plan's own irreversible
+// flag. "beforeWithdraw" is the level the UI labels 권장, and it must pause
+// before ANY irreversible step — on the cex-dex buyDex plan the irreversible one
+// is `transfer`/`swap`, not `withdraw`, and matching on the id alone let it run
+// unconfirmed.
+function needsConfirmBefore(step: ExecStep, level: AutoLevel): boolean {
   if (level === "auto") return false;
   if (level === "manual") return true; // pause before every step
-  if (level === "beforeWithdraw") return id === "withdraw"; // stop at the irreversible step
-  return id === "sell"; // beforeSell: auto through deposit, stop before selling
+  if (level === "beforeWithdraw") return !!step.irreversible;
+  return step.id === "sell"; // beforeSell: auto through deposit, stop before selling
 }
 // Re-exported for the background run store (which owns its own loop).
 export const needsConfirmBeforePublic = needsConfirmBefore;
-export const REVALIDATE_STEPS: ReadonlySet<StepId> = new Set<StepId>(["buy", "withdraw", "sell", "swap"]);
+// Steps that must re-check the edge right before firing. `transfer` is included
+// because on the buyDex plan it is the irreversible leg (it was omitted, so that
+// plan committed the on-chain send without any re-quote).
+export const REVALIDATE_STEPS: ReadonlySet<StepId> = new Set<StepId>(["buy", "withdraw", "sell", "swap", "transfer"]);
 
 export type Revalidation = { ok: boolean; reason?: string };

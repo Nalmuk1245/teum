@@ -93,8 +93,17 @@ export async function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: 
 }
 
 export function confirmRun(id: string) { void action({ action: "confirm", id }); }
-export function retryRun(id: string) { void action({ action: "retry", id }); }
-export function cancelRun(id: string) { void action({ action: "cancel", id }); }
+// retry/cancel can be refused server-side (rolled-back run, ambiguous step,
+// position still open). Return the reason so the modal can show it instead of
+// the click appearing to do nothing.
+export async function retryRun(id: string): Promise<{ error?: string }> {
+  const j = await action({ action: "retry", id });
+  return j.error ? { error: j.error } : {};
+}
+export async function cancelRun(id: string, force = false): Promise<{ error?: string }> {
+  const j = await action({ action: "cancel", id, force });
+  return j.error ? { error: j.error } : {};
+}
 export function clearFinished() { void action({ action: "clear" }); }
 
 export async function unwindRun(id: string, fraction: number) {

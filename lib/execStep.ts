@@ -71,6 +71,11 @@ export type StepResult = {
   fill?: { qty?: number; quote?: number; ccy?: string };
   /** On-chain tx of this step + explorer link (null link when simulated). */
   tx?: { hash: string; url: string | null };
+  /** Outcome unknown — the request may have been accepted. No auto-retry, no
+   *  rollback: a human must check the venue first. */
+  ambiguous?: boolean;
+  /** Not a failure, just not done yet (deposit still confirming). */
+  pending?: boolean;
 };
 // Explorer link for a tx on the opp's transfer chain.
 function txInfo(chainLabel: string | undefined, hash: string | null | undefined, dry: boolean) {
@@ -95,6 +100,9 @@ export async function runStep(
   stepId: StepId, opp: Opportunity, sizeUsd: number,
   opts: {
     rollback?: boolean; qty?: number; sinceTs?: number;
+    /** Exact quantity the hedge opened — `close` must reduce that, not the
+     *  currently-threaded qty (which by then is the deposit-credited amount). */
+    hedgeQty?: number;
     fills?: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
     txs?: { step: string; hash: string; url: string | null }[];
     durations?: Record<string, number>;
@@ -113,16 +121,32 @@ export async function runStep(
 
   if (opts.rollback) return undoStep(stepId, opp, qty);
 
+  // ── Step-agnostic pre-flight ────────────────────────────────────────────────
+  // These used to live inside `case "buy"`, so the cex-dex buyDex plan — which
+  // has no `buy` step, it enters via `swap` — bypassed the kill switch, the
+  // per-trade/daily risk limits AND the snapshot-staleness gate entirely.
+  const dexLeg = opp.legs.find((l) => l.venue === "dex");
+  const isEntry = stepId === "buy" || (stepId === "swap" && dexLeg?.side === "buy");
+  // Kill switch blocks anything that moves money. `deposit` (read-only polling)
+  // and `settle` (bookkeeping) still run so an in-flight run can be closed out.
+  if (stepId !== "deposit" && stepId !== "settle" && isKilled()) {
+    return fail("킬 스위치 활성 — 실행 차단");
+  }
+  if (isEntry) {
+    if (!(sizeUsd > 0)) return fail("주문 규모가 0 이하");
+    // 스냅샷 신선도 — 라이브 진입은 2분 넘은 기회로 시작하지 않는다
+    // (재검증이 있어도 진입 자체가 낡은 판단이면 원천 차단이 맞다).
+    if (!dry && opp.ts && Date.now() - opp.ts > 120_000) {
+      return fail("기회 스냅샷 2분 초과 — 보드 갱신 후 다시 실행");
+    }
+    const risk = checkEntry(sizeUsd);
+    if (risk) return fail(`리스크 한도 — ${risk}`);
+  }
+
   switch (stepId) {
     case "buy": {
       if (!buy) return fail("매수 다리 없음");
-      if (!(sizeUsd > 0)) return fail("주문 규모가 0 이하");
-      if (isKilled()) return fail("킬 스위치 활성 — 신규 실행 차단");
-      // 스냅샷 신선도 — 라이브 진입은 2분 넘은 기회로 시작하지 않는다
-      // (재검증이 있어도 진입 자체가 낡은 판단이면 원천 차단이 맞다).
-      if (!dry && opp.ts && Date.now() - opp.ts > 120_000) {
-        return fail("기회 스냅샷 2분 초과 — 보드 갱신 후 다시 실행");
-      }
+      // (킬 스위치·스냅샷 신선도·리스크 한도는 위 프리플라이트에서 처리)
       // 최소 출금 수량 사전 게이트 — 부분체결로 수량이 min 미달이면 출금
       // 단계에서 터지고 롤백 덤프로 이어진다. 진입 전에 막는다.
       const willWithdraw =
@@ -134,8 +158,6 @@ export async function runStep(
           return fail(`예상 수량 ${qty.toFixed(6)} < 바낸 최소 출금 ${wMin} — 규모를 키우거나 중단`);
         }
       }
-      const risk = checkEntry(sizeUsd);
-      if (risk) return fail(`리스크 한도 — ${risk}`);
       // Live slippage cap — a thin book can eat the whole edge in one market order.
       if (!dry) {
         const est = await estimateLegSlippage(buy.venue, buy.symbol, "buy", {
@@ -291,7 +313,7 @@ export async function runStep(
         wtx = txId ? txInfo(opp.transfer?.network?.chain, txId, false) : undefined;
         if (!wtx) note += " · 온체인 tx 대기";
       }
-      return { ok: r.ok, dryRun: r.dryRun, message: `${r.message}${note}`, tx: wtx };
+      return { ok: r.ok, ambiguous: r.ambiguous, dryRun: r.dryRun, message: `${r.message}${note}`, tx: wtx };
     }
     case "transfer": {
       // Personal wallet → destination exchange deposit address (EVM hop only).
@@ -349,7 +371,9 @@ export async function runStep(
       const dtx = r.dryRun
         ? { hash: `sim:${chainKeyFromLabel(opp.transfer?.network?.chain) || "chain"}:deposit:${opp.base}`, url: null }
         : txInfo(opp.transfer?.network?.chain, r.txHash, r.dryRun);
-      return { ok: r.ok, dryRun: r.dryRun, message: r.message, tx: dtx };
+      // pending = 아직 안 들어옴(정상). 실패로 세면 서킷 브레이커가 정상 전송을
+      // 장애로 오인해 킬 스위치를 켠다.
+      return { ok: r.ok, pending: r.pending, dryRun: r.dryRun, message: r.message, tx: dtx, filledQty: r.filledQty };
     }
     case "sell": {
       if (!sell) return fail("매도 다리 없음");
@@ -370,7 +394,11 @@ export async function runStep(
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: sell.quote } };
     }
     case "close": {
-      const r = await binancePerp(opp.base, "CLOSE", qty);
+      // Close exactly what the hedge opened. Using the threaded qty (the
+      // deposit-credited amount) can exceed the position → reduceOnly rejects →
+      // the short stays open after the spot leg is already sold = naked short.
+      const closeQty = opts.hedgeQty && opts.hedgeQty > 0 ? opts.hedgeQty : qty;
+      const r = await binancePerp(opp.base, "CLOSE", closeQty);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: "USDT" } };
     }
     case "settle": {

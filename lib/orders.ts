@@ -10,7 +10,24 @@ export type OrderResult = {
   filledQty?: number; // base actually filled
   quoteFilled?: number; // quote currency actually spent/received (fees excl.)
   txHash?: string;
+  /** The request was already in flight when it failed (network error / timeout),
+   *  so the venue MAY have accepted it. Never auto-retry and never roll back on
+   *  an ambiguous failure — a retried withdrawal sends twice, and rolling back a
+   *  withdrawal that actually landed dumps coin we no longer hold.
+   *  Explicit venue rejections (retCode != 0, sCode != 0) are NOT ambiguous. */
+  ambiguous?: boolean;
+  /** Not an error — the thing we're waiting for simply hasn't happened yet
+   *  (deposit not credited). A transfer legitimately takes minutes, so this must
+   *  never be treated as an execution failure: it used to trip the circuit
+   *  breaker after 3 retries and auto-enable the kill switch mid-run. */
+  pending?: boolean;
 };
+
+/** Failure of a request that was already sent — outcome unknown. */
+const inflightFail = (e: unknown, what: string): OrderResult => ({
+  ok: false, dryRun: false, id: null, ambiguous: true,
+  message: `${what} 응답 없음(전송 후 오류) — 실제 처리 여부 불명: ${e instanceof Error ? e.message : "?"}`,
+});
 
 // DRY_RUN → simulate ok. LIVE without the venue key → HARD FAIL: a silent no-op
 // leg would let the state machine proceed into real orders on the other side
@@ -59,7 +76,7 @@ async function binanceSigned(host: string, path: string, params: Record<string, 
   const q = new URLSearchParams({ ...params, recvWindow: "5000", timestamp: String(Date.now()) } as Record<string, string>).toString();
   const sig = crypto.createHmac("sha256", secret!).update(q).digest("hex");
   const res = await fetch(`https://${host}${path}?${q}&signature=${sig}`, {
-    method: "POST", headers: { "X-MBX-APIKEY": key! }, cache: "no-store",
+    method: "POST", headers: { "X-MBX-APIKEY": key! }, cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   return res.json();
 }
@@ -78,7 +95,7 @@ export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { qu
     const quoteFilled = j.cummulativeQuoteQty ? Number(j.cummulativeQuoteQty) : undefined;
     return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, filledQty, quoteFilled, message: ok ? `Binance ${base} ${side} 체결${filledQty ? ` ${filledQty}` : ""}` : (j.msg || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -101,7 +118,7 @@ export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: 
     const quoteFilled = j.cumQuote ? Number(j.cumQuote) : undefined;
     return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, filledQty, quoteFilled, message: ok ? `Binance ${base} 선물 ${action}` : (j.msg || "선물 주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "선물 주문 실패" };
+    return inflightFail(e, "선물 주문");
   }
 }
 
@@ -133,7 +150,7 @@ export async function binanceLimitSell(base: string, qty: number, price: number)
     const ok = !!j.orderId;
     return { ok, dryRun: false, id: j.orderId ? String(j.orderId) : null, message: ok ? `지정가 매도 등록 @${price}` : (j.msg || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -161,7 +178,7 @@ export async function binanceCancelOrder(base: string, orderId: string): Promise
     const q = new URLSearchParams({ symbol: `${base}USDT`, orderId, recvWindow: "5000", timestamp: String(Date.now()) }).toString();
     const sig = crypto.createHmac("sha256", secret).update(q).digest("hex");
     const res = await fetch(`https://api.binance.com/api/v3/order?${q}&signature=${sig}`, {
-      method: "DELETE", headers: { "X-MBX-APIKEY": key }, cache: "no-store",
+      method: "DELETE", headers: { "X-MBX-APIKEY": key }, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     return !!j.orderId || j.status === "CANCELED";
@@ -181,13 +198,13 @@ export async function upbitLimitSell(base: string, volume: number, priceKrw: num
     const res = await fetch(`https://api.upbit.com/v1/orders`, {
       method: "POST",
       headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}`, "Content-Type": "application/x-www-form-urlencoded" },
-      body: query, cache: "no-store",
+      body: query, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     const ok = !!j.uuid;
     return { ok, dryRun: false, id: j.uuid ?? null, message: ok ? `지정가 매도 등록 @₩${priceKrw}` : (j.error?.message || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -197,7 +214,7 @@ export async function upbitOrderFills(uuid: string): Promise<{ filledQty: number
   try {
     const query = new URLSearchParams({ uuid }).toString();
     const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
-      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     if (!j?.uuid) return null;
@@ -219,7 +236,7 @@ export async function upbitCancelOrder(uuid: string): Promise<boolean> {
     const query = new URLSearchParams({ uuid }).toString();
     const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     return !!j?.uuid;
@@ -247,7 +264,7 @@ export async function upbitWithdrawTx(uuid: string): Promise<string | null> {
   try {
     const query = new URLSearchParams({ uuid }).toString();
     const res = await fetch(`https://api.upbit.com/v1/withdraw?${query}`, {
-      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+      headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     return j?.txid || null;
@@ -277,7 +294,7 @@ export async function okxWithdrawTx(wdId: string): Promise<string | null> {
     const sign = crypto.createHmac("sha256", secret!).update(ts + "GET" + path).digest("base64");
     const res = await fetch(`https://www.okx.com${path}`, {
       headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sign, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
-      cache: "no-store",
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as { code: string; data?: Array<{ txId?: string }> };
     return j.code === "0" ? (j.data?.[0]?.txId || null) : null;
@@ -297,7 +314,7 @@ export async function binanceWithdraw(base: string, network: string, address: st
     const ok = !!j.id;
     return { ok, dryRun: false, id: j.id ?? null, message: ok ? `Binance ${base} 출금 요청` : (j.msg || "출금 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+    return inflightFail(e, "출금");
   }
 }
 
@@ -325,7 +342,7 @@ async function upbitOrderDetail(uuid: string): Promise<{ filledQty?: number; quo
   await new Promise((r) => setTimeout(r, 600)); // market orders fill ~instantly
   const query = new URLSearchParams({ uuid }).toString();
   const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
-    headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store",
+    headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   const j = await res.json();
   if (!j?.uuid) return null;
@@ -347,7 +364,7 @@ export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volu
     const res = await fetch(`https://api.upbit.com/v1/orders`, {
       method: "POST",
       headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}`, "Content-Type": "application/x-www-form-urlencoded" },
-      body: query, cache: "no-store",
+      body: query, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     const ok = !!j.uuid;
@@ -359,7 +376,7 @@ export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volu
     }
     return { ok, dryRun: false, id: j.uuid ?? null, filledQty, quoteFilled, message: ok ? `Upbit ${base} ${side === "ask" ? "매도" : "매수"} 체결` : (j.error?.message || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -373,13 +390,13 @@ export async function upbitWithdraw(base: string, netType: string, address: stri
     const res = await fetch(`https://api.upbit.com/v1/withdraws/coin`, {
       method: "POST",
       headers: { Authorization: upbitAuth(query), "Content-Type": "application/x-www-form-urlencoded" },
-      body: query, cache: "no-store",
+      body: query, cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json();
     const ok = !!j.uuid;
     return { ok, dryRun: false, id: j.uuid ?? null, message: ok ? `Upbit ${base} 출금 요청` : (j.error?.message || "출금 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+    return inflightFail(e, "출금");
   }
 }
 
@@ -397,7 +414,7 @@ async function bithumbSigned(endpoint: string, params: Record<string, string>) {
       "Api-Key": key, "Api-Sign": sign, "Api-Nonce": nonce,
       "Content-Type": "application/x-www-form-urlencoded", "api-client-type": "2",
     },
-    body, cache: "no-store",
+    body, cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   return res.json();
 }
@@ -412,7 +429,7 @@ export async function bithumbOrder(base: string, side: "bid" | "ask", units: num
     const ok = j.status === "0000";
     return { ok, dryRun: false, id: j.order_id ?? null, message: ok ? `Bithumb ${base} ${label} 체결` : (j.message || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -426,7 +443,7 @@ export async function bithumbWithdraw(base: string, address: string, amount: num
     const ok = j.status === "0000";
     return { ok, dryRun: false, id: null, message: ok ? `Bithumb ${base} 출금 요청` : (j.message || "출금 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+    return inflightFail(e, "출금");
   }
 }
 
@@ -436,7 +453,7 @@ async function binanceSignedGet(path: string, params: Record<string, string | nu
   const q = new URLSearchParams({ ...params, recvWindow: "5000", timestamp: String(Date.now()) } as Record<string, string>).toString();
   const sig = crypto.createHmac("sha256", secret!).update(q).digest("hex");
   const res = await fetch(`https://api.binance.com${path}?${q}&signature=${sig}`, {
-    headers: { "X-MBX-APIKEY": key! }, cache: "no-store",
+    headers: { "X-MBX-APIKEY": key! }, cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   return res.json();
 }
@@ -458,7 +475,7 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       // Thread the CREDITED amount forward — sell/close should size to what
       // actually arrived, not to what was bought.
       const credited = rec?.amount ? Number(rec.amount) : undefined;
-      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `Binance ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
+      return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `Binance ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -468,14 +485,14 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
     if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} 입금 확인`, !!(key && secret));
     try {
       const query = new URLSearchParams({ currency: base }).toString();
-      const res = await fetch(`https://api.upbit.com/v1/deposits?${query}`, { headers: { Authorization: upbitAuth(query) }, cache: "no-store" });
+      const res = await fetch(`https://api.upbit.com/v1/deposits?${query}`, { headers: { Authorization: upbitAuth(query) }, cache: "no-store", signal: AbortSignal.timeout(10_000) });
       const j = await res.json();
       const rec = Array.isArray(j)
         ? j.find((d: { state?: string; created_at?: string; txid?: string; amount?: string }) =>
             d.state === "ACCEPTED" && new Date(d.created_at ?? 0).getTime() >= sinceTs)
         : undefined;
       const credited = rec?.amount ? Number(rec.amount) : undefined;
-      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txid, filledQty: credited, message: rec ? `Upbit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
+      return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txid, filledQty: credited, message: rec ? `Upbit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -492,7 +509,7 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const rec = (Array.isArray(j.data) ? j.data : []).find(
         (d: { transfer_date?: number | string }) => Number(d.transfer_date ?? 0) / 1000 >= sinceTs,
       );
-      return { ok: !!rec, dryRun: false, id: null, message: rec ? `Bithumb ${base} 입금 확인` : "입금 대기" };
+      return { ok: !!rec, pending: !rec, dryRun: false, id: null, message: rec ? `Bithumb ${base} 입금 확인` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -507,7 +524,7 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
           d.status === 3 && Number(d.successAt ?? 0) >= sinceTs, // 3 = success
       );
       const credited = rec?.amount ? Number(rec.amount) : undefined;
-      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txID, filledQty: credited, message: rec ? `Bybit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
+      return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txID, filledQty: credited, message: rec ? `Bybit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -521,13 +538,13 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const sign = crypto.createHmac("sha256", secret).update(ts + "GET" + path).digest("base64");
       const res = await fetch(`https://www.okx.com${path}`, {
         headers: { "OK-ACCESS-KEY": key, "OK-ACCESS-SIGN": sign, "OK-ACCESS-TIMESTAMP": ts, "OK-ACCESS-PASSPHRASE": pass },
-        cache: "no-store",
+        cache: "no-store", signal: AbortSignal.timeout(10_000),
       });
       const j = (await res.json()) as { code: string; data?: Array<{ state?: string; ts?: string; txId?: string; amt?: string }> };
       if (j.code !== "0") return { ok: false, dryRun: false, id: null, message: "입금 조회 실패" };
       const rec = (j.data ?? []).find((d) => d.state === "2" && Number(d.ts ?? 0) >= sinceTs); // 2 = credited
       const credited = rec?.amt ? Number(rec.amt) : undefined;
-      return { ok: !!rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `OKX ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
+      return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `OKX ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
       return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
     }
@@ -550,7 +567,7 @@ async function bybitSigned(method: "GET" | "POST", path: string, params: Record<
     "X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sign,
   };
   let url = `https://api.bybit.com${path}`;
-  const init: RequestInit = { method, headers, cache: "no-store" };
+  const init: RequestInit = { method, headers, cache: "no-store", signal: AbortSignal.timeout(10_000) };
   if (method === "GET") url += `?${payload}`;
   else { headers["Content-Type"] = "application/json"; init.body = payload; }
   const res = await fetch(url, init);
@@ -572,7 +589,7 @@ export async function bybitOrder(base: string, side: "BUY" | "SELL", opts: { quo
     const ok = j.retCode === 0 && j.result?.orderId;
     return { ok: !!ok, dryRun: false, id: ok ? String(j.result.orderId) : null, message: ok ? `Bybit ${base} ${label} 체결` : (j.retMsg || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -588,7 +605,7 @@ export async function bybitWithdraw(base: string, chain: string, address: string
     const ok = j.retCode === 0 && j.result?.id;
     return { ok: !!ok, dryRun: false, id: ok ? String(j.result.id) : null, message: ok ? `Bybit ${base} 출금 요청` : (j.retMsg || "출금 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+    return inflightFail(e, "출금");
   }
 }
 
@@ -605,7 +622,7 @@ async function okxSigned(method: "GET" | "POST", path: string, body?: Record<str
       "OK-ACCESS-PASSPHRASE": pass, "Content-Type": "application/json",
     },
     body: method === "POST" ? bodyStr : undefined,
-    cache: "no-store",
+    cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   return res.json();
 }
@@ -626,7 +643,7 @@ export async function okxOrder(base: string, side: "BUY" | "SELL", opts: { quote
     const ok = j.code === "0" && d?.sCode === "0";
     return { ok: !!ok, dryRun: false, id: ok ? String(d.ordId) : null, message: ok ? `OKX ${base} ${label} 체결` : (d?.sMsg || j.msg || "주문 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "주문 실패" };
+    return inflightFail(e, "주문");
   }
 }
 
@@ -643,6 +660,6 @@ export async function okxWithdraw(base: string, chain: string, address: string, 
     const ok = j.code === "0" && d?.wdId;
     return { ok: !!ok, dryRun: false, id: ok ? String(d.wdId) : null, message: ok ? `OKX ${base} 출금 요청` : (j.msg || "출금 실패") };
   } catch (e) {
-    return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "출금 실패" };
+    return inflightFail(e, "출금");
   }
 }
