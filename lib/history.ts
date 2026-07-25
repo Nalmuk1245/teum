@@ -17,31 +17,73 @@ export type Persistence = {
   jumpPct: number; // largest single-sample % price move in the window (one-sided tail)
 };
 
-type Track = { streakStart: number | null; samples: { ts: number; pos: boolean; gross: number; price: number }[] };
+type Sample = { ts: number; pos: boolean; gross: number; price: number };
+type Track = { streakStart: number | null; samples: Sample[] };
+
+// On disk, samples are packed positional tuples instead of keyed objects, and
+// only a downsampled tail is kept. The full 3s-resolution window (650 samples ×
+// 4 keys × ~100 tracks) was 3.5MB of JSON — 97% of the state file — and none of
+// that resolution needs to survive a restart: persistence scores only need
+// enough shape to re-establish hit-rate and volatility.
+type PackedSample = [ts: number, pos: 0 | 1, gross: number, price: number];
+type PackedTrack = { s: number | null; p: PackedSample[] };
+const PERSIST_MAX = 120; // per track, newest-last
+const PERSIST_EVERY = 5; // keep 1 of every N samples
+
+function pack(t: Track): PackedTrack {
+  const out: PackedSample[] = [];
+  // Walk newest-first so the retained tail is the most recent data, then flip.
+  for (let i = t.samples.length - 1; i >= 0 && out.length < PERSIST_MAX; i -= PERSIST_EVERY) {
+    const s = t.samples[i];
+    out.push([s.ts, s.pos ? 1 : 0, round6(s.gross), round6(s.price)]);
+  }
+  out.reverse();
+  return { s: t.streakStart, p: out };
+}
+function unpack(v: PackedTrack | Track): Track {
+  // Tolerate the pre-packing layout so an existing state file still hydrates.
+  if (Array.isArray((v as Track).samples)) return v as Track;
+  const pt = v as PackedTrack;
+  return {
+    streakStart: pt.s ?? null,
+    samples: (pt.p ?? []).map(([ts, pos, gross, price]) => ({ ts, pos: pos === 1, gross, price })),
+  };
+}
+const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+
 const g = globalThis as unknown as { __arbHist?: Map<string, Track> };
 // Hydrate from disk so persistence scores survive restarts.
-g.__arbHist ??= new Map(loadSection<[string, Track][]>("history") ?? []);
+g.__arbHist ??= new Map(
+  (loadSection<[string, PackedTrack | Track][]>("history") ?? []).map(([id, v]) => [id, unpack(v)]),
+);
 const H = g.__arbHist;
 
 // Per-minute σ of the GLOBAL PRICE log-returns (increments, not levels) — the
 // real in-flight exposure is the coin's price vol, not the premium's. Also
 // return the largest single-step move (jump proxy) since pump risk is one-sided,
 // not Gaussian.
+// Single numeric pass, no intermediate arrays. Same math as before (σ of
+// √dt-normalized log-returns, plus the largest one-step move) — this used to
+// allocate three arrays of objects per opportunity per 3s tick, which at the KR
+// universe size is hundreds of thousands of short-lived objects feeding GC.
+// Variance via Σx/Σx² on normalized returns; identical result, one loop.
 function priceVol(samples: { ts: number; price: number }[]): { volPctPerMin: number; jumpPct: number } {
-  const pts = samples.filter((s) => s.price > 0);
-  if (pts.length < 3) return { volPctPerMin: 0, jumpPct: 0 };
-  const rets: { r: number; dtMin: number }[] = [];
-  let jump = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const r = Math.log(pts[i].price / pts[i - 1].price);
-    const dtMin = Math.max(1 / 60, (pts[i].ts - pts[i - 1].ts) / 60_000);
-    rets.push({ r, dtMin });
-    jump = Math.max(jump, Math.abs(pts[i].price / pts[i - 1].price - 1) * 100);
+  let n = 0, sum = 0, sumSq = 0, jump = 0;
+  let prevPrice = 0, prevTs = 0;
+  for (const s of samples) {
+    if (!(s.price > 0)) continue;
+    if (prevPrice > 0) {
+      const ratio = s.price / prevPrice;
+      const dtMin = Math.max(1 / 60, (s.ts - prevTs) / 60_000);
+      const x = Math.log(ratio) / Math.sqrt(dtMin);
+      n++; sum += x; sumSq += x * x;
+      const move = Math.abs(ratio - 1) * 100;
+      if (move > jump) jump = move;
+    }
+    prevPrice = s.price; prevTs = s.ts;
   }
-  // σ of returns normalized to 1-minute (random-walk: divide each by √dt).
-  const norm = rets.map((x) => x.r / Math.sqrt(x.dtMin));
-  const mean = norm.reduce((a, b) => a + b, 0) / norm.length;
-  const variance = norm.reduce((a, b) => a + (b - mean) ** 2, 0) / norm.length;
+  if (n < 2) return { volPctPerMin: 0, jumpPct: 0 };
+  const variance = Math.max(0, sumSq / n - (sum / n) ** 2); // E[x²] − E[x]²
   return { volPctPerMin: Math.sqrt(variance) * 100, jumpPct: jump };
 }
 
@@ -56,10 +98,16 @@ export function recordGap(id: string, netPct: number, grossPct: number, price: n
   else t.streakStart = null;
 
   t.samples.push({ ts, pos, gross: grossPct, price });
+  // Drop everything expired in ONE splice. The old `while (…) shift()` did an
+  // O(n) memmove per removed sample, per opportunity, per tick.
   const cutoff = ts - WINDOW_MS;
-  while (t.samples.length > MAX_SAMPLES || (t.samples[0] && t.samples[0].ts < cutoff)) t.samples.shift();
+  let drop = 0;
+  while (drop < t.samples.length && t.samples[drop].ts < cutoff) drop++;
+  if (t.samples.length - drop > MAX_SAMPLES) drop = t.samples.length - MAX_SAMPLES;
+  if (drop > 0) t.samples.splice(0, drop);
 
-  const hits = t.samples.filter((s) => s.pos).length;
+  let hits = 0;
+  for (const s of t.samples) if (s.pos) hits++;
   const pv = priceVol(t.samples);
   return {
     heldSec: pos && t.streakStart != null ? Math.round((ts - t.streakStart) / 1000) : 0,
@@ -81,8 +129,18 @@ export function pruneHistory(seen: Set<string>, ts: number) {
   for (const [id, t] of H) {
     if (!seen.has(id) && (t.samples.length === 0 || t.samples[t.samples.length - 1].ts < cutoff)) H.delete(id);
   }
-  saveSection("history", [...H.entries()]); // debounced snapshot (restart resilience)
+  // Snapshot for restart resilience — packed + downsampled, and only every
+  // PERSIST_INTERVAL_MS. Staging this every 3s meant JSON.stringify ran on the
+  // whole history on each debounce flush; the scores it protects tolerate a
+  // minute of granularity just fine.
+  if (ts - lastPersist < PERSIST_INTERVAL_MS) return;
+  lastPersist = ts;
+  const packed: [string, PackedTrack][] = [];
+  for (const [id, t] of H) packed.push([id, pack(t)]);
+  saveSection("history", packed);
 }
+const PERSIST_INTERVAL_MS = 60_000;
+let lastPersist = 0;
 
 // A gap held profitable this long counts as "confirmed" (full ranking weight).
 export const SUSTAIN_SEC = 24;
