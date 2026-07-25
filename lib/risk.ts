@@ -13,7 +13,7 @@ export type Limits = {
   maxDailyLossUsd: number;
 };
 
-import { loadSection, saveSection } from "./persist";
+import { loadSection, saveSection, flushSection } from "./persist";
 
 const g = globalThis as unknown as {
   __arbRisk?: { limits: Limits; day: string; realizedPnlUsd: number };
@@ -59,7 +59,9 @@ export function setLimits(p: Partial<Limits>): Limits {
 export function recordPnl(usd: number) {
   roll();
   S.realizedPnlUsd += usd;
-  saveSection("riskPnl", { day: S.day, realizedPnlUsd: S.realizedPnlUsd }); // daily-loss limit survives restarts
+  // flush, not the 30s debounce: a crash right after a large loss is exactly
+  // when the tally matters, and losing it resets the daily-loss cap.
+  flushSection("riskPnl", { day: S.day, realizedPnlUsd: S.realizedPnlUsd }); // daily-loss limit survives restarts
 }
 
 export function riskState() {

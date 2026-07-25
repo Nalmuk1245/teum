@@ -21,8 +21,10 @@ import { quoteOpportunity } from "./quote";
 import { unwind } from "./unwind";
 import { isKilled, setKilled } from "./killswitch";
 import { getLimits } from "./risk";
-import { CONFIG } from "./config";
+import { CONFIG, FEES } from "./config";
 import { notify, notifyNow } from "./telegram";
+import { recordPnl } from "./risk";
+import { recordTrade } from "./trades";
 import { loadSection, flushSection } from "./persist";
 
 export type TxRef = { hash: string; url: string | null };
@@ -156,7 +158,15 @@ function persistRuns() {
   E.saveTimer = setTimeout(() => {
     E.saveTimer = null;
     try {
-      const keep = Object.values(E.runs).slice(-30);
+      // Positioned runs FIRST. trimRuns only evicts finished runs and cancelRun
+      // refuses to delete positioned ones, so error runs accumulate — a plain
+      // slice(-30) then dropped exactly the un-deletable positioned ones from
+      // disk, and after a restart they no longer existed (no exposure
+      // accounting, no unwind, no hedge-margin watch).
+      const all = Object.values(E.runs);
+      const held = all.filter((r) => r.remaining > 0 || (r.statuses.hedge === "done" && r.statuses.close !== "done"));
+      const rest = all.filter((r) => !held.includes(r));
+      const keep = [...held, ...rest].slice(0, 30);
       flushSection("runs", Object.fromEntries(keep.map((r) => [r.id, r])));
     } catch { /* disk */ }
   }, 500);
@@ -245,7 +255,10 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
   const r = await runStep(stepId, eng.opp, run?.sizeUsd ?? 0, {
     rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
     // `close` reduces exactly the hedge that was opened, not the threaded qty.
-    hedgeQty: stepId === "close" ? eng.hedgeQty : undefined,
+    // The ROLLBACK of `hedge` needs it for the same reason — it was passing the
+    // spot fill, so a reduceOnly close of 100 against a (100 − withdrawFee)
+    // short got rejected and left the short open while the spot was dumped.
+    hedgeQty: stepId === "close" || (opts?.rollback && stepId === "hedge") ? eng.hedgeQty : undefined,
     walletBefore: stepId === "recv" || stepId === "deposit" ? eng.walletBefore : undefined,
     fills: stepId === "settle" ? eng.fills : undefined,
     durations: stepId === "settle" ? eng.durations : undefined,
@@ -286,11 +299,37 @@ async function revalidate(eng: Engine, sizeUsd: number) {
     // fresh: 돈이 움직이기 직전 — 캐시된 호가로 판단하지 않는다
     const q = await quoteOpportunity(eng.opp, sizeUsd, { fresh: true });
     if (!q) return { ok: false as const, reason: "실호가 재조회 실패" };
-    if (q.execNetPct <= 0) return { ok: false as const, reason: `순수익 ${q.execNetPct.toFixed(2)}%로 하락` };
+    // `execNetPct` only nets the costs the depth quote can see: takers, fx
+    // spread, withdrawal fee (slippage is already inside the VWAP). The board's
+    // cost model ALSO charges KRW repatriation, the perp hedge round trip and the
+    // measured execution leak — real cash that quote.ts knows nothing about. The
+    // gate compared against 0 and therefore passed trades whose true net was
+    // negative, which is exactly the marginal band kimchi lives in.
+    const extra = extraCostPct(eng.opp);
+    if (q.execNetPct <= extra) {
+      return {
+        ok: false as const,
+        reason: `순수익 ${q.execNetPct.toFixed(2)}% ≤ 미반영 비용 ${extra.toFixed(2)}% (송금·헷지·누수 보정 포함)`,
+      };
+    }
     return { ok: true as const };
   } catch {
     return { ok: false as const, reason: "재견적 요청 실패" };
   }
+}
+
+
+/** Cost the depth quote does NOT price, but the board's model does. Kept here so
+ *  the pre-order gate compares like with like. */
+function extraCostPct(opp: Opportunity): number {
+  let extra = 0;
+  // KRW proceeds have to come home eventually.
+  if (opp.legs.some((l) => l.quote === "KRW")) extra += CONFIG.REPATRIATION_PCT ?? 0;
+  // Hedged transfer plays pay the perp taker twice.
+  if (opp.hasPerp && (opp.kind === "kimchi" || opp.kind === "cex-dex")) {
+    extra += (FEES.perpTakerPct.binance ?? 0.045) * 2;
+  }
+  return extra;
 }
 
 // ── the loop ──────────────────────────────────────────────────────────────────
@@ -415,7 +454,10 @@ async function loop(id: string) {
             statuses[sid] = rb.ok ? "rolledback" : "error";
             messages[sid] = `${messages[sid] ?? ""} · ${rb.ok ? "롤백됨" : `롤백 실패(${rb.message ?? "?"}) — 수동`}`;
             eng.done.delete(j); // 되돌린 단계는 "완료"가 아니다
-            eng.rolledBack = true;
+            // 롤백이 **성공했을 때만** 종결 처리. 실패하면(예: 슬리피지 상한으로
+            // 매도 보류) 진입이 그대로 남아 재개 가능한데, 무조건 세우면 재시도가
+            // "진입이 롤백됨"이라며 영구 거부되고 메시지도 사실과 반대가 된다.
+            if (rb.ok) eng.rolledBack = true;
           }
         }
         patch(id, {
@@ -523,6 +565,9 @@ export function retryRun(id: string): RetryResult {
   if (isKilled()) return { error: "킬 스위치 활성 — 먼저 해제하세요" };
   eng.killEpoch = E.killEpoch; // 해제된 킬 세대에 맞춰 재개 허용
   eng.cancelled = false;
+  // 대기 상한(입금·수신 확인)을 초과해 error가 된 런은, 이 타임스탬프를 지우지
+  // 않으면 재시도가 곧바로 "이미 90분 초과"로 다시 실패해 영구히 진행 불가였다.
+  eng.stepFirstAt.delete(eng.i);
   patch(id, { error: null, pauseAt: -1 });
   void loop(id);
   return { ok: true };
@@ -556,7 +601,13 @@ export function cancelRun(id: string, force = false): CancelResult {
 
 export function clearFinished() {
   for (const [id, run] of Object.entries(E.runs)) {
-    // done + 재시작으로 엔진을 잃은 error 런(루프 재개 불가)도 정리 대상
+    // done + 재시작으로 엔진을 잃은 error 런(루프 재개 불가)도 정리 대상.
+    // 단 **포지션·미청산 헷지가 남은 런은 절대 삭제하지 않는다** — boot()는 중단
+    // 런을 error로 복원하면서 엔진을 만들지 않으므로, 이 가드가 없으면 재시작 후
+    // "완료 정리" 한 번이 실포지션을 통째로 지워 청산 불가·헷지 감시 중단·노출
+    // 한도 0으로 만들었다 (cancelRun에는 있던 가드가 여기엔 없었다).
+    const openHedge = run.statuses.hedge === "done" && run.statuses.close !== "done";
+    if (run.remaining > 0 || openHedge) continue;
     if (run.phase === "done" || (run.phase === "error" && !E.engines.has(id))) {
       E.engines.delete(id);
       delete E.runs[id];
@@ -578,6 +629,23 @@ export async function unwindRun(id: string, fraction: number) {
   patch(id, { unwinding: true });
   try {
     const result = await unwind(run.opp, run.remaining, fraction);
+    // Feed the daily-loss limit and the trade log. `recordPnl` was only called
+    // from settle, so every loss realized through the UNWIND path — the path you
+    // use precisely when a trade went wrong — never counted toward
+    // maxDailyLossUsd, and calibration never saw the leak either.
+    if (!result.dryRun && result.soldQty > 0) {
+      if (Number.isFinite(result.pnlUsd) && result.pnlUsd !== 0) recordPnl(result.pnlUsd);
+      const buy = run.opp.legs.find((l) => l.side === "buy");
+      const sell = run.opp.legs.find((l) => l.side === "sell");
+      void recordTrade({
+        ts: Date.now(), base: run.base, kind: run.kind,
+        route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"} (청산)`,
+        sizeUsd: run.sizeUsd, detectedNetPct: run.opp.netPct,
+        realizedNetPct: result.achievedNetPct, realizedPnlUsd: result.pnlUsd,
+        qty: result.soldQty, hedged: result.hedgeClosedQty > 0,
+        dryRun: false, status: "done", note: "부분/전량 청산",
+      });
+    }
     // Re-read: `run` was captured before a multi-second await.
     const cur = E.runs[id] ?? run;
     patch(id, {

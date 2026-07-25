@@ -514,7 +514,7 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const credited = rec?.amount ? Number(rec.amount) : undefined;
       return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `Binance ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
-      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+      return { ok: false, pending: true, dryRun: false, id: null, message: `입금 조회 실패(재확인 대기): ${e instanceof Error ? e.message : "?"}` };
     }
   }
   if (venue === "upbit") {
@@ -531,7 +531,7 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const credited = rec?.amount ? Number(rec.amount) : undefined;
       return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txid, filledQty: credited, message: rec ? `Upbit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
-      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+      return { ok: false, pending: true, dryRun: false, id: null, message: `입금 조회 실패(재확인 대기): ${e instanceof Error ? e.message : "?"}` };
     }
   }
   if (venue === "bithumb") {
@@ -542,13 +542,13 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const j = await bithumbSigned("/info/user_transactions", {
         order_currency: base, payment_currency: "KRW", searchGb: "4", count: "20",
       });
-      if (j.status !== "0000") return { ok: false, dryRun: false, id: null, message: j.message || "입금 조회 실패" };
+      if (j.status !== "0000") return { ok: false, pending: true, dryRun: false, id: null, message: (j.message || "입금 조회 실패") + " — 재확인 대기" };
       const rec = (Array.isArray(j.data) ? j.data : []).find(
         (d: { transfer_date?: number | string }) => Number(d.transfer_date ?? 0) / 1000 >= sinceTs,
       );
       return { ok: !!rec, pending: !rec, dryRun: false, id: null, message: rec ? `Bithumb ${base} 입금 확인` : "입금 대기" };
     } catch (e) {
-      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+      return { ok: false, pending: true, dryRun: false, id: null, message: `입금 조회 실패(재확인 대기): ${e instanceof Error ? e.message : "?"}` };
     }
   }
   if (venue === "bybit") {
@@ -563,7 +563,7 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
       const credited = rec?.amount ? Number(rec.amount) : undefined;
       return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txID, filledQty: credited, message: rec ? `Bybit ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
-      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+      return { ok: false, pending: true, dryRun: false, id: null, message: `입금 조회 실패(재확인 대기): ${e instanceof Error ? e.message : "?"}` };
     }
   }
   if (venue === "okx") {
@@ -578,12 +578,12 @@ export async function checkDeposit(venue: string, base: string, sinceTs: number)
         cache: "no-store", signal: AbortSignal.timeout(10_000),
       });
       const j = (await res.json()) as { code: string; data?: Array<{ state?: string; ts?: string; txId?: string; amt?: string }> };
-      if (j.code !== "0") return { ok: false, dryRun: false, id: null, message: "입금 조회 실패" };
+      if (j.code !== "0") return { ok: false, pending: true, dryRun: false, id: null, message: "입금 조회 실패 — 재확인 대기" };
       const rec = (j.data ?? []).find((d) => d.state === "2" && Number(d.ts ?? 0) >= sinceTs); // 2 = credited
       const credited = rec?.amt ? Number(rec.amt) : undefined;
       return { ok: !!rec, pending: !rec, dryRun: false, id: null, txHash: rec?.txId, filledQty: credited, message: rec ? `OKX ${base} 입금 확인${credited ? ` ${credited}` : ""}` : "입금 대기" };
     } catch (e) {
-      return { ok: false, dryRun: false, id: null, message: e instanceof Error ? e.message : "입금 조회 실패" };
+      return { ok: false, pending: true, dryRun: false, id: null, message: `입금 조회 실패(재확인 대기): ${e instanceof Error ? e.message : "?"}` };
     }
   }
   return sim(`${venue} ${base} 입금 확인 (미배선)`, false); // 그 외 venue — live → fail via sim

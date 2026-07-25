@@ -10,6 +10,7 @@
 import type { Opportunity } from "./types";
 import { CONFIG } from "./config";
 import { getAdapter, fetchUsdKrw } from "./exchanges";
+import { estimateLegSlippage } from "./quote";
 import {
   binanceLimitSell, binanceOrderFills, binanceCancelOrder,
   upbitLimitSell, upbitOrderFills, upbitCancelOrder,
@@ -30,7 +31,14 @@ export type UnwindResult = {
 // crystallizes a guaranteed loss and books it as an "orderly" exit. Below the
 // floor the right move is usually to HOLD hedged (delta-neutral) instead.
 const FLOOR_BUFFER_PCT = 0.1;
-const premiumFloor = (costPct: number) => costPct + FLOOR_BUFFER_PCT;
+// Exiting only costs what is still AHEAD of us. By unwind time the buy taker,
+// the on-chain transfer fee and the inbound FX are already spent — charging the
+// full round-trip made the floor ~2-3x too high, so the loop refused to sell at
+// premiums where selling was genuinely profitable and left the position carrying
+// funding + FX risk instead. Marginal exit cost ≈ sell taker + repatriation.
+const EXIT_COST_SHARE = 0.45; // of the round-trip cost model
+const exitCostPct = (roundTripPct: number) => Math.max(0, roundTripPct) * EXIT_COST_SHARE;
+const premiumFloor = (costPct: number) => exitCostPct(costPct) + FLOOR_BUFFER_PCT;
 const REPEG_HAIRCUT = 0.15; // premium given up on the re-peg tranche (sim)
 const ROUNDS = 3; // limit → re-peg → re-peg, then market fallback
 const POLL_MS = 2000;
@@ -108,6 +116,29 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
     log.push(r.ok ? `숏 ${qty.toFixed(4)} 비례 청산` : `숏 청산 실패: ${r.message} — 수동 확인`);
   };
 
+  // Realized numbers for whatever has been sold SO FAR — shared by the normal
+  // return and the early "hold hedged" abort (which used to report 0/0 and
+  // silently drop the P&L of rounds that had already filled).
+  const settleNumbers = () => {
+    if (!(sold > 0) || !usdtLeg || !(proceeds > 0)) {
+      return { soldQty: sold, hedgeClosedQty: hedgeClosed, achievedNetPct: 0, pnlUsd: 0 };
+    }
+    const avgQuote = proceeds / sold;
+    const avgUsd = sellLeg.quote === "KRW" ? avgQuote / (settleFx || 1) : avgQuote;
+    if (!(avgUsd > 0) || (sellLeg.quote === "KRW" && !settleFx)) {
+      return { soldQty: sold, hedgeClosedQty: hedgeClosed, achievedNetPct: 0, pnlUsd: 0 };
+    }
+    const grossPct = ((avgUsd - usdtLeg.price) / usdtLeg.price) * 100;
+    const net = grossPct - exitCostPct(opp.costPct ?? 0);
+    return {
+      soldQty: sold, hedgeClosedQty: hedgeClosed,
+      achievedNetPct: net, pnlUsd: (net / 100) * sold * usdtLeg.price,
+    };
+  };
+  // FX for settlement, fetched once when first needed.
+  let settleFx = 0;
+  if (sellLeg.quote === "KRW") settleFx = (await fetchUsdKrw(venue)) ?? 0;
+
   // Current gross premium of this route (for the floor check). Only meaningful
   // for KRW legs; USDT legs use 0-floor (no premium concept).
   const livePremium = async (): Promise<number | null> => {
@@ -118,8 +149,19 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
     return ((bid / fx - usdtLeg.price) / usdtLeg.price) * 100;
   };
 
+  // Authoritative fill read for the order we currently have working. Returns
+  // null only when the venue could not be reached at all.
+  const readFills = async (orderId: string) =>
+    venue === "binance" ? await binanceOrderFills(opp.base, orderId) : await upbitOrderFills(orderId);
+
+  // `bailout` = we have an order in an UNKNOWN state (poll blackout or a cancel
+  // we could not confirm). Anything further — another limit, or the market
+  // fallback — risks selling a quantity that order already sold. Stop touching
+  // the position and hand it to a human.
+  let bailout: string | null = null;
+
   let left = targetQty;
-  for (let round = 1; round <= ROUNDS && left > 0; round++) {
+  for (let round = 1; round <= ROUNDS && left > 0 && !bailout; round++) {
     // Premium floor — stop chasing a decaying edge, dump at market instead.
     const prem = await livePremium();
     const floor = premiumFloor(opp.costPct ?? 0.5);
@@ -127,10 +169,9 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
       // Below cost: dumping locks in a loss. Stop the loop and tell the
       // operator to hold hedged instead of crystallizing negative net.
       log.push(`프리미엄 ${prem.toFixed(2)}% < 손익분기 ${floor.toFixed(2)}% — 청산 중단, 헷지 유지 권장 (지금 팔면 확정 손실)`);
-      return {
-        soldQty: sold, hedgeClosedQty: hedgeClosed, achievedNetPct: 0, pnlUsd: 0,
-        remainingQty: remainingQty - sold, dryRun: false, log,
-      };
+      // Report what THIS call actually realized. Returning 0/0 here discarded
+      // the P&L of rounds that had already filled.
+      return { ...settleNumbers(), remainingQty: Math.max(0, remainingQty - sold), dryRun: false, log };
     }
 
     const book = await ad.fetchOrderBook(sellLeg.symbol);
@@ -151,13 +192,38 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
     let fin: { filledQty: number; quoteFilled: number; open: boolean } | null = null;
     for (let i = 0; i < POLLS_PER_ROUND; i++) {
       await sleep(POLL_MS);
-      const f = venue === "binance"
-        ? await binanceOrderFills(opp.base, placed.id)
-        : await upbitOrderFills(placed.id);
+      const f = await readFills(placed.id);
       if (!f) continue;
       fin = f; // quoteFilled/filledQty are cumulative PER ORDER
       if (!f.open) break; // fully filled or closed
     }
+
+    // ALWAYS resolve the order before doing anything else. Previously a round
+    // where every poll failed left `fin === null`, so `fin?.open` was falsy, the
+    // cancel was skipped, and the next round posted a SECOND limit sell for the
+    // same quantity while the first was still live — up to 3 stacked orders plus
+    // a market fallback, i.e. multiples of the intended size sold.
+    if (!fin || fin.open) {
+      const cancelled = venue === "binance"
+        ? await binanceCancelOrder(opp.base, placed.id)
+        : await upbitCancelOrder(placed.id);
+      // Re-read AFTER the cancel regardless of its result: fills that land in
+      // the window between the last poll and the cancel were previously counted
+      // as unsold and then sold again.
+      const after = await readFills(placed.id);
+      if (after) {
+        fin = after;
+      } else if (!cancelled) {
+        // Unknown state and we could not cancel → do not touch the position.
+        bailout = `R${round} 주문 상태 불명(조회·취소 모두 실패) — 거래소에서 직접 확인 후 수동 처리`;
+      } else {
+        bailout = `R${round} 취소는 됐지만 체결량 조회 실패 — 중복 매도 방지를 위해 중단, 수동 확인`;
+      }
+      if (!bailout) {
+        log.push(cancelled ? `R${round} 취소 → 리페그` : `R${round} 취소 실패(이미 종료된 주문일 수 있음) — 체결량 재확인으로 처리`);
+      }
+    }
+
     if (fin) {
       sold = roundStartSold + fin.filledQty;
       proceeds = roundStartProceeds + fin.quoteFilled;
@@ -169,49 +235,48 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
       await closeHedge(venue === "binance" ? await roundQty("perp", `${opp.base}USDT`, roundFilled) : roundFilled);
     }
     left = Math.max(0, targetQty - sold);
-    if (left > 0 && fin?.open) {
-      const cancelled = venue === "binance"
-        ? await binanceCancelOrder(opp.base, placed.id)
-        : await upbitCancelOrder(placed.id);
-      log.push(cancelled ? `R${round} 잔량 ${left.toFixed(4)} 취소 → 리페그` : `R${round} 취소 실패 — 수동 확인 필요`);
-      if (!cancelled) break; // don't double-sell into an order we couldn't cancel
-    }
+    if (bailout) log.push(bailout);
   }
 
-  // Market fallback for whatever's left (timeout or floor hit).
-  if (left > 0) {
-    const r = venue === "binance"
-      ? await binanceSpot(opp.base, "SELL", { qty: left })
-      : await upbitOrder(opp.base, "ask", { volume: left });
-    if (r.ok) {
-      const q = r.filledQty ?? left;
-      sold += q;
-      if (r.quoteFilled) proceeds += r.quoteFilled;
-      log.push(`잔량 ${q.toFixed(4)} 시장가 매도`);
-      await closeHedge(venue === "binance" ? await roundQty("perp", `${opp.base}USDT`, q) : q);
-      left = Math.max(0, targetQty - sold);
+  // Market fallback for whatever's left (timeout or floor hit). NEVER when the
+  // working order's state is unknown — this used to run even after the loop
+  // `break`, which is exactly the double-sell the break was meant to prevent.
+  if (left > 0 && !bailout) {
+    // Same slippage discipline as the normal sell leg: a market dump into a
+    // broken book can cost more than holding the (hedged) position.
+    const est = await estimateLegSlippage(venue, sellLeg.symbol, "sell", { baseQty: left }).catch(() => null);
+    if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+      log.push(`시장가 보류 — 예상 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% · 잔량 ${left.toFixed(4)} 헷지 유지로 보유`);
     } else {
-      log.push(`시장가 매도 실패: ${r.message} — 잔량 ${left.toFixed(4)} 수동 처리`);
+      const r = venue === "binance"
+        ? await binanceSpot(opp.base, "SELL", { qty: left })
+        : await upbitOrder(opp.base, "ask", { volume: left });
+      if (r.ok) {
+        // Only credit what the venue actually reports. Assuming a full fill
+        // (`?? left`) over-closed the hedge when the fill was partial.
+        const q = r.filledQty && r.filledQty > 0 ? r.filledQty : null;
+        if (q == null) {
+          log.push(`시장가 매도됨(체결량 미확인) — 수동 확인 필요, 잔량/헷지 보정 필요`);
+        } else {
+          sold += q;
+          if (r.quoteFilled) proceeds += r.quoteFilled;
+          log.push(`잔량 ${q.toFixed(4)} 시장가 매도`);
+          await closeHedge(venue === "binance" ? await roundQty("perp", `${opp.base}USDT`, q) : q);
+          left = Math.max(0, targetQty - sold);
+        }
+      } else {
+        log.push(`시장가 매도 실패: ${r.message} — 잔량 ${left.toFixed(4)} 수동 처리`);
+      }
     }
   }
 
-  // Realized numbers — approximate premium vs the (scan-time) USDT leg.
-  let achievedNet = 0, pnlUsd = 0;
-  if (sold > 0 && usdtLeg) {
-    const fx = sellLeg.quote === "KRW" ? await fetchUsdKrw(venue) : 1;
-    const avgUsd = fx ? (proceeds > 0 ? proceeds / sold / (sellLeg.quote === "KRW" ? fx : 1) : 0) : 0;
-    if (avgUsd > 0) {
-      const grossPct = ((avgUsd - usdtLeg.price) / usdtLeg.price) * 100;
-      achievedNet = grossPct - (opp.costPct ?? 0);
-      pnlUsd = ((achievedNet / 100) * sold * usdtLeg.price);
-      log.push(`실현 프리미엄 ${grossPct >= 0 ? "+" : ""}${grossPct.toFixed(2)}% · 순 ${achievedNet >= 0 ? "+" : ""}${achievedNet.toFixed(2)}%`);
-    }
+  // Realized numbers — marginal exit cost, not the full round trip (see exitCostPct).
+  const final = settleNumbers();
+  if (final.soldQty > 0 && final.achievedNetPct !== 0) {
+    log.push(`실현 순(한계비용 기준) ${final.achievedNetPct >= 0 ? "+" : ""}${final.achievedNetPct.toFixed(2)}%`);
   }
-
   const newRemaining = Math.max(0, remainingQty - sold);
   log.push(`청산 완료 — 매도 ${sold.toFixed(4)} · 숏청산 ${hedgeClosed.toFixed(4)} · 남은 물량 ${newRemaining.toFixed(4)}`);
-  return {
-    soldQty: sold, hedgeClosedQty: hedgeClosed,
-    achievedNetPct: achievedNet, pnlUsd, remainingQty: newRemaining, dryRun: false, log,
-  };
+  if (bailout) log.push(`⚠ ${bailout}`);
+  return { ...final, remainingQty: newRemaining, dryRun: false, log };
 }

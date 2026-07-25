@@ -128,12 +128,17 @@ async function walletArrival(
   if (!destAddr(chain)) return fail("지갑 주소 없음 — 수신 확인 불가");
   const bal = await walletBalanceOf(opp.base, chain);
   if (bal == null) return { ok: false, pending: true, dryRun: false, message: `${opp.base} 지갑 잔고 조회 실패 — 재확인 대기` };
-  // Expect the withdrawal net of the venue's flat fee; 2% slack for fee-table drift.
-  const wFee = withdrawFeeCoin(opp.base) ?? 0;
-  const expect = Math.max(0, qty - wFee) * 0.98;
+  // Expect the withdrawal net of the venue's flat fee; 2% slack for fee-table
+  // drift. When the fee is UNKNOWN a 2% slack can be smaller than the real fee
+  // (small notionals, expensive chains) and the check would never satisfy —
+  // 90 minutes of polling past the irreversible withdraw with the hedge open.
+  // Fall back to a wide proportional tolerance and say so.
+  const wFee = withdrawFeeCoin(opp.base);
+  const feeKnown = wFee != null;
+  const expect = feeKnown ? Math.max(0, qty - wFee) * 0.98 : qty * 0.9;
   const arrived = before != null ? bal - before : bal;
   const ok = arrived >= expect && expect > 0;
-  const basis = before != null ? "증가분" : "잔고(기준치 없음)";
+  const basis = (before != null ? "증가분" : "잔고(기준치 없음)") + (feeKnown ? "" : " · 출금비 미상(관용치 10%)");
   if (ok) {
     // Thread the ACTUAL arrival forward so the send uses what really landed.
     return {
@@ -184,7 +189,7 @@ export async function runStep(
   const qty = opts.qty ?? (usdPrice ? sizeUsd / usdPrice : 0);
   if (qty <= 0) return fail("수량 0 — 이전 단계 체결량 없음");
 
-  if (opts.rollback) return undoStep(stepId, opp, qty);
+  if (opts.rollback) return undoStep(stepId, opp, qty, opts.hedgeQty);
 
   // ── Step-agnostic pre-flight ────────────────────────────────────────────────
   // These used to live inside `case "buy"`, so the cex-dex buyDex plan — which
@@ -322,6 +327,17 @@ export async function runStep(
         }
       }
       const r = await binancePerp(opp.base, "SHORT", hedgeQty);
+      // A hedge that "succeeded" with no fill is the worst case: statuses.hedge
+      // becomes "done" (so the run reports an open hedge that doesn't exist and
+      // permanently inflates the exposure cap), eng.hedgeQty stays unset so
+      // `close` falls back to the wrong quantity, and settle books a phantom
+      // perp leg — all while the spot side is genuinely long. Fail hard.
+      if (r.ok && !dry && !(r.filledQty && r.filledQty > 0)) {
+        return {
+          ok: false, dryRun: false, ambiguous: true,
+          message: `헷지 주문은 접수됐지만 체결량을 확인할 수 없습니다 — 선물 포지션을 직접 확인하세요 (자동 재시도·롤백 차단)`,
+        };
+      }
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: "USDT" } };
     }
     case "withdraw": {
@@ -557,7 +573,7 @@ export async function runStep(
 }
 
 // Compensating action to unwind an entry leg on partial-fill (buy/hedge only).
-async function undoStep(stepId: StepId, opp: Opportunity, qty: number): Promise<StepResult> {
+async function undoStep(stepId: StepId, opp: Opportunity, qty: number, hedgeQty?: number): Promise<StepResult> {
   const buy = opp.legs.find((l) => l.side === "buy");
   if (stepId === "buy") {
     // 롤백도 시장가 매도다 — 얇은 호가에 덤프하면 방어 동작이 손실을 만든다.
@@ -576,7 +592,13 @@ async function undoStep(stepId: StepId, opp: Opportunity, qty: number): Promise<
     if (buy?.venue === "upbit") return await upbitOrder(opp.base, "ask", { volume: qty });
     if (buy?.venue === "bithumb") return await bithumbOrder(opp.base, "ask", qty);
   }
-  if (stepId === "hedge") return await binancePerp(opp.base, "CLOSE", qty);
+  if (stepId === "hedge") {
+    // Close exactly what was opened. Using the spot qty here made the
+    // reduceOnly close exceed the (spot − withdrawFee) short and get rejected,
+    // leaving a naked short while the buy rollback dumped the spot.
+    const q = hedgeQty && hedgeQty > 0 ? hedgeQty : qty;
+    return await binancePerp(opp.base, "CLOSE", q);
+  }
   return { ok: true, dryRun: CONFIG.DRY_RUN, message: `${stepId} 롤백 불필요` };
 }
 

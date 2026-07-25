@@ -175,7 +175,9 @@ export default function Cockpit() {
     const byId = new Map(rows.map((o) => [o.id, o]));
     const kept = frozen.map((o) => byId.get(o.id)).filter((o): o is Opportunity => !!o);
     const keptIds = new Set(kept.map((o) => o.id));
-    return [...kept, ...rows.filter((o) => !keptIds.has(o.id))];
+    // New rows go to the TOP, not the bottom: a freshly-opened top opportunity
+    // appended at the end looked like it was ranked last.
+    return [...rows.filter((o) => !keptIds.has(o.id)), ...kept];
   }, [rows, orderFrozen]);
   // What the 수익만 filter is hiding right now (for the empty-state message).
   const hiddenNeg = useMemo(() => {

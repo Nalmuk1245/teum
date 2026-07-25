@@ -226,7 +226,27 @@ function patchPlayOpensAt(base: string, opensAt: number) {
   saveSection("listingPlays", [...L.plays.entries()]);
 }
 
+// In-flight registration claims. `registerPlay` reads `L.plays`, then AWAITS
+// globalVenueFor (up to 3s of HTTP) before writing — and callers fire it
+// un-awaited in a loop, plus the Telegram poller does the same on a 3s timer. Two
+// notices naming the same ticker inside that window both saw "no existing play"
+// and each fired a live market buy. Claim the base synchronously.
+const claiming = new Set<string>();
+
 async function registerPlay(
+  base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean,
+  opts?: { opensAt?: number | null; drill?: boolean },
+) {
+  if (claiming.has(base)) return; // another registration for this base is mid-flight
+  claiming.add(base);
+  try {
+    return await registerPlayInner(base, venue, title, fromAnnouncement, opts);
+  } finally {
+    claiming.delete(base);
+  }
+}
+
+async function registerPlayInner(
   base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean,
   opts?: { opensAt?: number | null; drill?: boolean },
 ) {

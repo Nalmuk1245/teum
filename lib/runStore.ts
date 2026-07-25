@@ -12,12 +12,12 @@ import type { RunView, TxRef, StartResult } from "./runEngine";
 
 export type { RunView, TxRef, StartResult };
 
-type Store = { runs: Record<string, RunView>; killed: boolean; maxInFlightUsd: number };
+type Store = { runs: Record<string, RunView>; killed: boolean; maxInFlightUsd: number; inFlightUsd: number };
 
 const g = globalThis as unknown as {
   __arbRunsMirror?: { store: Store; listeners: Set<() => void>; timer: ReturnType<typeof setInterval> | null; fetching: boolean };
 };
-g.__arbRunsMirror ??= { store: { runs: {}, killed: false, maxInFlightUsd: Infinity }, listeners: new Set(), timer: null, fetching: false };
+g.__arbRunsMirror ??= { store: { runs: {}, killed: false, maxInFlightUsd: Infinity, inFlightUsd: 0 }, listeners: new Set(), timer: null, fetching: false };
 const M = g.__arbRunsMirror;
 
 const POLL_MS = 2500;
@@ -32,12 +32,17 @@ function headers(): Record<string, string> {
 }
 
 function apply(j: unknown) {
-  const d = j as { runs?: Record<string, RunView>; killed?: boolean; maxInFlightUsd?: number };
+  const d = j as { runs?: Record<string, RunView>; killed?: boolean; maxInFlightUsd?: number; inFlightUsd?: number };
   if (!d || typeof d !== "object" || !d.runs) return;
   const next = {
     runs: d.runs,
     killed: !!d.killed,
     maxInFlightUsd: typeof d.maxInFlightUsd === "number" && d.maxInFlightUsd > 0 ? d.maxInFlightUsd : Infinity,
+    // Mirror the SERVER's exposure number. The client used to recompute it with
+    // the old rule (running/paused only), so after the server started counting
+    // errored runs that still hold coin, the risk gauge showed $0 while startRun
+    // refused with "총 노출 한도 초과".
+    inFlightUsd: typeof d.inFlightUsd === "number" ? d.inFlightUsd : 0,
   };
   // useSyncExternalStore compares by identity, so publishing a brand-new object
   // every 2.5s re-rendered the page and the execute modal unconditionally — ~24
@@ -45,6 +50,7 @@ function apply(j: unknown) {
   if (
     M.store.killed === next.killed &&
     M.store.maxInFlightUsd === next.maxInFlightUsd &&
+    M.store.inFlightUsd === next.inFlightUsd &&
     sameRuns(M.store.runs, next.runs)
   ) return;
   M.store = next;
@@ -104,9 +110,7 @@ function ensurePolling() {
 
 // ── 컴포넌트 표면 (기존 API 유지) ─────────────────────────────────────────────
 export function inFlightUsd(): number {
-  return Object.values(M.store.runs)
-    .filter((r) => r.phase === "running" || r.phase === "paused")
-    .reduce((s, r) => s + r.sizeUsd, 0);
+  return M.store.inFlightUsd; // 서버 집행 값과 동일 (클라 재계산 금지)
 }
 
 /** 서버 리스크 설정 미러 (한도 집행은 서버가 한다 — 여기는 표시용). */
@@ -148,7 +152,7 @@ export async function setKillSwitch(v: boolean) {
 }
 
 // ── 구독 ──────────────────────────────────────────────────────────────────────
-const server: Store = { runs: {}, killed: false, maxInFlightUsd: Infinity };
+const server: Store = { runs: {}, killed: false, maxInFlightUsd: Infinity, inFlightUsd: 0 };
 function subscribe(cb: () => void) {
   M.listeners.add(cb);
   ensurePolling();
