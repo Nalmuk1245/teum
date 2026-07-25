@@ -40,6 +40,12 @@ export async function notify(key: string, text: string): Promise<void> {
   const now = Date.now();
   if (now - last < COOLDOWN_MS) return;
   g.__arbTgSent!.set(key, now);
+  // Keys are per-opportunity (`net:<oppId>`, `gate:<oppId>`), so this map grew
+  // with every coin ever alerted and was never pruned. Entries older than the
+  // cooldown can't suppress anything — drop them.
+  if (g.__arbTgSent!.size > 500) {
+    for (const [k, ts] of g.__arbTgSent!) if (now - ts > COOLDOWN_MS) g.__arbTgSent!.delete(k);
+  }
   await send(text);
 }
 

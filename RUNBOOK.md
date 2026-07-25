@@ -106,25 +106,39 @@ RISK_MAX_DAILY_LOSS_USD=30
 ```bash
 npm run build && npm start   # 프로덕션 모드 (dev보다 안정·빠름)
 ```
-- 재시작해도 히스토리·일일손실·상장 플레이·**진행 중이던 런**은 `data/state.json`에서 복원됨 (중단된 런은 자동 재개 없이 경고로만 — 수동 확인)
-- 브라우저는 꺼도 됨 — 감시·알림은 서버가 함. 폰은 텔레그램으로
+- 재시작해도 히스토리·일일손실·상장 플레이·**진행 중이던 런**은 `data/state/`(섹션별 파일)에서 복원됨 (중단된 런은 자동 재개 없이 경고로만 — 수동 확인). 예전 단일 `data/state.json`은 처음 읽을 때 자동 마이그레이션되고 원본은 보존됨
+- 브라우저는 꺼도 됨 — 감시·알림은 서버가 함(부팅 시 자동 무장). 폰은 텔레그램으로
 
 ### pm2 자동 재시작 (권장)
 
 ```bash
 npm i -g pm2
 npm run build
-pm2 start npm --name arb -- start        # 크래시 시 자동 재시작
+pm2 start ecosystem.config.js            # 프로덕션 빌드로 기동 + 크래시 시 자동 재시작
 pm2 save && pm2 startup                  # 부팅 시 자동 시작 (안내 명령 실행)
 pm2 logs arb                             # 로그 확인
 ```
+> `next start`(프로덕션)로 돌린다. dev 모드 상시 운용은 webpack·소스맵이 상주해 메모리를 계속 먹고, 실행 중에도 파일 변경에 재컴파일한다.
 
-### 헬스체크
+### 헬스체크 — **복구 훅이기도 하다**
 
 ```bash
 curl -s localhost:3100/api/health
-# {"ok":true,"scanAgeSec":2,"liveOpps":30,"killed":false,"dryRun":true,"uptimeSec":123}
+# {"ok":true,"scanAgeSec":2,"liveOpps":30,"killed":false,"dryRun":true,"uptimeSec":123,"rssMb":180}
 # 스캔 60초 이상 멈추면 503 — uptime 모니터(UptimeRobot 등)에 이 URL 등록 가능
 ```
+
+이 주소를 1분마다 찍어두는 걸 권장한다:
+
+```bash
+crontab -e
+* * * * * curl -sf localhost:3100/api/health >/dev/null
+```
+
+**이유**: 이 앱의 최악 고장은 "프로세스는 살아 있는데 스캔이 멈추는 것"이다. 그러면 WS가 보드를
+살아 보이게 하는 동안 라이브 진입은 신선도 게이트에 전부 막힌다. 프로세스가 죽지 않으니 **pm2는
+이 고장을 잡지 못한다.** `/api/health` 호출은 낡은 스냅샷·걸린 갱신 래치를 보면 새 스캔을 띄우므로,
+주기적 호출이 그 구멍을 메운다. (서버 내부 워치독도 3분마다 자체 복구를 시도한다 — 텔레그램
+설정과 무관하게.)
 - 크래시 시 텔레그램으로 💥 통보가 감 (pm2가 살려도 "죽었었다"는 건 알림)
 - 스캔 정지·기회 소멸·24h 하트비트는 기존 워치독이 텔레그램으로 알림

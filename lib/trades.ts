@@ -36,9 +36,25 @@ export type TradeRecord = {
   txs?: { step: string; hash: string; url: string | null }[];
 };
 
+// Append-only with no rotation meant this file grew forever — and readTrades
+// parses EVERY line before slicing, on a path the UI polls. Roll it once it gets
+// large; the rolled file stays on disk for analysis.
+const ROTATE_BYTES = 4 * 1024 * 1024;
+async function rotateIfLarge(): Promise<void> {
+  try {
+    const { statSync, renameSync } = await import("fs");
+    if (!existsSync(FILE)) return;
+    if (statSync(FILE).size < ROTATE_BYTES) return;
+    renameSync(FILE, `${FILE}.${new Date().toISOString().slice(0, 10)}`);
+  } catch {
+    /* rotation is best-effort */
+  }
+}
+
 export async function recordTrade(t: TradeRecord): Promise<void> {
   try {
     if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true });
+    await rotateIfLarge();
     await fs.appendFile(FILE, JSON.stringify(t) + "\n", "utf8");
   } catch {
     /* logging must never break a trade */

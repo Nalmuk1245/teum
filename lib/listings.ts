@@ -203,6 +203,20 @@ async function fetchNoticeOpensAt(noticeId: number): Promise<number | null> {
   } catch { return null; }
 }
 
+/** Dedupe sets only ever grew (one entry per announcement / telegram message,
+ *  forever). Insertion order is chronological, so keeping the newest N is enough
+ *  to stop re-processing anything we'd still see in a poll window. */
+const SEEN_MAX = 400;
+function trimSeen(s: Set<number>): void {
+  if (s.size <= SEEN_MAX) return;
+  const drop = s.size - SEEN_MAX;
+  let i = 0;
+  for (const v of s) {
+    if (i++ >= drop) break;
+    s.delete(v);
+  }
+}
+
 /** Fill in the open time once the notice body has been read — the alert and the
  *  auto-buy already went out without waiting for it. */
 function patchPlayOpensAt(base: string, opensAt: number) {
@@ -276,6 +290,7 @@ async function pollAnnouncements() {
   for (const it of items) {
     if (L.annSeen.has(it.id)) continue;
     L.annSeen.add(it.id);
+    trimSeen(L.annSeen);
     if (isFirst) continue; // prime the baseline silently
     if (!LISTING_RE.test(it.title)) continue;
     const tickers = new Set<string>();
@@ -347,6 +362,7 @@ async function pollMarkets() {
     if (p.announcedAt < cutoff) {
       archivePlay(p); // 만료 → 성과 히스토리로 (드릴 제외)
       L.plays.delete(b);
+      forgetKrDeposit(b); // 시계열도 함께 정리 (영구 누적 방지)
     }
   }
 }
@@ -475,6 +491,16 @@ export function krDeposits(base: string): { pts: { ts: number; up: number; bt: n
   return { pts: krDepositStore()[base]?.pts ?? [] };
 }
 
+/** Drop a coin's deposit series when its play is archived. Entries were keyed by
+ *  base and never deleted, so one accumulated per coin ever tracked — and every
+ *  one of them was re-serialized into the persisted state. */
+function forgetKrDeposit(base: string): void {
+  const store = krDepositStore();
+  if (!(base in store)) return;
+  delete store[base];
+  saveSection("krDeposits", store);
+}
+
 // ── Telegram public-channel scrape (CF-free fallback) ─────────────────────────
 // t.me/s/<channel> is Telegram's own public web view — no Cloudflare, no KR-IP
 // requirement, works from anywhere. Point LISTING_TG_CHANNEL at the channel you
@@ -505,6 +531,7 @@ async function pollTgChannel() {
       for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
       if (L.tgSeen.has(h)) continue;
       L.tgSeen.add(h);
+      trimSeen(L.tgSeen);
       if (isFirst) continue; // baseline silently
       if (!LISTING_RE.test(t)) continue;
       // Which KR venue is this notice about? (alert channels cover both)

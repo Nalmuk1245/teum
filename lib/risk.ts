@@ -30,8 +30,14 @@ g.__arbRisk ??= {
 };
 const S = g.__arbRisk;
 
+// The daily-loss window rolls at KST midnight, not UTC. `toISOString()` is UTC,
+// so for a Korea-operated tool the limit reset landed at 09:00 local — in the
+// middle of the trading morning, wiping the day's loss tally right when it
+// mattered. Overridable for anyone running elsewhere.
+const DAY_TZ = process.env.RISK_DAY_TZ || "Asia/Seoul";
+const DAY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: DAY_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return DAY_FMT.format(new Date()); // en-CA → YYYY-MM-DD
 }
 function roll() {
   const t = today();
