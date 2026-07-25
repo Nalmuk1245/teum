@@ -23,15 +23,28 @@ export type WatchdogProbe = () => {
   scanTs: number; // last successful scan snapshot time
   liveOpps: number; // non-mock opportunities in the snapshot
 };
+/** Called when the scan looks stalled — should try to unwedge it. Recovery must
+ *  not depend on Telegram being configured (it usually isn't during setup). */
+export type WatchdogRecover = () => void;
+const gr = globalThis as unknown as { __arbWdRecover?: WatchdogRecover };
 
 function check(probe: WatchdogProbe) {
-  if (!telegramConfigured()) return;
   const { scanTs, liveOpps } = probe();
   const now = Date.now();
+  const stalled = scanTs > 0 && now - scanTs > SCAN_STALL_MS;
 
-  // 1. Scan loop stalled — the whole tool is blind.
-  if (scanTs > 0 && now - scanTs > SCAN_STALL_MS) {
-    void notify("wd:stall", `🧨 스캔 루프 정지 — 마지막 스냅샷 ${Math.round((now - scanTs) / 60_000)}분 전. 서버 재시작 필요할 수 있음`);
+  // 1. Scan loop stalled — the whole tool is blind. ACT first, then tell.
+  //    A silent freeze is the worst failure this app has: the WS keeps the board
+  //    looking alive while every live entry is blocked by the staleness gate,
+  //    and pm2 can't help because the process never dies.
+  if (stalled) {
+    try { gr.__arbWdRecover?.(); } catch { /* best effort */ }
+    console.error(`[watchdog] scan stalled ${Math.round((now - scanTs) / 1000)}s — 복구 시도`);
+  }
+
+  if (!telegramConfigured()) return; // 알림만 스킵, 복구는 위에서 이미 했다
+  if (stalled) {
+    void notify("wd:stall", `🧨 스캔 루프 정지 — 마지막 스냅샷 ${Math.round((now - scanTs) / 60_000)}분 전. 자동 복구를 시도했습니다`);
   }
 
   // 2. Feeds went dark — scans run but return nothing (exchange API breakage),
@@ -53,8 +66,10 @@ function check(probe: WatchdogProbe) {
   }
 }
 
-/** Arm the watchdog (idempotent; re-armed on hot reload). */
-export function startWatchdog(probe: WatchdogProbe): void {
+/** Arm the watchdog (idempotent; re-armed on hot reload). `recover` is invoked
+ *  when the scan snapshot goes stale, regardless of Telegram configuration. */
+export function startWatchdog(probe: WatchdogProbe, recover?: WatchdogRecover): void {
+  if (recover) gr.__arbWdRecover = recover;
   if (W.loop) clearInterval(W.loop);
   W.loop = setInterval(() => check(probe), CHECK_MS);
 }

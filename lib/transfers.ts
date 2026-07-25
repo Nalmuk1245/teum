@@ -26,7 +26,7 @@ async function fetchBithumb(): Promise<Map<string, WalletStatus>> {
   const m = new Map<string, WalletStatus>();
   try {
     const res = await fetch("https://api.bithumb.com/public/assetsstatus/ALL", {
-      cache: "no-store",
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const j = (await res.json()) as {
       status: string;
@@ -70,7 +70,7 @@ async function fetchUpbit(): Promise<Map<string, WalletStatus> | null> {
   try {
     const res = await fetch("https://api.upbit.com/v1/status/wallet", {
       headers: { Authorization: `Bearer ${upbitJwt(key, secret)}` },
-      cache: "no-store",
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     const arr = (await res.json()) as Array<{ currency: string; wallet_state: string }>;
     if (!Array.isArray(arr)) return null;
@@ -98,7 +98,7 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
     const sig = crypto.createHmac("sha256", secret).update(query).digest("hex");
     const res = await fetch(
       `https://api.binance.com/sapi/v1/capital/config/getall?${query}&signature=${sig}`,
-      { headers: { "X-MBX-APIKEY": key }, cache: "no-store" },
+      { headers: { "X-MBX-APIKEY": key }, cache: "no-store", signal: AbortSignal.timeout(10_000) },
     );
     const arr = (await res.json()) as Array<{
       coin: string;

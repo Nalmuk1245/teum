@@ -18,20 +18,38 @@ if (!gp.__arbCrashHook) {
   const scream = (kind: string, err: unknown) => {
     const msg = err instanceof Error ? `${err.message}\n${(err.stack ?? "").slice(0, 300)}` : String(err);
     // notify는 쿨다운이 있으니 크래시 전용 키 사용; 실패해도 그냥 죽게 둔다.
-    try { void notify(`crash:${kind}`, `💥 <b>서버 ${kind}</b>\n${msg}`); } catch { /* dying anyway */ }
+    try { void notifyNow(`💥 <b>서버 ${kind}</b>\n${msg}`); } catch { /* dying anyway */ }
+    console.error(`[${kind}]`, err); // 텔레그램 미설정이어도 흔적은 남는다
   };
-  process.on("uncaughtException", (e) => scream("uncaughtException", e));
+  // unhandledRejection은 알리고 계속 산다 (대개 개별 fetch 실패).
   process.on("unhandledRejection", (e) => scream("unhandledRejection", e));
+  // uncaughtException은 다르다: 핸들러를 등록하는 것만으로 Node의 기본 종료가
+  // 사라져, 복구 불가 상태로 계속 주문을 받게 된다. 알린 뒤 반드시 죽고
+  // 프로세스 관리자(pm2)가 깨끗한 상태로 살리게 한다.
+  process.on("uncaughtException", (e) => {
+    scream("uncaughtException", e);
+    setTimeout(() => process.exit(1), 1500).unref(); // 텔레그램 전송 여유만 주고 종료
+  });
 }
 import type { Opportunity } from "./types";
-import { notify, telegramConfigured } from "./telegram";
+import { notify, notifyNow, telegramConfigured } from "./telegram";
 import { startListingWatch } from "./listings";
 import { startWatchdog } from "./watchdog";
 import { loadSection, saveSection } from "./persist";
 
-// 3s: a full sweep takes ~1.2s (binance bookTicker + parallel upbit chunks),
-// and per-venue call rates stay far below every venue's public limits.
+// 3s: a sweep costs ~0.8-1.2s once every venue fetch is timeout-bounded and the
+// Upbit/Bithumb calls run in parallel; per-venue call rates stay far below every
+// venue's public limits.
 const REFRESH_MS = 3000;
+// A tick MUST finish. Every fetch inside scanAll is individually bounded, but
+// this is the backstop for anything that never settles for another reason —
+// without it, one hung promise latches `refreshing` and the board freezes on a
+// stale snapshot until someone restarts the process (silently: the WS keeps the
+// UI looking live while every live entry is blocked by the staleness gate).
+const TICK_DEADLINE_MS = 8000;
+// If `refreshing` has been set longer than this, the previous tick is considered
+// lost and the latch is force-released so scanning can resume.
+const STUCK_MS = 20_000;
 const ALERT_NET_PCT = 0.5; // matches the client board threshold
 // %가 아니라 돈으로도 거른다 — 0.6% 흑자여도 $3짜리 기회는 폰을 울릴 가치가 없다.
 const ALERT_MIN_USD = Number(process.env.ALERT_MIN_USD || 5);
@@ -40,37 +58,79 @@ type Cache = {
   opps: Opportunity[];
   ts: number; // when the snapshot was taken (0 = never)
   refreshing: boolean;
+  refreshStartedAt: number; // 0 = idle; used to detect a lost tick
   loop: ReturnType<typeof setInterval> | null;
 };
 const g = globalThis as unknown as { __arbScanCache?: Cache };
-g.__arbScanCache ??= { opps: [], ts: 0, refreshing: false, loop: null };
+g.__arbScanCache ??= { opps: [], ts: 0, refreshing: false, refreshStartedAt: 0, loop: null };
 const C = g.__arbScanCache;
+C.refreshStartedAt ??= 0; // 이전 버전 상태에서 핫리로드된 경우
 // On (re)load, drop any prior interval so a hot-reload picks up new code — the
 // old setInterval would otherwise keep calling a stale scanAll closure forever.
 if (C.loop) { clearInterval(C.loop); C.loop = null; }
+// A hot-reload (or a previously stuck tick) must not leave the latch set: the
+// new module instance would never be able to scan.
+C.refreshing = false;
+C.refreshStartedAt = 0;
+
+/** True when the latch is held by a tick that is never going to finish. */
+function stuck(): boolean {
+  return C.refreshing && C.refreshStartedAt > 0 && Date.now() - C.refreshStartedAt > STUCK_MS;
+}
 
 async function refresh(): Promise<void> {
-  if (C.refreshing) return; // dedupe concurrent refreshes
-  C.refreshing = true;
-  try {
-    const next = await scanAll();
-    if (telegramConfigured()) void alertOnScan(next);
-    recordHourlyHeat(next);
-    C.opps = next;
-    C.ts = Date.now();
-  } catch (e) {
-    console.error("[scan refresh]", e); // 직전 스냅샷 유지 — 원인은 로그로
-  } finally {
-    C.refreshing = false;
+  if (C.refreshing) {
+    if (!stuck()) return; // a healthy tick is in flight — dedupe
+    // Previous tick is unrecoverable. Force the latch open and take over; the
+    // zombie can no longer apply its result (the startedAt guard below drops it).
+    const heldSec = Math.round((Date.now() - C.refreshStartedAt) / 1000);
+    console.error(`[scan] refresh stuck ${heldSec}s — 강제 해제`);
+    void notify("scan:stuck", `⚠️ 스캔 틱이 ${heldSec}초간 멈춤 — 강제 해제하고 재개합니다`);
   }
+  C.refreshing = true;
+  C.refreshStartedAt = Date.now();
+  const startedAt = C.refreshStartedAt;
+
+  // The latch is released when the REAL scan settles — NOT when the deadline
+  // below fires. A deadline cannot cancel the work already in flight, so
+  // releasing early would let ticks overlap without bound and starve the event
+  // loop. Overlap is only ever allowed by the `stuck()` path above.
+  const scan = scanAll();
+  void scan.then(
+    (next) => {
+      // A late zombie must not clobber a snapshot newer than itself.
+      if (startedAt >= C.ts) {
+        if (telegramConfigured()) void alertOnScan(next);
+        recordHourlyHeat(next);
+        C.opps = next;
+        C.ts = Date.now();
+      }
+    },
+    (e) => { console.error("[scan refresh]", e); }, // 직전 스냅샷 유지
+  ).finally(() => {
+    if (C.refreshStartedAt === startedAt) {
+      C.refreshing = false;
+      C.refreshStartedAt = 0;
+    }
+  });
+
+  // Callers (cold boot) must not block forever on a slow sweep. Stop AWAITING at
+  // the deadline and let them serve what's there; the scan keeps going and fills
+  // the cache for the next request.
+  await Promise.race([
+    scan.then(() => undefined, () => undefined),
+    new Promise<void>((res) => setTimeout(res, TICK_DEADLINE_MS).unref()),
+  ]);
 }
 
 // 시간대별 "수익 갭 열림" 빈도 (KST) — 언제 갭이 열리는지의 장기 패턴.
 // 스캔마다 해당 시간 칸에 [스캔 수, 수익 기회가 있던 스캔 수]를 누적.
 export type HourHeat = { scans: number; open: number };
+// Hoisted: constructing an Intl formatter costs ~0.4ms, and this runs per tick.
+const KST_HOUR = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Seoul" });
 function recordHourlyHeat(opps: Opportunity[]) {
   try {
-    const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Seoul" }).format(new Date()));
+    const hour = Number(KST_HOUR.format(new Date()));
     const heat = loadSection<HourHeat[]>("hourlyHeat") ?? Array.from({ length: 24 }, () => ({ scans: 0, open: 0 }));
     const h = (heat[hour] ??= { scans: 0, open: 0 });
     h.scans++;
@@ -110,12 +170,22 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   if (!C.loop) {
     C.loop = setInterval(() => void refresh(), REFRESH_MS);
     startListingWatch(); // 상장따리: notice/TG/market watchers
-    startWatchdog(() => ({ scanTs: C.ts, liveOpps: C.opps.filter((o) => !o.mock).length }));
+    startWatchdog(
+      () => ({ scanTs: C.ts, liveOpps: C.opps.filter((o) => !o.mock).length }),
+      // Recovery: force the latch open if a tick is wedged, then scan now.
+      () => {
+        if (C.refreshing) { C.refreshing = false; C.refreshStartedAt = 0; }
+        void refresh();
+      },
+    );
   }
   if (C.ts === 0) {
     await refresh(); // cold boot: nothing to serve yet
-  } else if (Date.now() - C.ts > REFRESH_MS * 2 && !C.refreshing) {
-    void refresh(); // loop lagged — kick one off but serve stale NOW
+  } else if (Date.now() - C.ts > REFRESH_MS * 2 && (!C.refreshing || stuck())) {
+    // Loop lagged (or its latch is stuck) — kick one off but serve stale NOW.
+    // `stuck()` matters here: without it, a wedged tick made this branch a
+    // no-op too, so nothing could ever restart the scan.
+    void refresh();
   }
   return { opps: C.opps, ts: C.ts };
 }
