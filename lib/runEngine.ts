@@ -78,6 +78,12 @@ type Engine = {
   rolledBack: boolean;
   /** An unwind is touching this run's position — the loop must not sell too. */
   unwindLock: boolean;
+  /** Wallet balance of the coin just before the outbound withdrawal — the `recv`
+   *  step judges arrival on the increase, not the absolute balance. */
+  walletBefore?: number;
+  /** First attempt time per step index — the wait timeout for polling steps
+   *  (recv / deposit) is measured from when THAT step started, not from entry. */
+  stepFirstAt: Map<number, number>;
   opp: Opportunity;
 };
 
@@ -240,6 +246,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     rollback: opts?.rollback, qty: eng.qty, sinceTs: eng.startTs || undefined,
     // `close` reduces exactly the hedge that was opened, not the threaded qty.
     hedgeQty: stepId === "close" ? eng.hedgeQty : undefined,
+    walletBefore: stepId === "recv" || stepId === "deposit" ? eng.walletBefore : undefined,
     fills: stepId === "settle" ? eng.fills : undefined,
     durations: stepId === "settle" ? eng.durations : undefined,
     txs: stepId === "settle"
@@ -253,6 +260,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     if (stepId === "hedge") eng.hedgeQty = r.filledQty;
     else eng.qty = r.filledQty;
   }
+  if (typeof r.walletBefore === "number") eng.walletBefore = r.walletBefore;
   if (r.fill?.quote && !opts?.rollback) {
     if (stepId === "buy") { eng.fills.buyQuote = r.fill.quote; eng.fills.buyCcy = r.fill.ccy; eng.fills.buyQty = r.fill.qty; }
     if (stepId === "sell") { eng.fills.sellQuote = r.fill.quote; eng.fills.sellCcy = r.fill.ccy; eng.fills.sellQty = r.fill.qty; }
@@ -267,8 +275,8 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     ok: r.ok, message: r.message, tx: r.tx as TxRef | undefined,
     ambiguous: r.ambiguous, pending: r.pending,
   };
-  // Remember only real successes, and never for the polling deposit step.
-  if (r.ok && !opts?.rollback && stepId !== "deposit") eng.done.set(eng.i, out);
+  // Remember only real successes, and never for the polling arrival steps.
+  if (r.ok && !opts?.rollback && stepId !== "deposit" && stepId !== "recv") eng.done.set(eng.i, out);
   return out;
 }
 
@@ -344,6 +352,7 @@ async function loop(id: string) {
 
     patch(id, { statuses: { ...run().statuses, [step.id]: "running" } });
     const stepT0 = Date.now();
+    if (!eng.stepFirstAt.has(i)) eng.stepFirstAt.set(i, stepT0);
     let r: { ok: boolean; message?: string; tx?: TxRef; ambiguous?: boolean; pending?: boolean; replayed?: boolean };
     try { r = await callStep(id, eng, step.id); }
     catch (e) { r = { ok: false, message: e instanceof Error ? e.message : "실패" }; }
@@ -359,21 +368,24 @@ async function loop(id: string) {
     // toward the circuit breaker, so the normal kimchi flow auto-enabled the kill
     // switch after three retries.
     if (!r.ok && r.pending) {
-      const waited = Math.round((Date.now() - (eng.startTs || stepT0)) / 1000);
+      // Measured from when THIS step first ran — not from run entry, so a slow
+      // earlier leg doesn't eat the arrival window.
+      const firstAt = eng.stepFirstAt.get(i) ?? stepT0;
+      const waited = Math.round((Date.now() - firstAt) / 1000);
       if (waited > DEPOSIT_WAIT_MAX_SEC) {
         patch(id, {
           statuses: { ...run().statuses, [step.id]: "error" },
           messages: upd.messages ?? run().messages,
-          error: `입금 미확인 ${Math.round(waited / 60)}분 초과 — 수동 확인 필요 (헷지 유지)`,
+          error: `${step.label} 미확인 ${Math.round(waited / 60)}분 초과 — 수동 확인 필요 (헷지 유지)`,
           pauseAt: i, phase: "error",
         });
-        if (!CONFIG.DRY_RUN) void notifyNow(`⏰ <b>${eng.opp.base}</b> 입금이 ${Math.round(waited / 60)}분째 미확인 — 수동 확인 필요`);
+        if (!CONFIG.DRY_RUN) void notifyNow(`⏰ <b>${eng.opp.base}</b> ${step.label}이 ${Math.round(waited / 60)}분째 미확인 — 수동 확인 필요`);
         eng.busy = false;
         return;
       }
       patch(id, {
         statuses: { ...run().statuses, [step.id]: "running" },
-        messages: { ...(upd.messages ?? run().messages), [step.id]: `${r.message ?? "입금 대기"} (${waited}초 경과 · 자동 재확인)` },
+        messages: { ...(upd.messages ?? run().messages), [step.id]: `${r.message ?? "대기 중"} (${waited}초 경과 · 자동 재확인)` },
         phase: "running", error: null,
       });
       await sleep(DEPOSIT_POLL_MS);
@@ -474,7 +486,7 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   };
   E.engines.set(id, {
     cancelled: false, killEpoch: E.killEpoch, busy: false, i: 0, confirmed: new Set(),
-    startTs: 0, fills: {}, durations: {}, done: new Map(),
+    startTs: 0, fills: {}, durations: {}, done: new Map(), stepFirstAt: new Map(),
     rolledBack: false, unwindLock: false, opp: cfg.opp,
   });
   trimRuns();

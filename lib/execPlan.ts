@@ -7,7 +7,10 @@ import { chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 
 export type StepId =
   | "buy" | "hedge" | "withdraw" | "transfer" | "deposit" | "sell" | "close" | "settle"
-  | "approve" | "swap"; // cex-dex (transfer-style): DEX approve + swap legs
+  | "approve" | "swap" // cex-dex (transfer-style): DEX approve + swap legs
+  | "recv"; // personal-wallet arrival check (its own id: `deposit` already means
+            // "credited at the sell venue", and a plan can't reuse a step id —
+            // statuses/messages are keyed by it.
 
 export type ExecStep = {
   id: StepId; label: string; desc: string;
@@ -91,10 +94,18 @@ export function buildPlan(opp: Opportunity, hedge: boolean): ExecStep[] {
   const hop = evm && isGlobal(buy?.venue) && isKr(sell?.venue);
 
   const steps: ExecStep[] = [];
+  const etaMin = opp.transfer?.etaMin;
   steps.push({ id: "buy", label: `${bv} 현물 매수`, desc: `${opp.base} 매수 · 진입` });
   if (hedge) steps.push({ id: "hedge", label: "Binance 선물 숏", desc: "같은 수량 · 진입가에 가격 잠금" });
   if (hop) {
     steps.push({ id: "withdraw", label: `${bv} → 개인지갑 출금`, desc: "온체인 · 되돌릴 수 없음", irreversible: true });
+    // Wait for the coin to actually LAND in the wallet before spending it. The
+    // withdraw step only means the exchange ACCEPTED the request; on-chain
+    // arrival is minutes later. Without this, 전자동 fired the transfer straight
+    // after the request and it reverted on an unfunded wallet (gas burned, and
+    // past the irreversible boundary so no rollback). At 출금 전 the human
+    // approved both steps and would notice — this makes it safe unattended too.
+    steps.push({ id: "recv", label: "개인지갑 수신 확인", desc: `온체인 도착 대기${etaMin ? ` · ~${etaMin}분` : ""}` });
     steps.push({ id: "transfer", label: `개인지갑 → ${sv} 송금`, desc: "트래블룰 우회 · 자동 입금", irreversible: true });
   } else {
     steps.push({

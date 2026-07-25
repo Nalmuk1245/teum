@@ -5,7 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
 import { pct, usd, price } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
-import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/executionPlan";
+import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
 
 export const KIND_META: Record<StrategyKind, { label: string; color: string }> = {

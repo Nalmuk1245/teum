@@ -18,7 +18,7 @@ import { recordTrade } from "./trades";
 import { estimateLegSlippage } from "./quote";
 import { withdrawFeeCoin, withdrawMinCoin } from "./networks";
 import { fetchUsdKrw } from "./exchanges";
-import type { StepId } from "./executionPlan";
+import type { StepId } from "./execPlan";
 import { notify } from "./telegram";
 
 
@@ -76,6 +76,9 @@ export type StepResult = {
   ambiguous?: boolean;
   /** Not a failure, just not done yet (deposit still confirming). */
   pending?: boolean;
+  /** Wallet balance snapshot taken before an outbound withdrawal — the engine
+   *  carries it to the `recv` step so arrival is judged on the delta. */
+  walletBefore?: number;
 };
 // Explorer link for a tx on the opp's transfer chain.
 function txInfo(chainLabel: string | undefined, hash: string | null | undefined, dry: boolean) {
@@ -85,6 +88,65 @@ function txInfo(chainLabel: string | undefined, hash: string | null | undefined,
   return { hash, url };
 }
 const fail = (message: string): StepResult => ({ ok: false, dryRun: CONFIG.DRY_RUN, message });
+
+/** On-chain balance of `base` at our wallet on `chainKey`. null = can't tell. */
+async function walletBalanceOf(base: string, chainKey: string): Promise<number | null> {
+  const addr = destAddr(chainKey);
+  if (!addr) return null;
+  try {
+    const { JsonRpcProvider, Contract, formatUnits, formatEther } = await import("ethers");
+    const provider = new JsonRpcProvider(getChain(chainKey)!.rpc);
+    const asset = await resolveWalletAsset(base, chainKey);
+    if (asset.kind === "token") {
+      const c = new Contract(asset.address, ["function balanceOf(address) view returns (uint256)"], provider);
+      return Number(formatUnits(await c.balanceOf(addr), asset.decimals));
+    }
+    if (asset.kind === "native") return Number(formatEther(await provider.getBalance(addr)));
+    return null; // contract unknown
+  } catch {
+    return null;
+  }
+}
+
+/** Has the coin actually LANDED in our wallet?
+ *
+ *  Judged on the INCREASE since the pre-withdrawal snapshot, not on the absolute
+ *  balance: any leftover holding of the same coin would otherwise satisfy an
+ *  absolute check instantly and the next step would spend coin that never
+ *  arrived. `before` is captured by the withdraw step; when it's unavailable we
+ *  fall back to an absolute check and say so.
+ *
+ *  Returns `pending` (not a failure) while waiting — the engine polls it. */
+async function walletArrival(
+  opp: Opportunity, qty: number, dry: boolean, before?: number,
+): Promise<StepResult> {
+  const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
+  if (dry) {
+    return { ok: true, dryRun: true, message: "지갑 수신 확인 (모의)", tx: { hash: `sim:${chain || "chain"}:recv:${opp.base}`, url: null } };
+  }
+  if (!chain) return fail("체인 미상 — 수신 확인 불가");
+  if (!destAddr(chain)) return fail("지갑 주소 없음 — 수신 확인 불가");
+  const bal = await walletBalanceOf(opp.base, chain);
+  if (bal == null) return { ok: false, pending: true, dryRun: false, message: `${opp.base} 지갑 잔고 조회 실패 — 재확인 대기` };
+  // Expect the withdrawal net of the venue's flat fee; 2% slack for fee-table drift.
+  const wFee = withdrawFeeCoin(opp.base) ?? 0;
+  const expect = Math.max(0, qty - wFee) * 0.98;
+  const arrived = before != null ? bal - before : bal;
+  const ok = arrived >= expect && expect > 0;
+  const basis = before != null ? "증가분" : "잔고(기준치 없음)";
+  if (ok) {
+    // Thread the ACTUAL arrival forward so the send uses what really landed.
+    return {
+      ok: true, dryRun: false,
+      filledQty: before != null ? arrived : bal,
+      message: `지갑 수신 확인 · ${basis} ${arrived.toFixed(6)} ${opp.base}`,
+    };
+  }
+  return {
+    ok: false, pending: true, dryRun: false,
+    message: `수신 대기 중 · ${basis} ${arrived.toFixed(6)} / 기대 ${expect.toFixed(6)} ${opp.base}`,
+  };
+}
 // A step we haven't wired: fine to no-op in DRY_RUN, but in live mode a silent
 // pass would let the machine run real orders around a hole — hard fail.
 const unwired = (message: string): StepResult =>
@@ -103,6 +165,9 @@ export async function runStep(
     /** Exact quantity the hedge opened — `close` must reduce that, not the
      *  currently-threaded qty (which by then is the deposit-credited amount). */
     hedgeQty?: number;
+    /** Wallet balance of the coin captured just BEFORE the withdrawal, so `recv`
+     *  can judge arrival by the increase instead of the absolute balance. */
+    walletBefore?: number;
     fills?: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
     txs?: { step: string; hash: string; url: string | null }[];
     durations?: Record<string, number>;
@@ -127,9 +192,11 @@ export async function runStep(
   // per-trade/daily risk limits AND the snapshot-staleness gate entirely.
   const dexLeg = opp.legs.find((l) => l.venue === "dex");
   const isEntry = stepId === "buy" || (stepId === "swap" && dexLeg?.side === "buy");
-  // Kill switch blocks anything that moves money. `deposit` (read-only polling)
-  // and `settle` (bookkeeping) still run so an in-flight run can be closed out.
-  if (stepId !== "deposit" && stepId !== "settle" && isKilled()) {
+  // Kill switch blocks anything that moves money. `deposit`/`recv` (read-only
+  // arrival polling) and `settle` (bookkeeping) still run so an in-flight run can
+  // be closed out.
+  const readOnlyStep = stepId === "deposit" || stepId === "recv" || stepId === "settle";
+  if (!readOnlyStep && isKilled()) {
     return fail("킬 스위치 활성 — 실행 차단");
   }
   if (isEntry) {
@@ -310,6 +377,12 @@ export async function runStep(
           ? { ok: true, dryRun: true, message: `${buy?.venue} 출금${note} (모의) · ${opp.base}는 태그 필수 — 태그 미확인, 라이브면 차단됨`, tx: simTx }
           : fail(`${opp.base}는 데스티네이션 태그 필수 — 태그 미확인, 출금 차단`);
       }
+      // Snapshot the wallet BEFORE sending, so the `recv` step can judge arrival
+      // on the increase rather than the absolute balance (a leftover holding of
+      // the same coin would otherwise read as "already arrived").
+      const walletBefore = (hop || toWallet) && !dry
+        ? (await walletBalanceOf(opp.base, chain)) ?? undefined
+        : undefined;
       const call =
         buy?.venue === "binance" ? binanceWithdraw(opp.base, net, dest, qty, tag ?? undefined)
         : buy?.venue === "bybit" ? bybitWithdraw(opp.base, net, dest, qty, tag ?? undefined)
@@ -339,7 +412,7 @@ export async function runStep(
         wtx = txId ? txInfo(opp.transfer?.network?.chain, txId, false) : undefined;
         if (!wtx) note += " · 온체인 tx 대기";
       }
-      return { ok: r.ok, ambiguous: r.ambiguous, dryRun: r.dryRun, message: `${r.message}${note}`, tx: wtx };
+      return { ok: r.ok, ambiguous: r.ambiguous, dryRun: r.dryRun, message: `${r.message}${note}`, tx: wtx, walletBefore };
     }
     case "transfer": {
       // Personal wallet → destination exchange deposit address (EVM hop only).
@@ -375,31 +448,13 @@ export async function runStep(
         tx: txInfo(opp.transfer?.network?.chain, res.hash, res.dryRun),
       };
     }
+    // Personal-wallet arrival check. Used by the kimchi hop (between the
+    // exchange withdrawal and the wallet→exchange send) and by cex-dex sellDex.
+    case "recv":
+      return walletArrival(opp, qty, dry, opts.walletBefore);
     case "deposit": {
       // cex-dex sellDex: "입금 확인" = 개인지갑 온체인 수신 확인.
-      if (sell?.venue === "dex") {
-        const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
-        if (dry) return { ok: true, dryRun: true, message: "지갑 수신 확인 (모의)", tx: { hash: `sim:${chain || "chain"}:recv:${opp.base}`, url: null } };
-        if (!chain) return fail("체인 미상 — 수신 확인 불가");
-        const addr = destAddr(chain);
-        if (!addr) return fail("지갑 주소 없음");
-        try {
-          const { JsonRpcProvider, Contract, formatUnits, formatEther } = await import("ethers");
-          const provider = new JsonRpcProvider(getChain(chain)!.rpc);
-          const asset = await resolveWalletAsset(opp.base, chain);
-          let bal = 0;
-          if (asset.kind === "token") {
-            const c = new Contract(asset.address, ["function balanceOf(address) view returns (uint256)"], provider);
-            bal = Number(formatUnits(await c.balanceOf(addr), asset.decimals));
-          } else if (asset.kind === "native") {
-            bal = Number(formatEther(await provider.getBalance(addr)));
-          } else return fail(`${opp.base} 컨트랙트 미확인 — 수신 확인 불가`);
-          const ok = bal >= qty * 0.9; // 출금 수수료 차감 여유
-          return { ok, dryRun: false, message: ok ? `지갑 수신 확인 · ${bal.toFixed(6)} ${opp.base}` : `수신 대기 중 (현재 ${bal.toFixed(6)} / 기대 ${qty.toFixed(6)})` };
-        } catch (e) {
-          return fail(e instanceof Error ? e.message : "지갑 잔고 조회 실패");
-        }
-      }
+      if (sell?.venue === "dex") return walletArrival(opp, qty, dry, opts.walletBefore);
       const r = await checkDeposit(sell?.venue ?? "upbit", opp.base, opts.sinceTs ?? Date.now() - 60 * 60 * 1000);
       // DRY → sim chip; LIVE → real credited txid from the deposit record.
       const dtx = r.dryRun
