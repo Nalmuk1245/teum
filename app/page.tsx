@@ -15,18 +15,10 @@ import { GapInspect } from "./components/GapInspect";
 import { DashboardPanel } from "./components/DashboardPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
+import { useIsMobile } from "./mobile";
 
-function useIsMobile() {
-  const [mobile, setMobile] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 640px)");
-    const on = () => setMobile(mq.matches);
-    on();
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-  return mobile;
-}
+// 모바일 판정은 app/mobile.tsx의 단일 소스 (서버 UA로 첫 페인트부터 맞추고
+// 마운트 후 matchMedia가 정정 — 이유는 그 파일 주석 참고).
 
 /** How often row ORDER may change. Values still update at the 600ms WS cadence;
  *  only the ranking is throttled, so rows don't shuffle under the cursor. */
