@@ -11,6 +11,7 @@ import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON,
 
 export function Board({
   rows, loading, onExecute, mobile, showExecute, live, flash, emptyText, onInspect, inspectedId, lastColLabel,
+  onFreezeOrder,
 }: {
   rows: Opportunity[];
   loading: boolean;
@@ -24,13 +25,22 @@ export function Board({
   onInspect?: (o: Opportunity) => void;
   inspectedId?: string | null;
   lastColLabel?: string;
+  /** 포인터가 보드 안에 있는 동안 행 순서를 동결한다 (오발주 방지). */
+  onFreezeOrder?: (frozen: boolean) => void;
 }) {
   return (
     <div
+      onPointerEnter={onFreezeOrder ? () => onFreezeOrder(true) : undefined}
+      onPointerLeave={onFreezeOrder ? () => onFreezeOrder(false) : undefined}
       style={{
         background: "var(--card)", border: "1px solid var(--border)",
         borderRadius: "var(--radius)", overflow: "hidden", boxShadow: "var(--shadow-sm)",
-        backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)",
+        // NOTE: no backdrop-filter here on purpose. This container wraps every
+        // row, and a blurred layer forces the compositor to re-sample its
+        // backdrop whenever the subtree changes — with live rows updating
+        // continuously that was constant GPU work (and the main source of scroll
+        // jank on mobile). Blur is kept where it does visual work over moving
+        // content: the sticky header and the modal overlay.
       }}
     >
       {!mobile && (
@@ -72,7 +82,7 @@ export function Board({
 
 // Mobile opportunity card — stacked layout instead of the wide desktop table.
 
-export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean }) {
+function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean }) {
   const km = KIND_META[o.kind];
   const net = live?.netPct ?? o.netPct;
   const gross = live?.grossPct ?? o.grossPct;
@@ -157,7 +167,7 @@ export function OppCard({ o, onExecute, showExecute, live, flashing }: { o: Oppo
   );
 }
 
-export function Row({ o, onExecute, showExecute, live, flashing, onInspect, inspected }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean; onInspect?: (o: Opportunity) => void; inspected?: boolean }) {
+function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspected }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean; onInspect?: (o: Opportunity) => void; inspected?: boolean }) {
   const km = KIND_META[o.kind];
   const [hover, setHover] = useState(false);
   const net = live?.netPct ?? o.netPct;
@@ -261,4 +271,40 @@ export function Row({ o, onExecute, showExecute, live, flashing, onInspect, insp
     </div>
   );
 }
+
+// Rows are memoized on the values they actually render. Without this, every row
+// re-rendered on each 600ms overlay tick — ~64 rows × 12-15 inline style objects
+// each, roughly 100k short-lived objects a minute to redraw mostly-identical
+// numbers. Only the rows whose live numbers moved re-render now.
+//
+// The comparator ignores `o` identity: /api/scan returns fresh objects every 3s,
+// so comparing by reference would defeat the memo. The fields below are the ones
+// the row displays; the live gap is compared at display precision (2 decimals).
+const sameGap = (a?: LiveGap, b?: LiveGap) =>
+  (!a && !b) ||
+  (!!a && !!b &&
+    Math.round(a.netPct * 100) === Math.round(b.netPct * 100) &&
+    Math.round(a.grossPct * 100) === Math.round(b.grossPct * 100));
+
+const sameOpp = (a: Opportunity, b: Opportunity) =>
+  a.id === b.id && a.netPct === b.netPct && a.grossPct === b.grossPct &&
+  a.costPct === b.costPct && a.notionalCapUsd === b.notionalCapUsd &&
+  a.executable === b.executable && a.hasPerp === b.hasPerp &&
+  a.transfer?.blocked === b.transfer?.blocked &&
+  a.newListing?.opened === b.newListing?.opened &&
+  a.persistence?.heldSec === b.persistence?.heldSec &&
+  a.transferRisk?.hedgeAdvised === b.transferRisk?.hedgeAdvised &&
+  a.fundingMeta?.nextTs === b.fundingMeta?.nextTs &&
+  a.note === b.note && a.unverified === b.unverified && a.suspectApr === b.suspectApr;
+
+export const OppCard = React.memo(OppCardImpl, (p, n) =>
+  sameOpp(p.o, n.o) && sameGap(p.live, n.live) &&
+  p.flashing === n.flashing && p.showExecute === n.showExecute && p.onExecute === n.onExecute,
+);
+export const Row = React.memo(RowImpl, (p, n) =>
+  sameOpp(p.o, n.o) && sameGap(p.live, n.live) &&
+  p.flashing === n.flashing && p.showExecute === n.showExecute &&
+  p.inspected === n.inspected && p.onExecute === n.onExecute && p.onInspect === n.onInspect,
+);
+
 export default Board;

@@ -162,7 +162,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
   );
 
   return (
-    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>리스크 한도</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
         {field("1회 최대", "perTrade")}
@@ -231,7 +231,7 @@ export function GatesCard() {
     return <span style={{ display: "inline-flex", gap: 4 }}>{tag(s.deposit, "입")}{tag(s.withdraw, "출")}</span>;
   };
   return (
-    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>입출금 상태 조회</div>
       <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 8 }}>실행 전 코인의 거래소별 입금·출금 열림 여부 확인 (<span style={{ color: "var(--pos)" }}>입/출</span> = 열림, <span style={{ color: "var(--neg)" }}>빨강</span> = 중단)</div>
       {data && (data.missing?.length ?? 0) > 0 && (
@@ -465,7 +465,7 @@ export function PnlCard() {
   }, []);
   const st = data?.stats;
   return (
-    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>거래 · 손익</span>
         {st && st.dryCount > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>모의 {st.dryCount}건 포함</span>}
@@ -501,7 +501,7 @@ export function TelegramCard() {
   };
   const on = state?.configured;
   return (
-    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>텔레그램 알림</span>
         <span style={{ width: 6, height: 6, borderRadius: 9, background: on ? "var(--pos)" : "var(--text-mute)" }} />
@@ -611,7 +611,7 @@ export function HoldingsCard() {
   const totalAddrs = stats ? Object.values(stats).reduce((s, v) => s + v.hot + v.cold, 0) : null;
 
   return (
-    <div style={{ background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>거래소 온체인 보유량</span>
         <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>상장따리 물량 신호 · ETH/BSC/Base</span>
@@ -739,7 +739,7 @@ export function RunsDashboard({ runs, onOpen, hero }: {
               onClick={() => onOpen(r)}
               style={{
                 display: "block", width: "100%", textAlign: "left", cursor: "pointer",
-                background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: `1px solid ${r.phase === "error" ? "var(--neg)" : r.phase === "paused" ? "var(--brand)" : "var(--border)"}`,
+                background: "var(--card)", border: `1px solid ${r.phase === "error" ? "var(--neg)" : r.phase === "paused" ? "var(--brand)" : "var(--border)"}`,
                 borderRadius: "var(--radius)", padding: hero ? "14px 16px" : "10px 12px", color: "var(--text)", boxShadow: hero ? "var(--shadow-sm)" : undefined,
               }}
             >

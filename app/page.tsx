@@ -28,6 +28,31 @@ function useIsMobile() {
   return mobile;
 }
 
+/** How often row ORDER may change. Values still update at the 600ms WS cadence;
+ *  only the ranking is throttled, so rows don't shuffle under the cursor. */
+const RANK_THROTTLE_MS = 2500;
+/** How long a threshold-crossing row stays highlighted. */
+const FLASH_MS = 4000;
+
+/** A snapshot of the overlay that only advances every `ms`. */
+function useRankSnapshot(overlay: Record<string, LiveGap>, ms: number) {
+  const [snap, setSnap] = useState(overlay);
+  const latest = useRef(overlay);
+  latest.current = overlay;
+  useEffect(() => {
+    const id = setInterval(() => setSnap(latest.current), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  // Adopt immediately when the set of ids changes (new/removed opportunity) —
+  // that's a structural change, not a value wiggle, and waiting looks broken.
+  const ids = Object.keys(overlay).length;
+  const prevIds = useRef(ids);
+  useEffect(() => {
+    if (prevIds.current !== ids) { prevIds.current = ids; setSnap(latest.current); }
+  }, [ids]);
+  return snap;
+}
+
 export default function Cockpit() {
   const [opps, setOpps] = useState<Opportunity[]>([]);
   const [meta, setMeta] = useState<{ dryRun: boolean; mock: boolean; calPct?: number; calSamples?: number } | null>(null);
@@ -107,14 +132,44 @@ export default function Cockpit() {
   // Real-time overlay — client WebSockets recompute premium/net sub-second.
   const { overlay: liveOverlay, status: liveStatus, ages: liveAges } = useLivePrices(opps, true);
   // Gap rows re-rank by the LIVE net — a coin that spikes right now jumps to the
-  // top immediately instead of waiting for the next 8s scan's ordering.
+  // top immediately instead of waiting for the next scan's ordering.
+  //
+  // But ranking is decoupled from the 600ms value cadence on purpose. Two coins
+  // within noise of each other used to swap places up to 100×/min, and the user
+  // clicks 실행 on this board: a row moving between aiming and clicking executes
+  // the WRONG trade. So the order is recomputed from a throttled snapshot of the
+  // overlay, and frozen entirely while the pointer is over the board.
+  const rankOverlay = useRankSnapshot(liveOverlay, RANK_THROTTLE_MS);
+  const [orderFrozen, setOrderFrozen] = useState(false);
+  const frozenRows = useRef<Opportunity[] | null>(null);
   const rows = useMemo(() => {
     const base = funding || filter === "all" ? pool : pool.filter((o) => o.kind === filter);
     if (funding) return base;
+    const rankNet = (o: Opportunity) => rankOverlay[o.id]?.netPct ?? o.netPct;
+    const sorted = [...base].sort((a, b) => rankNet(b) - rankNet(a));
+    // The +/- filter still uses the LIVE value: hiding a row that just went
+    // negative is safe (it can't be mis-clicked), reordering is not.
     const liveNet = (o: Opportunity) => liveOverlay[o.id]?.netPct ?? o.netPct;
-    const sorted = [...base].sort((a, b) => liveNet(b) - liveNet(a));
     return plusOnly ? sorted.filter((o) => liveNet(o) > 0) : sorted;
-  }, [pool, filter, funding, liveOverlay, plusOnly]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- liveOverlay only gates visibility, not order
+  }, [pool, filter, funding, rankOverlay, plusOnly, liveOverlay]);
+  // Stable handler identities — passing fresh arrows every render defeats
+  // React.memo on the rows entirely (they'd re-render 100×/min regardless).
+  const onExecute = useCallback((o: Opportunity) => { setOpenRunId(null); setSelected(o); }, []);
+  const onInspect = useCallback((o: Opportunity) => {
+    setInspectId((cur) => (cur === o.id ? null : o.id));
+  }, []);
+  // While hovering, keep the exact row order the user is looking at.
+  const displayRows = useMemo(() => {
+    if (!orderFrozen) { frozenRows.current = rows; return rows; }
+    const frozen = frozenRows.current;
+    if (!frozen) return rows;
+    // Keep frozen order, but drop rows that no longer exist and append new ones.
+    const byId = new Map(rows.map((o) => [o.id, o]));
+    const kept = frozen.map((o) => byId.get(o.id)).filter((o): o is Opportunity => !!o);
+    const keptIds = new Set(kept.map((o) => o.id));
+    return [...kept, ...rows.filter((o) => !keptIds.has(o.id))];
+  }, [rows, orderFrozen]);
   // What the 수익만 filter is hiding right now (for the empty-state message).
   const hiddenNeg = useMemo(() => {
     if (funding || !plusOnly) return 0;
@@ -138,6 +193,7 @@ export default function Cockpit() {
     }
   };
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  const flashUntil = useRef<Map<string, number>>(new Map()); // id → expiry ts
   const aboveRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const crossed: { id: string; base: string; net: number }[] = [];
@@ -152,8 +208,15 @@ export default function Cockpit() {
     }
     aboveRef.current = nowAbove;
     if (!crossed.length) return;
-    setFlashIds((prev) => new Set([...prev, ...crossed.map((c) => c.id)]));
-    const t = setTimeout(() => setFlashIds(new Set()), 4000);
+    // Expire each flash on its OWN schedule, tracked in a ref. The old version
+    // armed `setTimeout(..., 4000)` and returned `clearTimeout` as the effect
+    // cleanup — but this effect re-runs on every overlay tick (600ms), so React
+    // cancelled the timer long before it fired. `flashIds` therefore never
+    // cleared and grew for the whole session, and one expiry also wiped flashes
+    // armed later.
+    const until = Date.now() + FLASH_MS;
+    for (const c of crossed) flashUntil.current.set(c.id, until);
+    setFlashIds(new Set(flashUntil.current.keys()));
     if (alertsOn) {
       beep();
       if ("Notification" in window && Notification.permission === "granted") {
@@ -164,8 +227,20 @@ export default function Cockpit() {
         });
       }
     }
-    return () => clearTimeout(t);
   }, [liveOverlay, gapOpps, alertsOn]);
+  // One owned sweeper drops expired flashes — independent of the effect above,
+  // so its lifetime isn't tied to the 600ms dependency churn.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      for (const [fid, until] of flashUntil.current) {
+        if (until <= now) { flashUntil.current.delete(fid); changed = true; }
+      }
+      if (changed) setFlashIds(new Set(flashUntil.current.keys()));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
   // Best live opportunity in the current pool (for the sticky summary bar).
   const best = useMemo(() => {
     let top: { o: Opportunity; net: number } | null = null;
@@ -200,22 +275,32 @@ export default function Cockpit() {
     localStorage.setItem("ac.autoentry", JSON.stringify({ ...v, armed: false }));
   };
   const autoCooldown = useRef(new Map<string, number>());
+  // Driven by its OWN interval reading refs, not by the 600ms overlay dependency.
+  // As a render-cadence effect it re-scanned the whole board ~100×/min to
+  // (usually) do nothing, and re-ran on every unrelated re-render.
+  const autoRefs = useRef({ autoEntry, gapOpps, liveOverlay, killed: runsStore.killed, activeRuns });
+  autoRefs.current = { autoEntry, gapOpps, liveOverlay, killed: runsStore.killed, activeRuns };
   useEffect(() => {
-    if (!autoEntry.armed || runsStore.killed) return;
-    if (activeRuns > 0) return; // one position at a time
-    for (const o of gapOpps) {
-      if (o.mock || !o.executable || !o.hasPerp) continue;
-      const net = liveOverlay[o.id]?.netPct ?? o.netPct;
-      if (net < autoEntry.minNet) continue;
-      if ((o.persistence?.heldSec ?? 0) < autoEntry.minHeld) continue;
-      const last = autoCooldown.current.get(o.base) ?? 0;
-      if (Date.now() - last < 30 * 60_000) continue; // per-coin cooldown
-      autoCooldown.current.set(o.base, Date.now());
-      void startRun({ opp: o, sizeUsd: autoEntry.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" })
-        .then((res) => { if (!("error" in res)) beep(); });
-      break; // at most one entry per tick
-    }
-  }, [liveOverlay, gapOpps, autoEntry, runsStore.killed, activeRuns]);
+    const tick = () => {
+      const { autoEntry: cfg, gapOpps: rows2, liveOverlay: ov, killed, activeRuns: active } = autoRefs.current;
+      if (!cfg.armed || killed) return;
+      if (active > 0) return; // one position at a time
+      for (const o of rows2) {
+        if (o.mock || !o.executable || !o.hasPerp) continue;
+        const net = ov[o.id]?.netPct ?? o.netPct;
+        if (net < cfg.minNet) continue;
+        if ((o.persistence?.heldSec ?? 0) < cfg.minHeld) continue;
+        const last = autoCooldown.current.get(o.base) ?? 0;
+        if (Date.now() - last < 30 * 60_000) continue; // per-coin cooldown
+        autoCooldown.current.set(o.base, Date.now());
+        void startRun({ opp: o, sizeUsd: cfg.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" })
+          .then((res) => { if (!("error" in res)) beep(); });
+        break; // at most one entry per tick
+      }
+    };
+    const id = setInterval(tick, 2000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <main style={{ minHeight: "100dvh" }}>
@@ -519,10 +604,11 @@ export default function Cockpit() {
             : null;
           const board = (
             <CockpitBoard
-              rows={rows} loading={loading}
-              onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
+              rows={displayRows} loading={loading}
+              onExecute={onExecute}
+              onFreezeOrder={setOrderFrozen}
               mobile={isMobile} showExecute={!funding} live={liveOverlay} flash={flashIds}
-              onInspect={!isMobile && !funding ? (o) => setInspectId((cur) => (cur === o.id ? null : o.id)) : undefined}
+              onInspect={!isMobile && !funding ? onInspect : undefined}
               inspectedId={inspectId}
               lastColLabel={funding ? "다음 정산" : undefined}
               emptyText={hiddenNeg > 0

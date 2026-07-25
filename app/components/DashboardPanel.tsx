@@ -5,7 +5,7 @@
 // 자금 배분(세그먼트 바) · 실시간 기회. 전부 기존 API에서 읽는다.
 
 import React from "react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Portfolio } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
@@ -14,7 +14,7 @@ import { inFlightUsd } from "@/lib/runStore";
 import type { RiskState } from "./ControlPanel";
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
-const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)" , backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)" }
+const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)"  }
 
 // 세션 동안 쌓는 미니 바차트 (숫자에 맥락 부여 — 시안의 vertical bars)
 function MiniBars({ series, color }: { series: number[]; color?: string }) {
@@ -94,22 +94,43 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
 
   // 실데이터 지표 (mock 제외)
   const live = useMemo(() => opps.filter((o) => !o.mock && o.kind !== "funding-basis"), [opps]);
-  const liveNet = (o: Opportunity) => liveOverlay[o.id]?.netPct ?? o.netPct;
-  const positive = live.filter((o) => liveNet(o) > 0).length;
-  const best = live.length ? [...live].sort((a, b) => liveNet(b) - liveNet(a))[0] : null;
+  const liveNet = useCallback(
+    (o: Opportunity) => liveOverlay[o.id]?.netPct ?? o.netPct,
+    [liveOverlay],
+  );
+  // Memoized: this is the DEFAULT tab, and `positive`/`best` each walked the
+  // whole list on every render — 600ms overlay ticks made that ~100×/min, twice.
+  const positive = useMemo(() => live.filter((o) => liveNet(o) > 0).length, [live, liveNet]);
+  const best = useMemo(
+    () => (live.length ? [...live].reduce((top, o) => (liveNet(o) > liveNet(top) ? o : top)) : null),
+    [live, liveNet],
+  );
   const bestNet = best ? liveNet(best) : null;
   const pnl = risk?.realizedPnlUsd ?? 0;
 
   // 세션 히스토리 — 스캔이 갱신될 때마다 샘플 (미니바 데이터)
   const hist = useRef<{ opp: number[]; posi: number[]; best: number[]; pnl: number[] }>({ opp: [], posi: [], best: [], pnl: [] });
   const lastTs = useRef(0);
-  if (live.length && Date.now() - lastTs.current > 8000) {
-    lastTs.current = Date.now();
-    const h = hist.current;
-    h.opp.push(live.length); h.posi.push(positive);
-    h.best.push(bestNet ?? 0); h.pnl.push(pnl);
-    for (const k of Object.keys(h) as (keyof typeof h)[]) if (h[k].length > 48) h[k].shift();
-  }
+  // Sampling happens in an EFFECT, not during render. Mutating a ref in the
+  // render body double-pushed under StrictMode's double-invoke (duplicated
+  // mini-bar points) and, because the array identity never changed, made the
+  // charts impossible to memoize.
+  const sample = { n: live.length, positive, bestNet: bestNet ?? 0, pnl };
+  const sampleRef = useRef(sample);
+  sampleRef.current = sample;
+  useEffect(() => {
+    const id = setInterval(() => {
+      const s = sampleRef.current;
+      if (!s.n) return;
+      if (Date.now() - lastTs.current < 8000) return;
+      lastTs.current = Date.now();
+      const h = hist.current;
+      h.opp.push(s.n); h.posi.push(s.positive);
+      h.best.push(s.bestNet); h.pnl.push(s.pnl);
+      for (const k of Object.keys(h) as (keyof typeof h)[]) if (h[k].length > 48) h[k].shift();
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
 
   // 리스크 현황 — 사용률의 최대치 기준 여유
   const inFlight = inFlightUsd();
@@ -134,8 +155,17 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
   const done = checks.filter((c) => c.on).length;
   const progress = Math.round((done / checks.length) * 100);
 
-  // 스트림 — 상위 6개
-  const stream = useMemo(() => [...live].sort((a, b) => liveNet(b) - liveNet(a)).slice(0, 6), [live, liveOverlay]);
+  // 스트림 — 상위 6개. `liveOverlay`가 의존성이라 600ms마다 무조건 재정렬됐다.
+  // 표시는 소수 2자리이므로 그 해상도로 스냅샷을 떠서 정렬 빈도를 낮춘다.
+  const rankKey = useMemo(
+    () => live.map((o) => `${o.id}:${Math.round(liveNet(o) * 100)}`).join("|"),
+    [live, liveNet],
+  );
+  const stream = useMemo(
+    () => [...live].sort((a, b) => liveNet(b) - liveNet(a)).slice(0, 6),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rankKey collapses live+overlay to display precision
+    [rankKey],
+  );
 
   const secHd = (title: string, right?: React.ReactNode) => (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 16px", borderBottom: "1px solid var(--border)" }}>

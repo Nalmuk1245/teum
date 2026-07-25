@@ -47,7 +47,7 @@ const fmtQty = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 
 const ago = (ts: number) => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`; };
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
-const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" , backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)" }
+const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px"  }
 const BTN: React.CSSProperties = { border: "none", borderRadius: 9, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
 const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };

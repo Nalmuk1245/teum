@@ -34,12 +34,42 @@ function headers(): Record<string, string> {
 function apply(j: unknown) {
   const d = j as { runs?: Record<string, RunView>; killed?: boolean; maxInFlightUsd?: number };
   if (!d || typeof d !== "object" || !d.runs) return;
-  M.store = {
+  const next = {
     runs: d.runs,
     killed: !!d.killed,
     maxInFlightUsd: typeof d.maxInFlightUsd === "number" && d.maxInFlightUsd > 0 ? d.maxInFlightUsd : Infinity,
   };
+  // useSyncExternalStore compares by identity, so publishing a brand-new object
+  // every 2.5s re-rendered the page and the execute modal unconditionally — ~24
+  // renders/min even with `runs: {}`, which is the normal idle state.
+  if (
+    M.store.killed === next.killed &&
+    M.store.maxInFlightUsd === next.maxInFlightUsd &&
+    sameRuns(M.store.runs, next.runs)
+  ) return;
+  M.store = next;
   M.listeners.forEach((l) => l());
+}
+
+/** Cheap structural compare of the run map — enough to catch any change the UI
+ *  shows (phase, step statuses/messages, tx chips, quantities, P&L). */
+function sameRuns(a: Record<string, RunView>, b: Record<string, RunView>): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const x = a[k], y = b[k];
+    if (!y) return false;
+    if (
+      x.phase !== y.phase || x.pauseAt !== y.pauseAt || x.error !== y.error ||
+      x.remaining !== y.remaining || x.totalQty !== y.totalQty || x.pnlUsd !== y.pnlUsd ||
+      x.unwinding !== y.unwinding || x.unwindLog.length !== y.unwindLog.length
+    ) return false;
+    // Step-level maps are small (≤8 entries); stringify is fine and exact.
+    if (JSON.stringify(x.statuses) !== JSON.stringify(y.statuses)) return false;
+    if (JSON.stringify(x.messages) !== JSON.stringify(y.messages)) return false;
+    if (JSON.stringify(x.txs) !== JSON.stringify(y.txs)) return false;
+  }
+  return true;
 }
 
 async function refresh() {

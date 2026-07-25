@@ -16,6 +16,23 @@ export type LiveStatus = { binance: boolean; upbit: boolean; bithumb: boolean };
 /** Seconds since each venue's last WS message (null = never received). */
 export type LiveAges = { binance: number | null; upbit: number | null; bithumb: number | null };
 
+// Equal-enough overlay comparison. Sub-0.005%p wiggle is below anything the UI
+// renders (2 decimals), so treating it as "unchanged" avoids a full re-render
+// for a difference nobody can see.
+const EPS = 0.005;
+function sameOverlay(a: Record<string, LiveGap>, b: Record<string, LiveGap>): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const x = a[k], y = b[k];
+    if (!y) return false;
+    if (Math.abs(x.netPct - y.netPct) > EPS) return false;
+    if (Math.abs(x.grossPct - y.grossPct) > EPS) return false;
+    if (Math.abs(x.premiumPct - y.premiumPct) > EPS) return false;
+  }
+  return true;
+}
+
 export function useLivePrices(opps: Opportunity[], enabled: boolean) {
   const oppsRef = useRef(opps);
   oppsRef.current = opps;
@@ -259,10 +276,26 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
         const grossPct = o.grossPct + (buyGlobal ? premiumDeltaPct : -premiumDeltaPct);
         ov[o.id] = { premiumPct: premiumDeltaPct, grossPct, netPct: grossPct - o.costPct };
       }
-      setOverlay(ov);
+      // Only publish when something actually MOVED. These two setters used to
+      // fire unconditionally with fresh object identities every 600ms — even
+      // with zero WS messages and identical numbers — which re-rendered the
+      // whole app (~100 renders/min on every tab, each cascading into full
+      // sorts/filters over the opportunity list) purely to redraw the same
+      // pixels. The WS message handlers were already identity-guarded; only this
+      // interval was not.
+      setOverlay((prev) => (sameOverlay(prev, ov) ? prev : ov));
       const now = Date.now();
       const age = (t: number) => (t ? Math.round((now - t) / 1000) : null);
-      setAges({ binance: age(lastMsg.current.binance), upbit: age(lastMsg.current.upbit), bithumb: age(lastMsg.current.bithumb) });
+      const nextAges: LiveAges = {
+        binance: age(lastMsg.current.binance),
+        upbit: age(lastMsg.current.upbit),
+        bithumb: age(lastMsg.current.bithumb),
+      };
+      setAges((prev) =>
+        prev.binance === nextAges.binance && prev.upbit === nextAges.upbit && prev.bithumb === nextAges.bithumb
+          ? prev
+          : nextAges,
+      );
     };
     timers.push(setInterval(recompute, 600));
 
