@@ -175,6 +175,17 @@ export async function runStep(
         : buy.venue === "bithumb" ? await bithumbOrder(opp.base, "bid", qty)
         : null;
       if (!r) return unwired(`${buy.venue} ${opp.base} 매수`);
+      // A live entry with no fill quantity would make every downstream step use
+      // the nominal scan-price estimate: hedge mis-sized, withdrawal possibly
+      // exceeding the balance, and settle unable to compute realized P&L (so
+      // recordPnl never runs and the daily-loss limit goes blind). Stop instead.
+      if (r.ok && !dry && !(r.filledQty && r.filledQty > 0)) {
+        return {
+          ok: false, dryRun: false,
+          message: `${buy.venue} 매수는 성공했지만 체결량을 확인할 수 없습니다 — 명목 수량으로 진행하지 않습니다. 거래소에서 잔고 확인 후 수동 처리`,
+          ambiguous: true, // 주문은 실제로 났다 → 롤백·자동재시도 금지
+        };
+      }
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: buy.quote } };
     }
     case "approve": {
@@ -208,7 +219,22 @@ export async function runStep(
       const swap = await swapDex(chainKey, from, to, amountHuman, CONFIG.MAX_SLIPPAGE_PCT / 100, walletAddr);
       if (!swap) return fail("swap 캘리데이터 조회 실패");
       const res = await sendRawEvmTx({ chain: chainKey, to: swap.to, data: swap.data, value: swap.value, gas: swap.gas }, [swap.to]);
-      return { ok: res.ok, dryRun: res.dryRun, message: `DEX 스왑 · ${res.message}`, tx: res.hash ? txInfo(chainLabelOf(chainKey), res.hash, res.dryRun) : undefined };
+      // On the buyDex plan the swap IS the entry, so its output quantity must be
+      // threaded forward — otherwise the CEX sell leg sized itself off the
+      // nominal estimate. `swap.toAmount` is the router's quoted output (base
+      // units); the on-chain receive is ≥ minReceive, so treat it as an estimate
+      // and let the deposit/receive check correct it.
+      const outRaw = Number(swap.toAmount ?? 0);
+      const outQty = dexBuys && outRaw > 0 ? outRaw / 10 ** to.decimals : undefined;
+      // Failed WITH a hash = it was broadcast; the outcome is unknown and a
+      // retry would swap twice. Failed without a hash = never left, safe.
+      const ambiguous = !res.ok && !!res.hash;
+      return {
+        ok: res.ok, dryRun: res.dryRun, ambiguous,
+        message: `DEX 스왑 · ${res.message}`,
+        filledQty: outQty && outQty > 0 ? outQty : undefined,
+        tx: res.hash ? txInfo(chainLabelOf(chainKey), res.hash, res.dryRun) : undefined,
+      };
     }
     case "hedge": {
       // Hedge the ARRIVAL quantity, not the bought quantity — taker fee (base-
@@ -328,8 +354,13 @@ export async function runStep(
       // 큐레이션 → 내 지갑 보유 컨트랙트(OKX) → 토큰리스트 순 자동 해석.
       const asset = await resolveWalletAsset(opp.base, chain);
       if (asset.kind === "unknown" && !dry) return fail(`${opp.base} 토큰 컨트랙트 미확인 — 송금 차단`);
+      // FLOOR, never round: toFixed rounds half-up, so a balance of 1.0000004
+      // became a 1.000001 request and the transfer reverted on insufficient
+      // funds (gas burned, and past the irreversible boundary so no rollback).
+      const sendQty = Math.floor(qty * 1e6) / 1e6;
+      if (!(sendQty > 0)) return fail("전송 수량 0 (6자리 내림 후)");
       const res = await sendToken({
-        chain, to, amountHuman: String(+qty.toFixed(6)),
+        chain, to, amountHuman: String(sendQty),
         tag: fetched?.tag ?? undefined,
         ...(asset.kind === "token" ? { tokenAddress: asset.address, decimals: asset.decimals } : {}),
         confirms: opp.transfer?.network?.confirms ?? 1,
@@ -337,6 +368,9 @@ export async function runStep(
       const noteAddr = fetched?.address ? "" : " · 입금주소 미확인(키필요)";
       return {
         ok: res.ok, dryRun: res.dryRun,
+        // Broadcast but unconfirmed → ambiguous: never re-send, a human checks
+        // the explorer. Never broadcast → safe to treat as a clean failure.
+        ambiguous: !res.ok && !!res.hash,
         message: `개인지갑 → ${destVenue} 송금 · ${res.message}${noteAddr}`,
         tx: txInfo(opp.transfer?.network?.chain, res.hash, res.dryRun),
       };

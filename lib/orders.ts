@@ -427,10 +427,47 @@ export async function bithumbOrder(base: string, side: "bid" | "ask", units: num
     const endpoint = side === "ask" ? "/trade/market_sell" : "/trade/market_buy";
     const j = await bithumbSigned(endpoint, { order_currency: base, payment_currency: "KRW", units: String(units) });
     const ok = j.status === "0000";
-    return { ok, dryRun: false, id: j.order_id ?? null, message: ok ? `Bithumb ${base} ${label} 체결` : (j.message || "주문 실패") };
+    if (!ok) return { ok: false, dryRun: false, id: null, message: j.message || "주문 실패" };
+    // Bithumb's market order response returns the executed contracts inline;
+    // when it doesn't, fall back to the order detail so downstream steps get a
+    // real quantity instead of the nominal scan-price estimate.
+    let filledQty = 0, quoteFilled = 0;
+    for (const c of (Array.isArray(j.data) ? j.data : []) as Array<{ units?: string; total?: string; price?: string }>) {
+      filledQty += Math.abs(Number(c.units ?? 0));
+      quoteFilled += Number(c.total ?? (Number(c.units ?? 0) * Number(c.price ?? 0)));
+    }
+    if (!(filledQty > 0) && j.order_id) {
+      const d = await bithumbOrderFill(base, String(j.order_id), side);
+      if (d) { filledQty = d.filledQty; quoteFilled = d.quoteFilled; }
+    }
+    return {
+      ok: true, dryRun: false, id: j.order_id ? String(j.order_id) : null,
+      filledQty: filledQty > 0 ? filledQty : undefined,
+      quoteFilled: quoteFilled > 0 ? quoteFilled : undefined,
+      message: `Bithumb ${base} ${label} 체결${filledQty > 0 ? ` ${filledQty}` : " (체결량 미확인)"}`,
+    };
   } catch (e) {
     return inflightFail(e, "주문");
   }
+}
+
+/** Bithumb order detail → executed base units + KRW total. */
+async function bithumbOrderFill(base: string, orderId: string, side: "bid" | "ask"): Promise<{ filledQty: number; quoteFilled: number } | null> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const j = await bithumbSigned("/info/order_detail", {
+        order_id: orderId, order_currency: base, payment_currency: "KRW", type: side,
+      });
+      if (j.status === "0000" && j.data) {
+        const rows = (j.data.contract ?? []) as Array<{ units?: string; total?: string }>;
+        let qty = 0, quote = 0;
+        for (const c of rows) { qty += Math.abs(Number(c.units ?? 0)); quote += Number(c.total ?? 0); }
+        if (qty > 0) return { filledQty: qty, quoteFilled: quote };
+      }
+    } catch { /* retry */ }
+    if (i < 2) await new Promise((r) => setTimeout(r, 400));
+  }
+  return null;
 }
 
 export async function bithumbWithdraw(base: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
@@ -587,10 +624,48 @@ export async function bybitOrder(base: string, side: "BUY" | "SELL", opts: { quo
     };
     const j = await bybitSigned("POST", "/v5/order/create", p);
     const ok = j.retCode === 0 && j.result?.orderId;
-    return { ok: !!ok, dryRun: false, id: ok ? String(j.result.orderId) : null, message: ok ? `Bybit ${base} ${label} 체결` : (j.retMsg || "주문 실패") };
+    if (!ok) return { ok: false, dryRun: false, id: null, message: j.retMsg || "주문 실패" };
+    const id = String(j.result.orderId);
+    // Bybit's create response carries no fill data — every downstream step
+    // (hedge sizing, withdrawal amount, settle P&L) needs the REAL fill, so
+    // query it. Without this the run silently used the nominal scan-price qty
+    // and settle could never take the real-fill branch, which also meant
+    // recordPnl never ran → the daily-loss limit was blind on this venue.
+    const f = await bybitOrderFill(base, id);
+    return {
+      ok: true, dryRun: false, id,
+      filledQty: f?.filledQty, quoteFilled: f?.quoteFilled,
+      message: `Bybit ${base} ${label} 체결${f?.filledQty ? ` ${f.filledQty}` : " (체결량 미확인)"}`,
+    };
   } catch (e) {
     return inflightFail(e, "주문");
   }
+}
+
+/** Realized fill of a Bybit spot order. Polls briefly — a market order is
+ *  usually filled by the time the create call returns, but not always. */
+async function bybitOrderFill(base: string, orderId: string): Promise<{ filledQty: number; quoteFilled: number } | null> {
+  for (let i = 0; i < 4; i++) {
+    try {
+      const j = await bybitSigned("GET", "/v5/order/realtime", { category: "spot", symbol: `${base}USDT`, orderId });
+      const row = j?.result?.list?.[0] as { cumExecQty?: string; cumExecValue?: string; orderStatus?: string } | undefined;
+      const qty = Number(row?.cumExecQty ?? 0);
+      if (qty > 0 && (row?.orderStatus === "Filled" || i === 3)) {
+        return { filledQty: qty, quoteFilled: Number(row?.cumExecValue ?? 0) };
+      }
+      if (row?.orderStatus === "Filled") return { filledQty: qty, quoteFilled: Number(row?.cumExecValue ?? 0) };
+    } catch { /* retry */ }
+    // 마지막 시도 전에만 대기 — 시장가는 보통 즉시 체결된다
+    if (i < 3) await new Promise((r) => setTimeout(r, 400));
+  }
+  // 히스토리 폴백 (realtime은 체결 완료 후 목록에서 빠질 수 있다)
+  try {
+    const j = await bybitSigned("GET", "/v5/order/history", { category: "spot", symbol: `${base}USDT`, orderId });
+    const row = j?.result?.list?.[0] as { cumExecQty?: string; cumExecValue?: string } | undefined;
+    const qty = Number(row?.cumExecQty ?? 0);
+    if (qty > 0) return { filledQty: qty, quoteFilled: Number(row?.cumExecValue ?? 0) };
+  } catch { /* 아래서 null */ }
+  return null;
 }
 
 export async function bybitWithdraw(base: string, chain: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
@@ -641,9 +716,55 @@ export async function okxOrder(base: string, side: "BUY" | "SELL", opts: { quote
     const j = await okxSigned("POST", "/api/v5/trade/order", body);
     const d = j.data?.[0];
     const ok = j.code === "0" && d?.sCode === "0";
-    return { ok: !!ok, dryRun: false, id: ok ? String(d.ordId) : null, message: ok ? `OKX ${base} ${label} 체결` : (d?.sMsg || j.msg || "주문 실패") };
+    if (!ok) return { ok: false, dryRun: false, id: null, message: d?.sMsg || j.msg || "주문 실패" };
+    const id = String(d.ordId);
+    const f = await okxOrderFill(base, id);
+    return {
+      ok: true, dryRun: false, id,
+      filledQty: f?.filledQty, quoteFilled: f?.quoteFilled,
+      message: `OKX ${base} ${label} 체결${f?.filledQty ? ` ${f.filledQty}` : " (체결량 미확인)"}`,
+    };
   } catch (e) {
     return inflightFail(e, "주문");
+  }
+}
+
+/** Realized fill of an OKX spot order: accFillSz (base) + avgPx → quote. */
+async function okxOrderFill(base: string, ordId: string): Promise<{ filledQty: number; quoteFilled: number } | null> {
+  for (let i = 0; i < 4; i++) {
+    try {
+      const j = await okxSigned("GET", `/api/v5/trade/order?instId=${base}-USDT&ordId=${ordId}`);
+      const d = j?.data?.[0] as { accFillSz?: string; avgPx?: string; state?: string } | undefined;
+      const qty = Number(d?.accFillSz ?? 0);
+      const px = Number(d?.avgPx ?? 0);
+      if (qty > 0 && (d?.state === "filled" || i === 3)) {
+        return { filledQty: qty, quoteFilled: px > 0 ? qty * px : 0 };
+      }
+    } catch { /* retry */ }
+    if (i < 3) await new Promise((r) => setTimeout(r, 400));
+  }
+  return null;
+}
+
+/** OKX per-chain withdrawal fee (minFee), 10min cached. null = unknown. */
+const okxFeeCache = new Map<string, { fee: number; ts: number }>();
+async function okxWithdrawFee(base: string, chain: string): Promise<number | null> {
+  const ck = `${base}:${chain}`;
+  const hit = okxFeeCache.get(ck);
+  if (hit && Date.now() - hit.ts < 10 * 60_000) return hit.fee;
+  try {
+    const j = await okxSigned("GET", `/api/v5/asset/currencies?ccy=${base}`);
+    if (j?.code !== "0" || !Array.isArray(j.data)) return null;
+    const rows = j.data as Array<{ chain?: string; minFee?: string; canWd?: boolean }>;
+    // `chain` arrives as OKX's own "CCY-Network" label; match exactly, then loosely.
+    const row = rows.find((r) => r.chain === chain)
+      ?? rows.find((r) => r.chain?.toUpperCase().includes(chain.toUpperCase()));
+    const fee = row?.minFee != null ? Number(row.minFee) : NaN;
+    if (!Number.isFinite(fee)) return null;
+    okxFeeCache.set(ck, { fee, ts: Date.now() });
+    return fee;
+  } catch {
+    return null;
   }
 }
 
@@ -651,10 +772,18 @@ export async function okxWithdraw(base: string, chain: string, address: string, 
   const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
   if (CONFIG.DRY_RUN || !key || !secret || !pass) return sim(`OKX ${base} 출금 → ${address.slice(0, 10)}…`, !!(key && secret && pass));
   try {
-    // OKX wants chain as "BASE-Network" and the fee explicitly; amt is net.
+    // OKX wants the chain as "CCY-Network" and — unlike every other venue —
+    // requires the withdrawal `fee` explicitly. Omitting it rejects the request,
+    // which on a live run means failing AFTER buy+hedge and dumping the entry.
+    // Read the per-chain minFee from /asset/currencies rather than guessing.
+    const fee = await okxWithdrawFee(base, chain);
     const body: Record<string, unknown> = {
       ccy: base, amt: String(amount), dest: "4" /* on-chain */, toAddr: tag ? `${address}:${tag}` : address, chain,
+      ...(fee != null ? { fee: String(fee) } : {}),
     };
+    if (fee == null) {
+      return { ok: false, dryRun: false, id: null, message: `OKX ${base}/${chain} 출금 수수료 조회 실패 — 출금 차단 (수수료 누락 시 거부됨)` };
+    }
     const j = await okxSigned("POST", "/api/v5/asset/withdrawal", body);
     const d = j.data?.[0];
     const ok = j.code === "0" && d?.wdId;

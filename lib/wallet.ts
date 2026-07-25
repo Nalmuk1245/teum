@@ -83,23 +83,38 @@ export async function sendToken(req: SendReq): Promise<SendResult> {
 async function sendEvm(req: SendReq, key: string): Promise<SendResult> {
   const provider = new JsonRpcProvider(CHAINS[req.chain].rpc);
   const wallet = new Wallet(key, provider);
-  let hash: string;
-  if (req.tokenAddress) {
-    const erc20 = new Contract(req.tokenAddress, ERC20_ABI, wallet);
-    const amount = parseUnits(req.amountHuman, req.decimals ?? 18);
-    const data = erc20.interface.encodeFunctionData("transfer", [req.to, amount]);
-    const build = await okxBuild(req.chain, wallet.address, req.tokenAddress, 0n, data);
-    const tx = await erc20.transfer(req.to, amount, build);
-    hash = tx.hash;
-    await tx.wait(req.confirms ?? 1);
-  } else {
-    const value = parseEther(req.amountHuman);
-    const build = await okxBuild(req.chain, wallet.address, req.to, value);
-    const tx = await wallet.sendTransaction({ to: req.to, value, ...build });
-    hash = tx.hash;
-    await tx.wait(req.confirms ?? 1);
+  // Broadcast first, then confirm. If confirmation fails the transaction is
+  // ALREADY on-chain, so the hash must survive — letting the exception escape to
+  // sendToken's catch reported hash:null, making a sent transfer look like one
+  // that never left. A retry on that basis sends the coin twice.
+  let hash: string | null = null;
+  try {
+    if (req.tokenAddress) {
+      const erc20 = new Contract(req.tokenAddress, ERC20_ABI, wallet);
+      const amount = parseUnits(req.amountHuman, req.decimals ?? 18);
+      const data = erc20.interface.encodeFunctionData("transfer", [req.to, amount]);
+      const build = await okxBuild(req.chain, wallet.address, req.tokenAddress, 0n, data);
+      const tx = await erc20.transfer(req.to, amount, build);
+      hash = tx.hash;
+      await tx.wait(req.confirms ?? 1);
+    } else {
+      const value = parseEther(req.amountHuman);
+      const build = await okxBuild(req.chain, wallet.address, req.to, value);
+      const tx = await wallet.sendTransaction({ to: req.to, value, ...build });
+      hash = tx.hash;
+      await tx.wait(req.confirms ?? 1);
+    }
+    return { ok: true, dryRun: false, hash, message: "전송 완료" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "전송 실패";
+    if (hash) {
+      return {
+        ok: false, dryRun: false, hash,
+        message: `브로드캐스트됨(컨펌 확인 실패) — 재전송 금지, 익스플로러 확인: ${msg}`,
+      };
+    }
+    throw e; // 방송 전 실패 → sendToken의 catch가 hash:null로 처리 (안전)
   }
-  return { ok: true, dryRun: false, hash, message: "전송 완료" };
 }
 
 // ethers 오버라이드 형태로 변환 — sign-info 실패/미설정 시 {} (ethers가 알아서).
@@ -217,13 +232,27 @@ export async function sendRawEvmTx(tx: RawTx, allowList: string[], maxValueWei =
   if (maxValueWei > 0n && value > maxValueWei) {
     return { ok: false, dryRun: false, hash: null, message: `value ${value} > 상한 ${maxValueWei} — 차단` };
   }
+  // Broadcast and confirm are separate failures and must not look alike. If
+  // `wait` throws (RPC hiccup, node behind) the transaction is ALREADY on the
+  // network — reporting hash:null there made a sent-but-unconfirmed tx
+  // indistinguishable from one that never left, so a retry would swap/send a
+  // second time. Keep the hash and flag it as broadcast.
+  let broadcastHash: string | null = null;
   try {
     const provider = new JsonRpcProvider(chain.rpc);
     const wallet = new Wallet(key, provider);
     const sent = await wallet.sendTransaction({ to: tx.to, data: tx.data, value, ...(tx.gas ? { gasLimit: BigInt(tx.gas) } : {}) });
+    broadcastHash = sent.hash;
     await sent.wait(1);
     return { ok: true, dryRun: false, hash: sent.hash, message: "온체인 전송 완료" };
   } catch (e) {
-    return { ok: false, dryRun: false, hash: null, message: e instanceof Error ? e.message : "raw tx 실패" };
+    const msg = e instanceof Error ? e.message : "raw tx 실패";
+    if (broadcastHash) {
+      return {
+        ok: false, dryRun: false, hash: broadcastHash,
+        message: `전송은 브로드캐스트됨(컨펌 확인 실패) — 재전송 금지, 익스플로러에서 확인: ${msg}`,
+      };
+    }
+    return { ok: false, dryRun: false, hash: null, message: msg };
   }
 }
