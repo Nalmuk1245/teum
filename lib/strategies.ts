@@ -447,12 +447,14 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
       if (cex.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
       const mid = (cex.bid + cex.ask) / 2;
 
-      // Two quotes per coin, sequenced gently for the rate limit.
+      // Two quotes per coin, sequenced gently for the rate limit. Only sleep
+      // BETWEEN calls that actually hit the API — the unconditional trailing
+      // sleep (including after a null/instant failure, and after the last coin)
+      // was pure dead time in a sweep already racing its own 60s TTL.
+      const qty = DEXDEX_REF_USD / mid;
       const buyQ = await quoteDex(uni.chain, quoteTok, token, DEXDEX_REF_USD);
       await sleepMs(250);
-      const qty = DEXDEX_REF_USD / mid;
       const sellQ = await quoteDex(uni.chain, token, quoteTok, qty);
-      await sleepMs(250);
 
       const cexTaker = FEES.takerPct.binance ?? 0.1;
       // 전송형 공통 게이트 재료: 바낸의 이 코인 입출금 네트워크가 견적 체인과

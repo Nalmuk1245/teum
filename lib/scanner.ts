@@ -14,18 +14,15 @@ import { listingInfo } from "./listings";
 import { computeCalibrationPct } from "./calibration";
 
 // Slow-moving inputs don't need a fresh fetch every scan tick — gates/funding
-// change on the minutes scale, the perp list on the days scale. TTL-cache them
-// (globalThis so all route bundles share) and only tickers stay per-scan fresh.
-type TtlEntry = { v: unknown; ts: number };
-const gc = globalThis as unknown as { __arbTtl?: Map<string, TtlEntry> };
-gc.__arbTtl ??= new Map();
-async function ttl<T>(key: string, ms: number, fn: () => Promise<T>): Promise<T> {
-  const hit = gc.__arbTtl!.get(key);
-  if (hit && Date.now() - hit.ts < ms) return hit.v as T;
-  const v = await fn();
-  gc.__arbTtl!.set(key, { v, ts: Date.now() });
-  return v;
-}
+// change on the minutes scale, the perp list on the days scale.
+//
+// `swr` (not a plain TTL): on expiry it serves the current value INSTANTLY and
+// refreshes in the background. The previous local `ttl` awaited the refresh
+// inside the tick's Promise.all, so every 60s the tick additionally waited for a
+// full 5-venue signed gate sweep, every 2min for funding + marks, every 5min for
+// calibration — exactly the spikes that pushed the tick past its 3s cadence.
+// These inputs are minutes-scale; serving one stale generation costs nothing.
+import { swr as ttl } from "./ttlCache";
 
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");

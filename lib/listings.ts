@@ -11,6 +11,7 @@
 
 import { notifyNow } from "./telegram";
 import { loadSection, saveSection } from "./persist";
+import { primeUpbitMarkets } from "./exchanges";
 
 const ANN_POLL_MS = 2500; // announcements are a sub-second race — poll tight
 const MKT_POLL_MS = 3000;
@@ -74,20 +75,34 @@ g.__arbListings.srcOk ??= { ann: 0, annBlocked: false, mkt: 0, tg: 0 }; // hot-r
 const L = g.__arbListings;
 
 // Where is this coin cheapest to buy right now on a global CEX? Binance/Bybit/OKX.
+// PARALLEL, not sequential: a fresh KR listing usually isn't on Binance spot, so
+// probing in order cost 2-3 serial round-trips (~600ms typical, up to 9s) — and
+// this sits directly in front of the listing alert AND the auto-buy. Preference
+// order is preserved by picking the first venue in `tries` that answered.
 export async function globalVenueFor(base: string): Promise<{ venue: string; price: number } | null> {
   const tries: [string, string][] = [
     ["binance", `https://api.binance.com/api/v3/ticker/price?symbol=${base}USDT`],
     ["bybit", `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${base}USDT`],
     ["okx", `https://www.okx.com/api/v5/market/ticker?instId=${base}-USDT`],
   ];
-  for (const [venue, url] of tries) {
+  // Fire all three at once, then take the first PREFERRED one that answers.
+  // Awaiting them in priority order (rather than Promise.all) means a coin that
+  // is on Binance returns as soon as Binance replies — waiting for all three
+  // made the common case slower than the old serial version.
+  const inflight = tries.map(async ([venue, url]) => {
     try {
       const j = await (await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(3000) })).json();
       const px = venue === "binance" ? Number(j.price)
         : venue === "bybit" ? Number(j.result?.list?.[0]?.lastPrice)
         : Number(j.data?.[0]?.last);
-      if (px > 0) return { venue, price: px };
-    } catch { /* next */ }
+      return px > 0 ? { venue, price: px } : null;
+    } catch {
+      return null;
+    }
+  });
+  for (const p of inflight) {
+    const r = await p; // already in flight — no extra round-trip
+    if (r) return r;
   }
   return null;
 }
@@ -188,6 +203,15 @@ async function fetchNoticeOpensAt(noticeId: number): Promise<number | null> {
   } catch { return null; }
 }
 
+/** Fill in the open time once the notice body has been read — the alert and the
+ *  auto-buy already went out without waiting for it. */
+function patchPlayOpensAt(base: string, opensAt: number) {
+  const p = L.plays.get(base);
+  if (!p || p.opensAt) return;
+  p.opensAt = opensAt;
+  saveSection("listingPlays", [...L.plays.entries()]);
+}
+
 async function registerPlay(
   base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean,
   opts?: { opensAt?: number | null; drill?: boolean },
@@ -259,11 +283,22 @@ async function pollAnnouncements() {
     TICKER_RE.lastIndex = 0;
     while ((m = TICKER_RE.exec(it.title))) tickers.add(m[1]);
     if (!tickers.size) continue;
-    // 개장 시각: 제목 → 없으면 공지 본문 1회 조회 (알림을 막지 않게 비동기 등록).
-    void (async () => {
-      const opensAt = parseOpenTimeKst(it.title) ?? (await fetchNoticeOpensAt(it.id));
-      for (const t of tickers) void registerPlay(t, "upbit", it.title, true, { opensAt });
-    })();
+    // 개장 시각: 제목에 있으면 즉시 사용. 없으면 본문 조회를 기다리지 않고
+    // 먼저 등록·알림·자동매수를 보낸 뒤, 조회 결과가 오면 패치한다.
+    // (기존 주석은 "알림을 막지 않게 비동기"라 했지만 실제로는 폴링 루프만
+    // 풀어줬고, registerPlay 자체가 본문 HTTP 조회 뒤에 호출돼 알림과 자동매수가
+    // 최대 4초 늦었다 — 여기가 이 제품의 승부처다.)
+    const titleOpensAt = parseOpenTimeKst(it.title);
+    for (const t of tickers) void registerPlay(t, "upbit", it.title, true, { opensAt: titleOpensAt });
+    if (titleOpensAt == null) {
+      const noticeId = it.id;
+      const bases = [...tickers];
+      void (async () => {
+        const opensAt = await fetchNoticeOpensAt(noticeId);
+        if (opensAt == null) return;
+        for (const t of bases) patchPlayOpensAt(t, opensAt);
+      })();
+    }
   }
   L.primedAnn = true;
 }
@@ -301,6 +336,9 @@ async function pollMarkets() {
   const [up, bt] = await Promise.all([upbitMarkets(), bithumbMarkets()]);
   if (up.size === 0 && bt.size === 0) return;
   L.srcOk.mkt = Date.now();
+  // Share this poll with the scanner instead of both loops fetching the same
+  // ~61KB market/all every 3s (it was the single biggest item on the scan tick).
+  if (up.size > 0) primeUpbitMarkets([...up]);
   if (up.size > 0) diffMarkets("upbit", up);
   if (bt.size > 0) diffMarkets("bithumb", bt);
   L.primedMkt = true;
@@ -358,8 +396,15 @@ const SURGE_USD_PER_MIN = Number(process.env.LISTING_SURGE_USD_MIN ?? 25_000);
 
 async function trackPlays() {
   const now = Date.now();
-  for (const p of L.plays.values()) {
-    if (now - p.announcedAt > 2 * 3600_000) continue; // stale — stop tracking
+  const active = [...L.plays.values()].filter((p) => now - p.announcedAt <= 2 * 3600_000);
+  if (!active.length) return;
+  // Plays are tracked in PARALLEL. Serially, each one awaited globalVenueFor
+  // (up to 3 probes) plus a multi-chain holdings fetch, so during an actual
+  // listing event — several active plays, exactly when hot-wallet surge alerts
+  // matter most — the 60s tracker could overrun its own interval and the alerts
+  // arrived late.
+  const { fetchHoldings } = await import("./holdings");
+  await Promise.all(active.map(async (p) => {
     // Peak vs announcement price (성과 히스토리 데이터).
     if (p.overseas && p.globalPrice && p.globalPrice > 0) {
       const g2 = await globalVenueFor(p.base).catch(() => null);
@@ -376,7 +421,6 @@ async function trackPlays() {
     // Hot-wallet inflow surge + 개장 전 KR 입금 물량 시계열 — 같은 holdings
     // 조회를 공유한다 (60s 캐시라 추가 비용 없음).
     try {
-      const { fetchHoldings } = await import("./holdings");
       const h = await fetchHoldings(p.base);
       if (!("error" in h) && h.priceUsd) {
         if (!p.surgeAlerted) {
@@ -389,7 +433,7 @@ async function trackPlays() {
         recordKrDeposit(p.base, p.venue, h);
       }
     } catch { /* best-effort */ }
-  }
+  }));
   saveSection("listingPlays", [...L.plays.entries()]);
 }
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getScan } from "@/lib/scanCache";
 import { CONFIG } from "@/lib/config";
 import { computeCalibrationPct } from "@/lib/calibration";
+import { swr } from "@/lib/ttlCache";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,11 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const { opps, ts } = await getScan();
-    const cal = await computeCalibrationPct();
+    // The client polls this route every 3s. Recomputing calibration per request
+    // re-read and JSON.parsed the whole append-only trades.jsonl each time — on
+    // the hottest path, from a file that grows without bound. Same 5min TTL the
+    // scanner already uses for this value.
+    const cal = await swr("cal", 5 * 60_000, computeCalibrationPct);
     return NextResponse.json({
       opportunities: opps,
       meta: { dryRun: CONFIG.DRY_RUN, mock: CONFIG.USE_MOCK, ts, calPct: cal.pct, calSamples: cal.samples },

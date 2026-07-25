@@ -131,10 +131,13 @@ export async function upbitKrwMarkets(): Promise<string[]> {
   gm.__upMarkets = { ts: Date.now(), krw };
   return krw;
 }
-/** Force the next `upbitKrwMarkets()` to refetch — called when the listing
- *  watcher detects a new market, so a fresh listing never waits out the TTL. */
-export function bustUpbitMarkets(): void {
-  gm.__upMarkets = undefined;
+/** Feed the cache from the listing watcher's own poll. That watcher already
+ *  fetches market/all on a fast cadence (it's the new-listing detector), so the
+ *  scan should never fetch it a second time — and because the watcher primes it,
+ *  a brand-new market reaches the scan immediately instead of waiting out a TTL. */
+export function primeUpbitMarkets(krwBases: string[]): void {
+  if (!krwBases.length) return;
+  gm.__upMarkets = { ts: Date.now(), krw: krwBases.map((b) => (b.startsWith("KRW-") ? b : `KRW-${b}`)) };
 }
 
 // ── Upbit (KR CEX, KRW quote) ─────────────────────────────────────────────────
