@@ -172,7 +172,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
       ))}
 
       {/* ── 지갑 도구: 크로스체인 브릿지 + 온체인 히스토리 ── */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
         <BridgeCard />
         <WalletHistoryCard />
       </div>

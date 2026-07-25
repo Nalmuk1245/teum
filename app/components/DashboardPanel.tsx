@@ -39,17 +39,33 @@ function MiniBars({ series, color }: { series: number[]; color?: string }) {
   );
 }
 
-function Kpi({ label, value, chip, sub, series, tone }: {
+function Kpi({ label, value, chip, sub, series, tone, compact }: {
   label: string; value: string; chip?: string; sub?: string; series: number[]; tone?: string;
+  /** 2-column mobile grid — the card is ~130px wide, so the big number has to
+   *  shrink or it pushes its grid track past the viewport. */
+  compact?: boolean;
 }) {
   return (
-    <div style={{ ...CARD, padding: "14px 16px 12px", minWidth: 0 }}>
-      <div style={{ fontSize: 12.5, color: "var(--text-dim)", fontWeight: 600 }}>{label}</div>
-      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span className="tnum" style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", color: tone ?? "var(--text)" }}>{value}</span>
+    <div style={{ ...CARD, padding: compact ? "12px 12px 10px" : "14px 16px 12px", minWidth: 0, overflow: "hidden" }}>
+      <div style={{ fontSize: compact ? 11.5 : 12.5, color: "var(--text-dim)", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+      <div style={{ marginTop: compact ? 6 : 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+        <span
+          className="tnum"
+          style={{
+            fontSize: compact ? 19 : 24, fontWeight: 700, letterSpacing: "-0.02em",
+            color: tone ?? "var(--text)",
+            // Last-resort break: a very large P&L must wrap inside the card
+            // rather than widen the track and scroll the whole page sideways.
+            minWidth: 0, overflowWrap: "anywhere",
+          }}
+        >
+          {value}
+        </span>
         {chip && <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "var(--pos-soft)", color: "var(--pos)" }}>{chip}</span>}
       </div>
-      {sub && <div style={{ marginTop: 3, fontSize: 10.5, color: "var(--text-mute)" }}>{sub}</div>}
+      {sub && (
+        <div style={{ marginTop: 3, fontSize: compact ? 10 : 10.5, color: "var(--text-mute)", minWidth: 0, overflowWrap: "anywhere" }}>{sub}</div>
+      )}
       <MiniBars series={series} color={tone} />
     </div>
   );
@@ -178,13 +194,18 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
   return (
     <div style={{ paddingBottom: 46 }}>
       {/* 상단 그리드: 체크리스트 | KPI 2×2 | 리스크 현황 */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
         <div style={{ ...CARD, gridRow: mobile ? "auto" : "1 / 3", gridColumn: mobile ? "1 / -1" : undefined, padding: "16px 18px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>라이브 전환 체크리스트</div>
           <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)" }}>라이브 전환 전 완료 항목 · RUNBOOK 순서</div>
-          <div style={{ marginTop: 12, height: 6, borderRadius: 999, background: "var(--card-3)", position: "relative", overflow: "hidden" }}>
+          {/* The % label used to live INSIDE the bar at top:-19, which the bar's
+              own `overflow: hidden` clipped away — it was never visible. It sits
+              above the bar now, and the bar keeps its clipping for the fill. */}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+            <span className="tnum" style={{ fontSize: 11, fontWeight: 700, color: "var(--pos)", lineHeight: 1 }}>{progress}%</span>
+          </div>
+          <div style={{ marginTop: 5, height: 6, borderRadius: 999, background: "var(--card-3)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", inset: 0, width: `${progress}%`, background: "var(--pos)", borderRadius: 999 }} />
-            <span className="tnum" style={{ position: "absolute", right: 0, top: -19, fontSize: 11, fontWeight: 700, color: "var(--pos)" }}>{progress}%</span>
           </div>
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column" }}>
             {checks.map((c) => (
@@ -207,13 +228,14 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
           </button>
         </div>
 
-        <Kpi label="기회" value={String(live.length)} sub="실데이터 · 전략 3종" series={hist.current.opp} />
-        <Kpi label="수익 기회" value={String(positive)} chip={positive > 0 ? "활성" : undefined} sub="비용 넘김 (실시간)" series={hist.current.posi} />
+        <Kpi label="기회" value={String(live.length)} sub="실데이터 · 전략 3종" series={hist.current.opp} compact={mobile} />
+        <Kpi label="수익 기회" value={String(positive)} chip={positive > 0 ? "활성" : undefined} sub="비용 넘김 (실시간)" series={hist.current.posi} compact={mobile} />
         <Kpi
           label="최고 순수익"
           value={bestNet != null ? pct(bestNet) : "—"}
           sub={best ? `${best.base} · ${best.kind === "kimchi" ? "김프" : best.kind}${best.persistence?.heldSec ? ` · 지속 ${Math.round(best.persistence.heldSec / 60)}분` : ""}` : "스캔 중"}
           series={hist.current.best}
+          compact={mobile}
           tone={bestNet != null && bestNet > 0 ? "var(--pos)" : "var(--neg)"}
         />
         <Kpi
@@ -221,6 +243,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
           value={`${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`}
           sub="정산 기준 · 자정 리셋"
           series={hist.current.pnl.map((v) => Math.abs(v))}
+          compact={mobile}
           tone={pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : undefined}
         />
 
@@ -260,7 +283,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
       </div>
 
       {/* 하단: 자금 배분 | 기회 스트림 */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
         <div style={{ ...CARD, padding: "16px 18px" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
             <span style={{ fontSize: 13.5, fontWeight: 700 }}>자금 배분</span>
@@ -296,7 +319,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
                 const held = o.persistence?.heldSec ?? 0;
                 const [buy, sell] = o.legs;
                 return (
-                  <div key={o.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                  <div key={o.id} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
                     <span style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 700 }}>{o.base}</div>
                       <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -304,7 +327,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
                       </div>
                     </span>
                     <span className="tnum" style={{ fontWeight: 700, color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
-                    <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? `${Math.floor(held / 60)}m ${held % 60}s` : "신규"}</span>
+                    {/* 지속 열은 모바일에서 접는다 — 3열 템플릿에 자식이 4개면
+                        마지막이 다음 줄로 밀려 레이아웃이 어긋난다. */}
+                    {!mobile && (
+                      <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? `${Math.floor(held / 60)}m ${held % 60}s` : "신규"}</span>
+                    )}
                     <span
                       onClick={() => o.executable && onExecute(o)}
                       style={{
@@ -326,7 +353,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
       </div>
 
       {/* 하단 2행: 상장 감시 | 최근 거래 */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
         {/* 상장 감시 */}
         <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
           {secHd("상장 감시", (
@@ -371,7 +398,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
                 const p2 = t.realizedPnlUsd;
                 const ago = Math.round((Date.now() - t.ts) / 60_000);
                 return (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) auto auto", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
                     <span style={{ minWidth: 0 }}>
                       <span style={{ fontWeight: 700 }}>{t.base}</span>
                       <span style={{ marginLeft: 6, fontSize: 10.5, color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>

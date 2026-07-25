@@ -486,7 +486,7 @@ export default function Cockpit() {
           style={{
             display: "grid",
             // PC에서 타일이 화면 1/3씩 먹지 않게 — 좌측 정렬 소형 타일.
-            gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(3, minmax(140px, 210px))",
+            gridTemplateColumns: isMobile ? "repeat(3, minmax(0,1fr))" : "repeat(3, minmax(140px, 210px))",
             gap: isMobile ? 6 : 10,
             marginBottom: isMobile ? 10 : 14,
           }}
