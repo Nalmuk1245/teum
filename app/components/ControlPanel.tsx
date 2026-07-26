@@ -217,12 +217,23 @@ export function GatesCard() {
   useEffect(() => {
     fetch("/api/gates", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
   }, []);
+  // 전부 보여준다. 예전엔 검색 없이 12개, 검색해도 30개만 잘라 보여줘서 빗썸
+  // 500개 중 대부분이 안 보였다 — "목록"이라 믿고 보는 화면에서 조용한 절단은
+  // 없는 정보를 없다고 오독하게 만든다. 컨테이너가 스크롤되므로 자를 이유도 없다.
+  //
+  // 정렬은 **막힌 것 먼저**. 이 카드에 오는 이유는 "지금 뭐가 막혔나"를 보려는
+  // 것인데, 500줄을 가나다순으로 두면 막힌 코인은 영영 눈에 안 띈다.
   const rows = useMemo(() => {
     if (!data) return [];
     const term = q.trim().toUpperCase();
-    const list = term ? data.rows.filter((r) => r.base.includes(term)) : data.rows;
-    return list.slice(0, term ? 30 : 12);
+    const list = term ? data.rows.filter((r) => r.base.includes(term)) : data.rows.slice();
+    const blocked = (r: GateRow) => Object.values(r.venues).some((s) => s && (!s.deposit || !s.withdraw));
+    return list.sort((a, b) => (blocked(b) ? 1 : 0) - (blocked(a) ? 1 : 0) || a.base.localeCompare(b.base));
   }, [data, q]);
+  const blockedCount = useMemo(
+    () => rows.filter((r) => Object.values(r.venues).some((s) => s && (!s.deposit || !s.withdraw))).length,
+    [rows],
+  );
   const cell = (s: { deposit: boolean; withdraw: boolean } | null) => {
     if (!s) return <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>키필요</span>;
     const tag = (on: boolean, t: string) => (
@@ -243,8 +254,14 @@ export function GatesCard() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="코인 검색 (예: XRP)"
-        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 8 }}
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 6 }}
       />
+      {data && (
+        <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginBottom: 6 }}>
+          {rows.length}개 표시{q.trim() ? ` (전체 ${data.rows.length})` : ""}
+          {blockedCount > 0 && <span style={{ color: "var(--neg)", fontWeight: 700 }}> · 중단 {blockedCount}개 (위쪽)</span>}
+        </div>
+      )}
       {!data ? (
         <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "8px 0" }}>조회 중…</div>
       ) : (
