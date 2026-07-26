@@ -158,7 +158,11 @@ export async function ensureRoute(base: string): Promise<TokenRoute | null> {
       const { resolveToken } = await import("./tokenResolve");
       const t = await resolveToken(key);
       if (!t) {
-        // 부정 캐시. resolveToken은 429/5xx를 throw하므로 여기 오면 진짜 미등록이다.
+        // 부정 캐시. 주의: resolveToken은 내부에서 모든 예외를 잡아 null을 주므로
+        // 여기 오는 null이 "진짜 미등록"인지 "CoinGecko 429/타임아웃"인지 구분할 수
+        // 없다. 그래서 UNKNOWN_TTL을 60초로 짧게 잡는다 — 레이트리밋으로 잘못 든
+        // 부정 캐시가 오래 굳지 않게. (구분이 필요해지면 resolveToken이 실패
+        // 사유를 돌려주게 바꿔야 한다.)
         db().tokens[key] = { base: key, chains: [], updatedAt: Date.now(), unknownAt: Date.now() };
         persist();
         return null;
