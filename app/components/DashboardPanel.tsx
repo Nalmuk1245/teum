@@ -225,8 +225,94 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     </div>
   );
 
+  // ── 자금 배분 카드 — 모바일은 compact: 총액·바·범례만 작게 ──
+  const fundsCard = (compact: boolean) => (
+    <div style={{ ...CARD, padding: compact ? "12px 14px" : "16px 18px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <span style={{ fontSize: compact ? 12.5 : 13.5, fontWeight: 700 }}>자금 배분</span>
+        {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
+        {compact && <span className="tnum" style={{ fontSize: 15, fontWeight: 700, marginLeft: 2 }}>{usd(totalCap)}</span>}
+        <button type="button" onClick={() => onGoTab("assets")} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
+      </div>
+      {!compact && (
+        <>
+          <div className="tnum" style={{ marginTop: 8, fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em" }}>{usd(totalCap)}</div>
+          <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)" }}>
+            글로벌 {portfolio ? Math.round(portfolio.skewPct) : "—"} : KR {portfolio ? 100 - Math.round(portfolio.skewPct) : "—"}
+          </div>
+        </>
+      )}
+      <div style={{ marginTop: compact ? 10 : 16, display: "flex", height: compact ? 12 : 22, gap: 4 }}>
+        {p(cash) > 0 && <div title={`가용 ${usd(cash)}`} style={{ width: `${p(cash)}%`, background: "var(--brand)", opacity: 0.75, borderRadius: 6 }} />}
+        {p(coins) > 0 && <div title={`포지션 ${usd(coins)}`} style={{ width: `${p(coins)}%`, background: "var(--amber)", borderRadius: 6 }} />}
+        {p(transit) > 0 && <div title={`전송 중 ${usd(transit)}`} style={{ width: `${Math.max(2, p(transit))}%`, background: "var(--pos)", borderRadius: 6 }} />}
+      </div>
+      <div style={{ display: "flex", gap: compact ? 12 : 16, marginTop: compact ? 8 : 12, fontSize: compact ? 10.5 : 11.5, color: "var(--text-dim)", flexWrap: "wrap" }}>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--brand)", opacity: 0.75, marginRight: 6 }} />가용 <b className="tnum">{usd(cash)}</b> · {p(cash)}%</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--amber)", marginRight: 6 }} />포지션 <b className="tnum">{usd(coins)}</b> · {p(coins)}%</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--pos)", marginRight: 6 }} />전송 중 <b className="tnum">{usd(transit)}</b> · {p(transit)}%</span>
+      </div>
+    </div>
+  );
+
+  // ── 실시간 기회 카드 ──
+  const streamCard = (
+    <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+      {secHd("실시간 기회", (
+        <button type="button" onClick={() => onGoTab("monitor")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>갭 보드 →</button>
+      ))}
+      {stream.length === 0 ? (
+        <div style={{ padding: "22px 16px", fontSize: 12, color: "var(--text-mute)" }}>스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다.</div>
+      ) : (
+        <div style={{ padding: "2px 16px 8px" }}>
+          {stream.map((o) => {
+            const net = liveNet(o);
+            const held = o.persistence?.heldSec ?? 0;
+            const [buy, sell] = o.legs;
+            return (
+              <div key={o.id} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                <span style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700 }}>{o.base}</div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {o.kind === "kimchi" ? "김프" : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"} · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
+                  </div>
+                </span>
+                <span className="tnum" style={{ fontWeight: 700, color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
+                {/* 지속 열은 모바일에서 접는다 — 3열 템플릿에 자식이 4개면
+                    마지막이 다음 줄로 밀려 레이아웃이 어긋난다. */}
+                {!mobile && (
+                  <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? `${Math.floor(held / 60)}m ${held % 60}s` : "신규"}</span>
+                )}
+                <span
+                  onClick={() => o.executable && onExecute(o)}
+                  style={{
+                    fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "3px 11px", justifySelf: "end",
+                    cursor: o.executable ? "pointer" : "default",
+                    background: o.executable ? "var(--pos-soft)" : o.transfer?.blocked ? "transparent" : "var(--card-3)",
+                    color: o.executable ? "var(--pos)" : o.transfer?.blocked ? "var(--neg)" : "var(--text-mute)",
+                    border: o.transfer?.blocked ? "1px solid var(--neg-soft)" : "none",
+                  }}
+                >
+                  {o.executable ? "Live" : o.transfer?.blocked ? "Closed" : "Wait"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ paddingBottom: 46 }}>
+      {/* 모바일: 실시간 기회가 맨 위 — 폰으로 여는 순간은 "지금 뭐 있나"를 보러
+          온 것이다. 그 아래 자금 요약(압축). 감시·KPI·리스크는 그다음. */}
+      {mobile && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
+          {streamCard}
+          {fundsCard(true)}
+        </div>
+      )}
       {/* 상단 그리드: 감시 상태 | KPI 2×2 | 리스크 현황 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
         <div style={{ ...CARD, gridRow: mobile ? "auto" : "1 / 3", gridColumn: mobile ? "1 / -1" : undefined, padding: "16px 18px" }}>
@@ -324,75 +410,13 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
         </div>
       </div>
 
-      {/* 하단: 자금 배분 | 기회 스트림 */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
-        <div style={{ ...CARD, padding: "16px 18px" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700 }}>자금 배분</span>
-            {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
-            <button type="button" onClick={() => onGoTab("assets")} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
-          </div>
-          <div className="tnum" style={{ marginTop: 8, fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em" }}>{usd(totalCap)}</div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)" }}>
-            글로벌 {portfolio ? Math.round(portfolio.skewPct) : "—"} : KR {portfolio ? 100 - Math.round(portfolio.skewPct) : "—"}
-          </div>
-          <div style={{ marginTop: 16, display: "flex", height: 22, gap: 4 }}>
-            {p(cash) > 0 && <div title={`가용 ${usd(cash)}`} style={{ width: `${p(cash)}%`, background: "var(--brand)", opacity: 0.75, borderRadius: 6 }} />}
-            {p(coins) > 0 && <div title={`포지션 ${usd(coins)}`} style={{ width: `${p(coins)}%`, background: "var(--amber)", borderRadius: 6 }} />}
-            {p(transit) > 0 && <div title={`전송 중 ${usd(transit)}`} style={{ width: `${Math.max(2, p(transit))}%`, background: "var(--pos)", borderRadius: 6 }} />}
-          </div>
-          <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 11.5, color: "var(--text-dim)", flexWrap: "wrap" }}>
-            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--brand)", opacity: 0.75, marginRight: 6 }} />가용 <b className="tnum">{usd(cash)}</b> · {p(cash)}%</span>
-            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--amber)", marginRight: 6 }} />포지션 <b className="tnum">{usd(coins)}</b> · {p(coins)}%</span>
-            <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--pos)", marginRight: 6 }} />전송 중 <b className="tnum">{usd(transit)}</b> · {p(transit)}%</span>
-          </div>
+      {/* 하단: 자금 배분 | 기회 스트림 — 모바일에선 둘 다 이미 위에 있다 */}
+      {!mobile && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
+          {fundsCard(false)}
+          {streamCard}
         </div>
-
-        <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
-          {secHd("실시간 기회", (
-            <button type="button" onClick={() => onGoTab("monitor")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>갭 보드 →</button>
-          ))}
-          {stream.length === 0 ? (
-            <div style={{ padding: "22px 16px", fontSize: 12, color: "var(--text-mute)" }}>스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다.</div>
-          ) : (
-            <div style={{ padding: "2px 16px 8px" }}>
-              {stream.map((o) => {
-                const net = liveNet(o);
-                const held = o.persistence?.heldSec ?? 0;
-                const [buy, sell] = o.legs;
-                return (
-                  <div key={o.id} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
-                    <span style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700 }}>{o.base}</div>
-                      <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {o.kind === "kimchi" ? "김프" : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"} · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
-                      </div>
-                    </span>
-                    <span className="tnum" style={{ fontWeight: 700, color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
-                    {/* 지속 열은 모바일에서 접는다 — 3열 템플릿에 자식이 4개면
-                        마지막이 다음 줄로 밀려 레이아웃이 어긋난다. */}
-                    {!mobile && (
-                      <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? `${Math.floor(held / 60)}m ${held % 60}s` : "신규"}</span>
-                    )}
-                    <span
-                      onClick={() => o.executable && onExecute(o)}
-                      style={{
-                        fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "3px 11px", justifySelf: "end",
-                        cursor: o.executable ? "pointer" : "default",
-                        background: o.executable ? "var(--pos-soft)" : o.transfer?.blocked ? "transparent" : "var(--card-3)",
-                        color: o.executable ? "var(--pos)" : o.transfer?.blocked ? "var(--neg)" : "var(--text-mute)",
-                        border: o.transfer?.blocked ? "1px solid var(--neg-soft)" : "none",
-                      }}
-                    >
-                      {o.executable ? "Live" : o.transfer?.blocked ? "Closed" : "Wait"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* 하단 2행: 상장 감시 | 최근 거래 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
