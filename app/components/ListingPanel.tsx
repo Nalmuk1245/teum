@@ -392,26 +392,29 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   }
 
   // ── PC: 종목 미선택 = 좌 목록 + 우 안내 / 선택 = 상세 풀스크린(목록 접힘) ──
-  if (selected) {
-    return (
-      <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden", marginBottom: 40 }}>
-        <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
-          <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)} title="목록으로">← 목록</button>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
-          <span style={CAP}>상세 · 실행</span>
-          <span style={{ flex: 1 }} />
-          <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
-        </div>
-        <DetailPanel base={selected} />
-      </div>
-    );
-  }
+  // ── PC: 목록은 항상 좌측에 산다 — 선택은 우측 상세만 바꾼다 ──
+  // 예전엔 선택하면 상세가 전체 화면을 덮고 목록이 접혔다. 이 화면이 제일
+  // 중요한 순간은 상장 이벤트 중인데, 그때 한 코인을 실행하느라 새 감지가
+  // 안 보이면 다음 기회를 그대로 놓친다. 갭 탭 검사창과 같은 구조로 맞춘다.
   return (
     <div style={{ display: "grid", gridTemplateColumns: "400px minmax(0,1fr)", gap: 14, alignItems: "start", paddingBottom: 40 }}>
       <div style={{ minWidth: 0 }}>{mainCard}</div>
-      <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
-        좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 신호·차트·매수처·포지션이 전체 화면으로 표시됩니다.
-      </div>
+      {selected ? (
+        // sticky 금지 — 상세가 화면보다 길어서(차트 440px+표) 걸면 하단이 안 닿는다
+        <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
+            <span style={CAP}>상세 · 실행</span>
+            <span style={{ flex: 1 }} />
+            <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
+          </div>
+          <DetailPanel base={selected} />
+        </div>
+      ) : (
+        <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
+          좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 신호·차트·매수처·포지션이 표시됩니다.
+        </div>
+      )}
     </div>
   );
 }
