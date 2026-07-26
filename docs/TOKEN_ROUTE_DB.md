@@ -203,3 +203,67 @@ lib/tokenRoutes.ts   (신규)
 | 프리워밍이 감지 반응을 늦춤 | fire-and-forget, 알림·자동매수 경로에서 절대 await 안 함 |
 | 파일 비대화 | 2MB 초과 시 per-token 파일 또는 SQLite로 전환 (임계 명시) |
 | 검증이 RPC 장애로 실패 | 저장 안 함 → 다음 기회에 재시도 (fail-closed, 조용히 통과 금지) |
+
+---
+
+## 9. 나중에 chain-to-chain 구조로 가면 SQLite가 필요한가 → **그때는 그렇다**
+
+### 규모 계산 (체인 레지스트리 28개 기준)
+
+| 가정 | 엣지 수 | 크기 |
+|---|---|---|
+| 완전 일반화 (500토큰 × 28×28 방향쌍) | 392,000 | **≈56MB** |
+| 현실적 (토큰당 3체인, 브릿지 3종) | 9,000 | ≈1.3MB |
+| 현실적 (토큰당 5체인, 브릿지 3종) | 30,000 | **≈4.3MB** |
+
+토큰이 모든 체인에 있지는 않으니 56MB는 과장이지만, **토큰당 5체인만 돼도 4.3MB로
+8절에서 정한 2MB 임계를 넘는다.**
+
+### 다만 진짜 방아쇠는 "chain-to-chain"이 아니라 세 가지다
+
+**① 크기** — 위 표. 2MB 넘으면 통째 재작성이 아프기 시작한다.
+
+**② 쓰기 빈도 (이게 제일 중요)** — `persist`는 섹션을 **통째로** 다시 쓴다. 지금
+저장하는 건 컨트랙트·페어처럼 몇 달에 한 번 변하는 값이라 무해하다. 그런데
+**브릿지 수수료·ETA·유동성은 분 단위로 변한다.** 4MB 섹션을 분당 한 번 재작성하면
+이번 세션에 겪은 history 블롭 문제가 그대로 재현된다 — 실측 3MB에서 **202ms 동기
+정지**였다. chain-to-chain은 필연적으로 이 패턴이 된다.
+
+**③ 질의 형태** — 지금은 "토큰 심볼로 점 조회 → 나머지는 메모리 계산"이라 JSON 맵이
+최적이다. chain-to-chain의 실제 질문은 *"지금 net > 0인 (토큰, 출발체인, 도착체인)
+조합을 전부"* 같은 **전체 스캔 + 술어 필터**다. 인덱스가 필요해지는 지점이 여기다.
+
+### 결론
+
+chain-to-chain을 실제로 만들 때는 **SQLite로 간다.** ②와 ③에 동시에 걸리기 때문이고,
+coin-tracker가 이미 SQLite를 쓰고 있어 스택에도 낯설지 않다.
+
+예상 스키마(그때 가서):
+
+```sql
+CREATE TABLE route_edge (
+  base TEXT, from_chain TEXT, to_chain TEXT, bridge TEXT,
+  fee_bps REAL, eta_min INTEGER, min_usd REAL, max_usd REAL,
+  liquidity_usd REAL, updated_at INTEGER,
+  PRIMARY KEY (base, from_chain, to_chain, bridge)
+);
+CREATE INDEX idx_edge_fresh ON route_edge(updated_at);
+CREATE INDEX idx_edge_base  ON route_edge(base);
+```
+
+### 그래서 지금 해둘 일 — **경계를 만들어 둔다**
+
+전환 비용을 한 파일로 묶으려면 지금부터 **모든 접근을 `lib/tokenRoutes.ts` 함수
+뒤에 둔다.** 호출부는 `getRoute()` / `ensureRoute()`만 알고 저장 매체를 모른다.
+
+```ts
+// 호출부는 이 시그니처만 안다 — 뒤가 JSON이든 SQLite든 상관없다
+getRoute(base): TokenRoute | null
+ensureRoute(base): Promise<TokenRoute | null>
+refreshLiquidity(base): Promise<void>
+```
+
+`listingDetail` / `tokens` / `listings` 어디서도 `loadSection("tokenRoutes")`를 직접
+부르지 않는다. 이 규칙만 지키면 나중 전환은 **`tokenRoutes.ts` 내부 교체 + 1회 마이그
+레이션 스크립트**로 끝난다. 지금 SQLite를 미리 넣는 것보다 이게 싸다 — 스키마를
+모르는 상태에서 만든 테이블은 어차피 그때 다시 짜게 된다.
