@@ -54,6 +54,8 @@ const fmtQty = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 
 const ago = (ts: number) => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`; };
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
+/** 열려 있는 상세 블록에 붙는 id — 히스토리에서 열었을 때 거기로 스크롤하기 위한 표식. */
+const DETAIL_ANCHOR = "listing-detail-open";
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px"  }
 const BTN: React.CSSProperties = { border: "none", borderRadius: 9, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
@@ -140,6 +142,16 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [histOpen, setHistOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+
+  // 히스토리에서 여는 경로. 상세는 목록 쪽에 그려지는데 히스토리는 카드 맨 아래라,
+  // 모바일에선 열어도 화면 밖이라 아무 일도 안 일어난 것처럼 보인다 — 그래서 스크롤을
+  // 같이 옮긴다. PC는 상세가 전체 화면을 차지하므로 필요 없다.
+  const openDetail = (base: string) => {
+    setSelected(base);
+    requestAnimationFrame(() => {
+      document.getElementById(DETAIL_ANCHOR)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
   const [manual, setManual] = useState("");
   const [auto, setAuto] = useState<AutoCfg | null>(null);
   const [autoLive, setAutoLive] = useState(false);
@@ -281,7 +293,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         const pos = (l.buys ?? []).reduce((s, b) => s + (b.qty ?? 0), 0) - (l.sells ?? []).reduce((s, b) => s + (b.qty ?? 0), 0);
         const open = selected === l.base;
         return (
-          <div key={l.base + l.venue} style={{ borderBottom: "1px solid var(--border)" }}>
+          <div key={l.base + l.venue} id={open ? DETAIL_ANCHOR : undefined} style={{ borderBottom: "1px solid var(--border)" }}>
             <button
               type="button"
               onClick={() => setSelected(open ? null : l.base)}
@@ -312,7 +324,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       })}
       {/* 수동 티커 (모바일 인라인) */}
       {!wide && selected && !rows.some((r) => r.base === selected) && (
-        <div style={{ borderBottom: "1px solid var(--border)" }}>
+        <div id={DETAIL_ANCHOR} style={{ borderBottom: "1px solid var(--border)" }}>
           <div style={{ padding: "9px 14px", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontWeight: 700 }}>{selected}</span>
             <span style={CAP}>수동 조회</span>
@@ -344,7 +356,12 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
               <span style={{ ...CAP, textAlign: "right" }}>실현</span>
               {history.slice(0, 12).map((h) => (
                 <Fragment key={h.base + h.announcedAt}>
-                  <span style={{ fontWeight: 700 }}>{h.base}</span>
+                  {/* 지난 상장도 다시 열어본다 — 그때 왜 그 값이 나왔는지 보려면
+                      결국 같은 상세 패널이 필요하다. 티커 자체가 그 입구다. */}
+                  <button type="button" onClick={() => openDetail(h.base)} title={`${h.base} 상세 열기`}
+                    style={{ fontWeight: 700, background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: selected === h.base ? "var(--brand)" : "var(--text)", textDecoration: "underline", textDecorationColor: "var(--border)", textUnderlineOffset: 3 }}>
+                    {h.base}
+                  </button>
                   <span className="tnum" style={{ color: "var(--text-mute)" }}>
                     {new Date(h.announcedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </span>

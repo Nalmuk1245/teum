@@ -462,13 +462,19 @@ async function pollMarkets() {
   if (bt.size > 0) diffMarkets("bithumb", bt);
   L.primedMkt = true;
   const cutoff = Date.now() - FRESH_MS;
+  let expired = false;
   for (const [b, p] of L.plays) {
     if (p.announcedAt < cutoff) {
       archivePlay(p); // 만료 → 성과 히스토리로 (드릴 제외)
       L.plays.delete(b);
       forgetKrDeposit(b); // 시계열도 함께 정리 (영구 누적 방지)
+      expired = true;
     }
   }
+  // 메모리에서만 지우면 디스크엔 그대로 남는다 → 재시작할 때마다 다시 하이드레이트돼
+  // 다시 만료되고 **히스토리에 같은 건이 한 번 더 쌓인다**(실제로 MORPHO가 3개
+  // 찍혔다 — 재시작 3회). 지운 사실도 저장해야 지운 것이다.
+  if (expired) saveSection("listingPlays", [...L.plays.entries()]);
 }
 
 // ── 성과 히스토리 — 만료된 플레이를 요약해 영구 보관 (기대값 캘리브레이션) ──────
@@ -482,6 +488,9 @@ function archivePlay(p: ListingPlay) {
   if (p.drill) return;
   if (!p.overseas && !(p.buys?.length) && p.peakPct == null) return; // 정보가 없는 껍데기
   const hist = loadSection<ListingHistoryRow[]>("listingHistory") ?? [];
+  // 같은 공지는 한 줄이다. 보관 경로가 하나뿐이어도 이 가드를 둔다 — 히스토리는
+  // 기대값 캘리브레이션의 근거라, 중복 한 건이 곧 통계 왜곡이다.
+  if (hist.some((h) => h.base === p.base && h.announcedAt === p.announcedAt)) return;
   const realBuys = (p.buys ?? []).filter((b) => !b.dry);
   const realSells = (p.sells ?? []).filter((s) => !s.dry);
   hist.unshift({
