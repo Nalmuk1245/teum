@@ -268,9 +268,15 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
   // 느릴 때만 남긴다 — 정상 응답까지 찍으면 로그가 이걸로 덮인다.
   const total = Date.now() - t0;
   if (total > SLOW_LOG_MS) {
-    mark.dex = total;
-    console.warn(`[listing-detail] ${base}${opts?.fast ? " fast" : ""} ${total}ms —`,
-      Object.entries(mark).map(([k, v]) => `${k} ${v}ms`).join(" · "));
+    // 모든 await가 끝난 시각과 총 소요의 차이. 이 구간엔 계산밖에 없으므로
+    // 여기가 크면 외부 API가 아니라 **프로세스가 멈춰 있었다**는 뜻이다.
+    const settled = Math.max(...Object.values(mark), 0);
+    const stall = total - settled;
+    console.warn(
+      `[listing-detail] ${base}${opts?.fast ? " fast" : ""} ${total}ms — `
+      + Object.entries(mark).map(([k, v]) => `${k} ${v}ms`).join(" · ")
+      + ` | 대기후 ${stall}ms${stall > 300 ? " ⚠멈춤" : ""}`,
+    );
   }
 
   return {

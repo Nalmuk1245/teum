@@ -3,6 +3,7 @@ import { getScan } from "@/lib/scanCache";
 import { isKilled } from "@/lib/killswitch";
 import { CONFIG } from "@/lib/config";
 import { routeDbStats } from "@/lib/tokenRoutes";
+import { loopLag } from "@/lib/loopLag";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,9 @@ export async function GET() {
         // 이벤트 루프가 그만큼 멈춘다 — SQLite로 옮길 시점의 신호다
         // (임계 2MB, docs/TOKEN_ROUTE_DB.md §9).
         routeDb: routeDbStats(),
+        // 이벤트 루프 지연 — p99가 크면 그 시간 동안 이 프로세스는 어떤 요청도
+        // 처리하지 못했다. "API가 느리다"와 "서버가 멈췄다"를 가르는 유일한 숫자.
+        loopLagMs: loopLag(),
       },
       { status: healthy ? 200 : 503 },
     );

@@ -35,6 +35,7 @@ import type { Opportunity } from "./types";
 import { notify, notifyNow, telegramConfigured } from "./telegram";
 import { startListingWatch } from "./listings";
 import { startWatchdog } from "./watchdog";
+import "./loopLag"; // 프로세스 멈춤 상시 감시 (import만으로 시작)
 import { loadSection, saveSection } from "./persist";
 
 // 3s: a sweep costs ~0.8-1.2s once every venue fetch is timeout-bounded and the
