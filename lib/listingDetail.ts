@@ -7,7 +7,7 @@ import { resolveToken, type ResolvedToken } from "./tokenResolve";
 import { getRoute, ensureRoute, noteLiquidity, topPair, LIQUIDITY_TTL_MS, type RouteChain } from "./tokenRoutes";
 import { QUOTE_STABLES, quoteDex, dexConfigured } from "./dex";
 import { fetchPortfolio } from "./balances";
-import { swr } from "./ttlCache";
+import { swr, peek } from "./ttlCache";
 import { recentListings, type ListingPlay, krDeposits } from "./listings";
 import type { Portfolio } from "./types";
 
@@ -43,6 +43,19 @@ export type DexRow = {
 const MAX_SANE_PREMIUM_PCT = 15;
 // 이 미만이면 $500도 제대로 못 먹는다.
 const MIN_POOL_USD = 20_000;
+// 이보다 오래 걸린 빌드만 단계별로 기록한다.
+const SLOW_LOG_MS = 1500;
+// fast 응답의 상한. 이 경로의 유일한 일은 "창을 띄우는 것"이라, 늦는 값은 기다리지
+// 말고 없는 채로 그린다 — 어차피 1초 뒤 전체 응답이 덮어쓴다.
+const FAST_BUDGET_MS = 1200;
+
+/** 제한 시간 안에 안 오면 null. 원 Promise는 계속 진행해 캐시를 채운다. */
+function withBudget<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p,
+    new Promise<null>((res) => { setTimeout(() => res(null), ms).unref?.(); }),
+  ]);
+}
 
 /** 표시 순서: 거래 가능한 체인 먼저, 그다음 풀이 깊은 순. 폴링해도 안 흔들린다. */
 function byTradeability(a: DexRow, b: DexRow): number {
@@ -71,6 +84,8 @@ export type ListingDetail = {
   dex: DexRow[];
   /** fast 응답 — DEX는 아직 계산 전. 클라이언트가 곧 전체를 다시 받는다. */
   dexPending?: boolean;
+  /** 잔고를 아직 안 받았다(≠ 키 없음). UI가 "키없음"으로 단정하지 않게 하는 신호. */
+  balancesPending?: boolean;
   dexReady: boolean; // OKX_WEB3 keys present (quotes/buys possible)
   walletReady: boolean; // signing key present (live DEX buy possible)
   kimchiPct: number | null; // once KR-listed: KR price vs cheapest global, %
@@ -126,14 +141,33 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
   const base = baseRaw.toUpperCase();
   const VENUES: CexRow["venue"][] = ["binance", "bybit", "okx", "upbit", "bithumb"];
 
+  // 잔고는 5개 거래소 인증 조회 + OKX 멀티체인 지갑 집계라 이 페이로드에서 제일
+  // 느린 값이다. 그런데 화면의 **부속**이다 — 가격·차트·경로는 잔고 없이도 그려진다.
+  // fast에서 이걸 await하면 창 자체가 그 시간만큼 안 뜬다(실측 대상: 수동조회 5~6초).
+  // 그래서 fast는 캐시된 값만 쓰고 없으면 뒤에서 채우게 둔다.
+  const cachedPortfolio = opts?.fast ? peek("portfolio", 10_000, fetchPortfolio) : null;
+  const balancesPending = opts?.fast && !cachedPortfolio;
+
+  // 단계별 소요. 이 경로는 "창이 언제 뜨느냐"가 곧 기회비용이라, 느려졌을 때
+  // 어디가 느린지 로그가 말해줘야 한다 — 외부 API 지연은 재현이 안 되는 종류다.
+  const t0 = Date.now();
+  const mark: Record<string, number> = {};
+  const timed = <T,>(name: string, p: Promise<T>): Promise<T> =>
+    p.finally(() => { mark[name] = Date.now() - t0; });
+
   const [token, route, prices, fx, portfolio] = await Promise.all([
-    resolveToken(base),
+    // CoinGecko는 무료 티어라 레이트리밋에 걸리면 초 단위로 늘어진다. fast에선
+    // 예산을 넘기면 버리고 간다 — 조회는 계속 돌아 캐시를 채우므로(진행 중 조회
+    // 공유) 버려진 왕복이 낭비가 되지도 않는다.
+    timed("token", opts?.fast ? withBudget(resolveToken(base), FAST_BUDGET_MS) : resolveToken(base)),
     // fast는 네트워크를 타지 않는다 — 이미 아는 토큰이면 첫 페인트에 차트까지 뜨고,
     // 모르는 토큰이면 그냥 없는 채로 넘어간다. 전체 응답에서 ensureRoute가 채운다.
-    opts?.fast ? Promise.resolve(getRoute(base)) : ensureRoute(base),
-    Promise.all(VENUES.map((v) => cexPrice(v, base))),
-    usdtKrwQuick(),
-    swr("portfolio", 10_000, fetchPortfolio).catch(() => null as Portfolio | null),
+    timed("route", opts?.fast ? Promise.resolve(getRoute(base)) : ensureRoute(base)),
+    timed("cex", Promise.all(VENUES.map((v) => cexPrice(v, base)))),
+    timed("fx", usdtKrwQuick()),
+    timed("balance", opts?.fast
+      ? Promise.resolve(cachedPortfolio)
+      : swr("portfolio", 10_000, fetchPortfolio).catch(() => null as Portfolio | null)),
   ]);
 
   const cex: CexRow[] = VENUES.map((venue, i) => {
@@ -231,6 +265,14 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
   const kUsd = Math.min(...cex.filter((r) => ["upbit", "bithumb"].includes(r.venue) && r.priceUsd != null).map((r) => r.priceUsd!), Infinity);
   const kimchiPct = Number.isFinite(gUsd) && Number.isFinite(kUsd) ? ((kUsd - gUsd) / gUsd) * 100 : null;
 
+  // 느릴 때만 남긴다 — 정상 응답까지 찍으면 로그가 이걸로 덮인다.
+  const total = Date.now() - t0;
+  if (total > SLOW_LOG_MS) {
+    mark.dex = total;
+    console.warn(`[listing-detail] ${base}${opts?.fast ? " fast" : ""} ${total}ms —`,
+      Object.entries(mark).map(([k, v]) => `${k} ${v}ms`).join(" · "));
+  }
+
   return {
     base,
     play: recentListings().find((p) => p.base === base) ?? null,
@@ -241,6 +283,7 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
       ? { ...token, contractsList: entries.map((e) => ({ chain: e.chain, address: e.address, decimals: e.decimals })) }
       : null,
     cex, dex, dexReady,
+    balancesPending: balancesPending || undefined,
     walletReady: !!process.env.WALLET_PRIVATE_KEY,
     kimchiPct,
     updatedAt: Date.now(),

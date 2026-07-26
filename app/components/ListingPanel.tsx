@@ -37,7 +37,7 @@ type Detail = {
   base: string; play: Listing | null;
   krDeposits?: { ts: number; up: number; bt: number }[];
   token: { name: string; priceUsd: number | null; volumeUsd: number | null; marketCapUsd: number | null; contractsList: { chain: string; address: string; decimals: number }[] } | null;
-  cex: CexRow[]; dex: DexRow[]; dexPending?: boolean; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
+  cex: CexRow[]; dex: DexRow[]; dexPending?: boolean; balancesPending?: boolean; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
 };
 type WalletBreak = { address: string; tag: string | null; type: "hot" | "cold"; amount: number; usd: number | null };
 type Holdings = {
@@ -792,7 +792,7 @@ function DetailPanel({ base }: { base: string }) {
             <span className="tnum" style={{ textAlign: "right", color: r.listed ? "var(--text)" : "var(--text-mute)" }}>
               {r.listed ? (r.priceKrw != null ? `₩${r.priceKrw.toLocaleString()}` : `$${fmtPx(r.priceUsd)}`) : "미상장"}
             </span>
-            {!mob && <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : "키없음"}</span>}
+            {!mob && <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : d.balancesPending ? "…" : "키없음"}</span>}
             {!mob && <span className="tnum" style={{ textAlign: "right",
               color: (r.myCoinQty ?? 0) > 0 ? "var(--amber)"
                 : play && !play.opened && r.venue === play.venue ? "var(--amber)" : "var(--text-mute)",
@@ -817,7 +817,7 @@ function DetailPanel({ base }: { base: string }) {
             </span>
             {mob && (
               <div className="tnum" style={{ gridColumn: "1 / -1", display: "flex", gap: 10, flexWrap: "wrap", fontSize: 10.5, color: "var(--text-mute)", marginTop: -1 }}>
-                <span>{r.myCashUsd != null ? `자금 ${fmtUsd(r.myCashUsd)}` : "키없음"}</span>
+                <span>{r.myCashUsd != null ? `자금 ${fmtUsd(r.myCashUsd)}` : d.balancesPending ? "자금 …" : "키없음"}</span>
                 {(r.myCoinQty ?? 0) > 0 && <span style={{ color: "var(--amber)" }}>보유 {r.myCoinQty!.toFixed(3)}</span>}
                 {play && !play.opened && r.venue === play.venue && <span style={{ color: "var(--amber)", fontWeight: 700 }}>★ 상장 예정 — 개장 후 매도처</span>}
               </div>
