@@ -337,6 +337,7 @@ export type TradeRec = {
   buyUsd?: number | null; sellUsd?: number | null; spotPnlUsd?: number | null; hedgePnlUsd?: number | null;
   durationsSec?: Record<string, number>; txs?: { step: string; hash: string; url: string | null }[]; note?: string;
   hedged?: boolean; status?: string;
+  timeline?: { step: string; label: string; at: number; sec: number; ok: boolean; kind?: "wait" | "retry" | "rollback"; message?: string }[];
 };
 
 export type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
@@ -507,10 +508,42 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
               {t.spotPnlUsd != null && dLine("현물 손익", money(t.spotPnlUsd), t.spotPnlUsd >= 0 ? "var(--pos)" : "var(--neg)")}
               {t.hedgePnlUsd != null && dLine("헷지 손익", money(t.hedgePnlUsd), t.hedgePnlUsd >= 0 ? "var(--pos)" : "var(--neg)")}
               {t.realizedPnlUsd != null && dLine("합계", money(t.realizedPnlUsd), t.realizedPnlUsd >= 0 ? "var(--pos)" : "var(--neg)")}
-              {t.durationsSec && Object.keys(t.durationsSec).length > 0 && dLine(
+              {/* 진행 타임라인 — 언제 어떤 단계가 돌았고 얼마 걸렸는지. 재시도·대기·
+                  롤백도 각각 한 줄이다(단계별 합산 소요로는 안 보이던 것들). */}
+              {t.timeline && t.timeline.length > 0 ? (
+                <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)", marginBottom: 4 }}>진행 타임라인</div>
+                  {t.timeline.map((e, k) => {
+                    const prev = k > 0 ? t.timeline![k - 1] : null;
+                    const gapSec = prev ? Math.round((e.at - (prev.at + prev.sec * 1000)) / 1000) : 0;
+                    const tone = !e.ok ? (e.kind === "wait" ? "var(--amber)" : "var(--neg)") : e.kind === "rollback" ? "var(--amber)" : "var(--pos)";
+                    return (
+                      <div key={k} style={{ display: "grid", gridTemplateColumns: "auto 10px 1fr auto", gap: 7, alignItems: "baseline", fontSize: 10.5, padding: "1.5px 0" }}>
+                        <span className="tnum" style={{ color: "var(--text-mute)" }}>
+                          {new Date(e.at).toLocaleTimeString("ko-KR", { hour12: false })}
+                        </span>
+                        <span style={{ color: tone, fontWeight: 700, textAlign: "center" }}>
+                          {e.ok ? "●" : e.kind === "wait" ? "◌" : "✕"}
+                        </span>
+                        <span style={{ color: "var(--text-dim)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {e.label}
+                          {e.kind === "retry" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>재시도</span>}
+                          {e.kind === "wait" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>대기</span>}
+                          {e.kind === "rollback" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>롤백</span>}
+                          {e.message && <span style={{ color: "var(--text-mute)", marginLeft: 5 }}>{e.message}</span>}
+                          {/* 단계 사이의 빈 시간 — 승인 대기나 폴링 간격이 여기 드러난다 */}
+                          {gapSec >= 5 && <span style={{ color: "var(--text-mute)", marginLeft: 5 }}>(+{gapSec >= 90 ? `${Math.round(gapSec / 60)}분` : `${gapSec}초`} 유휴)</span>}
+                        </span>
+                        <span className="tnum" style={{ color: "var(--text-mute)" }}>{e.sec >= 90 ? `${Math.round(e.sec / 60)}분` : `${e.sec}초`}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : t.durationsSec && Object.keys(t.durationsSec).length > 0 ? dLine(
+                // 구버전 레코드 — 타임라인 없이 단계별 합산만 있다.
                 "단계 소요",
                 Object.entries(t.durationsSec).map(([k, v]) => `${k} ${v}s`).join(" · "),
-              )}
+              ) : null}
               {t.txs && t.txs.length > 0 && (
                 <div style={{ marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border)" }}>
                   {t.txs.map((x, j) => (

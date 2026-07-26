@@ -8,6 +8,17 @@ import path from "path";
 const DIR = path.join(process.cwd(), "data");
 const FILE = path.join(DIR, "trades.jsonl");
 
+export type TimelineEntry = {
+  step: string;      // StepId (buy/hedge/withdraw/recv/transfer/deposit/sell/close/settle)
+  label: string;     // 사람이 읽는 단계명
+  at: number;        // 시작 시각 (ms epoch)
+  sec: number;       // 이 시도에 걸린 초
+  ok: boolean;
+  /** wait = 정상 대기(입금 미확인 등, 실패가 아니다) · retry = 재시도 · rollback = 되돌림 */
+  kind?: "wait" | "retry" | "rollback";
+  message?: string;
+};
+
 export type TradeRecord = {
   ts: number;
   base: string;
@@ -23,6 +34,14 @@ export type TradeRecord = {
   /** Real per-step seconds (buy/withdraw/deposit/...) — actual transfer time vs
    *  ETA calibration data. */
   durationsSec?: Record<string, number>;
+  /**
+   * 단계별 진행 기록 — **시각**과 결과까지. durationsSec은 단계당 한 칸이라
+   * 재시도·대기·실패가 전부 뭉개졌다. 사후에 "왜 이 거래가 늦었나 / 어디서
+   * 틀어졌나"를 보려면 순서와 시각이 필요하다.
+   *
+   * 한 단계가 여러 항목으로 나올 수 있다(재시도·입금 폴링) — 그게 사실이다.
+   */
+  timeline?: TimelineEntry[];
   note?: string;
   // ── 상세 (있는 만큼만 기록 — 실체결이면 전부, 추정이면 일부) ──
   qty?: number | null; // 체결 수량 (코인)

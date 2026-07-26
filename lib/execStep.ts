@@ -14,7 +14,7 @@ import { sendRawEvmTx } from "./wallet";
 import { isKilled } from "./killswitch";
 import { checkEntry, recordPnl } from "./risk";
 import { notifyNow } from "./telegram";
-import { recordTrade } from "./trades";
+import { recordTrade, type TimelineEntry } from "./trades";
 import { estimateLegSlippage } from "./quote";
 import { withdrawFeeCoin, withdrawMinCoin } from "./networks";
 import { fetchUsdKrw } from "./exchanges";
@@ -176,6 +176,8 @@ export async function runStep(
     fills?: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
     txs?: { step: string; hash: string; url: string | null }[];
     durations?: Record<string, number>;
+    /** 단계별 진행 기록(시각 포함) — settle에서 거래 레코드에 그대로 실린다. */
+    timeline?: TimelineEntry[];
   },
 ): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
@@ -518,6 +520,7 @@ export async function runStep(
           sizeUsd, detectedNetPct: opp.netPct, realizedNetPct, realizedPnlUsd,
           hedged: !!opp.hasPerp, dryRun: dry, status: "done",
           durationsSec: opts.durations,
+          timeline: opts.timeline?.length ? opts.timeline : undefined,
           txs: opts.txs?.length ? opts.txs : undefined,
           ...detail,
         });

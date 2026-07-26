@@ -24,7 +24,7 @@ import { getLimits } from "./risk";
 import { CONFIG, FEES } from "./config";
 import { notify, notifyNow } from "./telegram";
 import { recordPnl } from "./risk";
-import { recordTrade } from "./trades";
+import { recordTrade, type TimelineEntry } from "./trades";
 import { loadSection, flushSection } from "./persist";
 
 export type TxRef = { hash: string; url: string | null };
@@ -72,6 +72,9 @@ type Engine = {
   hedgeQty?: number;
   fills: { buyQuote?: number; buyCcy?: string; buyQty?: number; sellQuote?: number; sellCcy?: string; sellQty?: number; hedgeOpenQuote?: number; hedgeCloseQuote?: number };
   durations: Record<string, number>;
+  /** 단계별 진행 기록(시각 포함). durations는 단계당 한 칸이라 재시도·대기·실패가
+   *  뭉개진다 — 사후에 "어디서 늦었나/틀어졌나"를 보려면 순서와 시각이 필요하다. */
+  timeline: TimelineEntry[];
   /** Successful step results by step index — replay protection. Retrying a step
    *  that already succeeded must NOT re-send it. */
   done: Map<number, { ok: boolean; message?: string; tx?: TxRef }>;
@@ -132,6 +135,9 @@ const CB_MAX = Number(process.env.CIRCUIT_FAIL_MAX ?? 3);
 const DEPOSIT_POLL_MS = Number(process.env.DEPOSIT_POLL_SEC ?? 20) * 1000;
 const DEPOSIT_WAIT_MAX_SEC = Number(process.env.DEPOSIT_WAIT_MAX_MIN ?? 90) * 60;
 const sleep = (ms: number) => new Promise<void>((res) => { setTimeout(res, ms).unref?.(); });
+// 타임라인 상한 — 입금 폴링이 90분까지 20초 간격으로 돌 수 있어(최대 ~270회)
+// 무제한이면 레코드가 폴링 로그로 뒤덮인다.
+const MAX_TIMELINE = 60;
 function recordExecFailure(base: string, stepLabel: string) {
   const now = Date.now();
   E.fails = E.fails.filter((t) => now - t < CB_WINDOW_MS);
@@ -262,6 +268,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     walletBefore: stepId === "recv" || stepId === "deposit" ? eng.walletBefore : undefined,
     fills: stepId === "settle" ? eng.fills : undefined,
     durations: stepId === "settle" ? eng.durations : undefined,
+    timeline: stepId === "settle" ? eng.timeline : undefined,
     txs: stepId === "settle"
       ? Object.entries(run?.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url }))
       : undefined,
@@ -398,6 +405,17 @@ async function loop(id: string) {
     try { r = await callStep(id, eng, step.id); }
     catch (e) { r = { ok: false, message: e instanceof Error ? e.message : "실패" }; }
     eng.durations[step.id] = Math.round((Date.now() - stepT0) / 1000);
+    // 시각까지 남긴다 — 재시도·대기·실패도 각각 한 줄이다. durations는 마지막
+    // 시도만 덮어쓰므로, "왜 늦었나"는 이 목록에만 남는다.
+    if (eng.timeline.length < MAX_TIMELINE) {
+      eng.timeline.push({
+        step: step.id, label: step.label, at: stepT0,
+        sec: Math.round((Date.now() - stepT0) / 1000),
+        ok: r.ok,
+        kind: r.pending ? "wait" : eng.timeline.some((e) => e.step === step.id) ? "retry" : undefined,
+        message: r.message,
+      });
+    }
     if (eng.cancelled) { eng.busy = false; return; }
 
     const upd: Partial<RunView> = {};
@@ -450,8 +468,15 @@ async function loop(id: string) {
           // re-sold an entry that a previous rollback had already unwound.
           if ((sid === "buy" || sid === "hedge") && run().statuses[sid] === "done") {
             let rb: { ok: boolean; message?: string };
+            const rbT0 = Date.now();
             try { rb = await callStep(id, eng, sid, { rollback: true }); }
             catch (e) { rb = { ok: false, message: e instanceof Error ? e.message : "롤백 실패" }; }
+            if (eng.timeline.length < MAX_TIMELINE) {
+              eng.timeline.push({
+                step: sid, label: `${run().plan[j].label} 롤백`, at: rbT0,
+                sec: Math.round((Date.now() - rbT0) / 1000), ok: rb.ok, kind: "rollback", message: rb.message,
+              });
+            }
             allOk = allOk && rb.ok;
             statuses[sid] = rb.ok ? "rolledback" : "error";
             messages[sid] = `${messages[sid] ?? ""} · ${rb.ok ? "롤백됨" : `롤백 실패(${rb.message ?? "?"}) — 수동`}`;
@@ -530,7 +555,7 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   };
   E.engines.set(id, {
     cancelled: false, killEpoch: E.killEpoch, busy: false, i: 0, confirmed: new Set(),
-    startTs: 0, fills: {}, durations: {}, done: new Map(), stepFirstAt: new Map(),
+    startTs: 0, fills: {}, durations: {}, timeline: [], done: new Map(), stepFirstAt: new Map(),
     rolledBack: false, unwindLock: false, opp: cfg.opp,
   });
   trimRuns();
@@ -646,6 +671,7 @@ export async function unwindRun(id: string, fraction: number) {
         realizedNetPct: result.achievedNetPct, realizedPnlUsd: result.pnlUsd,
         qty: result.soldQty, hedged: result.hedgeClosedQty > 0,
         dryRun: false, status: "done", note: "부분/전량 청산",
+        timeline: eng?.timeline?.length ? eng.timeline : undefined,
       });
     }
     // Re-read: `run` was captured before a multi-second await.
