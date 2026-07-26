@@ -607,13 +607,24 @@ function DetailPanel({ base }: { base: string }) {
   const [addForm, setAddForm] = useState({ venue: "upbit", type: "hot", address: "", tag: "" });
   const [addMsg, setAddMsg] = useState<string | null>(null);
 
+  // 열기까지 걸린 시간. "느리다"를 숫자로 바꿔야 어디를 고칠지 정할 수 있고,
+  // 기다리는 쪽도 멈춘 건지 오는 중인지 알 수 있다.
+  const [openMs, setOpenMs] = useState<{ fast: number | null; full: number | null }>({ fast: null, full: null });
+  const [waiting, setWaiting] = useState(0);
+  useEffect(() => {
+    setD(null); setErr(null); setOpenMs({ fast: null, full: null }); setWaiting(0);
+  }, [base]);
+
   useEffect(() => {
     let stop = false;
+    const t0 = performance.now();
     const load = (fast?: boolean) =>
       fetch(`/api/listing-detail?base=${encodeURIComponent(base)}${fast ? "&fast=1" : ""}`, { cache: "no-store" })
         .then((r) => r.json())
         .then((j) => {
           if (stop || !j.detail) { if (!stop) setErr(j.error ?? "조회 실패"); return; }
+          const ms = Math.round(performance.now() - t0);
+          setOpenMs((p) => (fast ? (p.fast == null ? { ...p, fast: ms } : p) : (p.full == null ? { ...p, full: ms } : p)));
           // fast 응답이 늦게 도착해 이미 받은 전체 응답을 덮어쓰면 DEX 표가
           // 사라진다 — pending 응답은 아직 아무것도 없을 때만 반영한다.
           setD((prev) => (j.detail.dexPending && prev && !prev.dexPending ? prev : j.detail));
@@ -623,8 +634,9 @@ function DetailPanel({ base }: { base: string }) {
     // 2단계: DEX 없이 먼저(≈0.3s) 그린 뒤 곧바로 전체를 덧씌운다. 상장따리는
     // 늘 처음 보는 코인이라 캐시가 없고, 그 사이 빈 화면이 곧 놓친 시간이다.
     void load(true).then(() => { if (!stop) void load(); });
+    const tick = setInterval(() => { if (!stop) setWaiting(Math.round((performance.now() - t0) / 100) / 10); }, 100);
     const id = setInterval(() => void load(), 10_000);
-    return () => { stop = true; clearInterval(id); };
+    return () => { stop = true; clearInterval(id); clearInterval(tick); };
   }, [base]);
 
   // 온체인 보유량 — 신호 스트립(덤핑압력)과 ⑤ 상세가 같은 데이터를 쓴다.
@@ -697,7 +709,11 @@ function DetailPanel({ base }: { base: string }) {
   }, [lastTx, txStatus?.status]);
 
   if (err) return <div style={{ padding: "12px 14px", fontSize: 11.5, color: "var(--amber)" }}>{err}</div>;
-  if (!d) return <div style={{ padding: "12px 14px", fontSize: 11.5, color: "var(--text-mute)" }}>조회 중…</div>;
+  if (!d) return (
+    <div style={{ padding: "12px 14px", fontSize: 11.5, color: "var(--text-mute)" }}>
+      조회 중… <span className="tnum">{waiting.toFixed(1)}s</span>
+    </div>
+  );
 
   const size = Number(sizeUsd) || 0;
   const globals = d.cex.filter((r) => ["binance", "bybit", "okx"].includes(r.venue));
@@ -731,6 +747,13 @@ function DetailPanel({ base }: { base: string }) {
 
   return (
     <div style={{ padding: "0 14px 14px", background: "var(--card-2)", borderTop: "1px solid var(--border)" }}>
+      {/* 느렸을 때만 실측치를 남긴다 — 체감을 숫자로 바꿔야 서버가 느린 건지
+          브라우저·회선이 느린 건지 갈린다. 서버 쪽 단계별 소요는 pm2 로그에 있다. */}
+      {(openMs.fast ?? 0) > 2000 && (
+        <div className="tnum" style={{ fontSize: 10, color: "var(--amber)", paddingTop: 6 }}>
+          첫 응답 {(openMs.fast! / 1000).toFixed(1)}s{openMs.full != null ? ` · 전체 ${(openMs.full / 1000).toFixed(1)}s` : ""} — 느림
+        </div>
+      )}
       {/* ⓪ 상장 정보 배지 — 어느 거래소에 상장하는지 + 개장 상태 */}
       {(() => {
         const upListed = d.cex.find((r) => r.venue === "upbit")?.listed;
