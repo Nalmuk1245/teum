@@ -37,7 +37,7 @@ type Detail = {
   base: string; play: Listing | null;
   krDeposits?: { ts: number; up: number; bt: number }[];
   token: { name: string; priceUsd: number | null; volumeUsd: number | null; marketCapUsd: number | null; contractsList: { chain: string; address: string; decimals: number }[] } | null;
-  cex: CexRow[]; dex: DexRow[]; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
+  cex: CexRow[]; dex: DexRow[]; dexPending?: boolean; dexReady: boolean; walletReady: boolean; kimchiPct: number | null;
 };
 type WalletBreak = { address: string; tag: string | null; type: "hot" | "cold"; amount: number; usd: number | null };
 type Holdings = {
@@ -592,12 +592,21 @@ function DetailPanel({ base }: { base: string }) {
 
   useEffect(() => {
     let stop = false;
-    const load = () => fetch(`/api/listing-detail?base=${encodeURIComponent(base)}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => { if (!stop) { if (j.detail) { setD(j.detail); setErr(null); } else setErr(j.error ?? "조회 실패"); } })
-      .catch(() => { if (!stop) setErr("조회 실패"); });
-    load();
-    const id = setInterval(load, 10_000);
+    const load = (fast?: boolean) =>
+      fetch(`/api/listing-detail?base=${encodeURIComponent(base)}${fast ? "&fast=1" : ""}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j) => {
+          if (stop || !j.detail) { if (!stop) setErr(j.error ?? "조회 실패"); return; }
+          // fast 응답이 늦게 도착해 이미 받은 전체 응답을 덮어쓰면 DEX 표가
+          // 사라진다 — pending 응답은 아직 아무것도 없을 때만 반영한다.
+          setD((prev) => (j.detail.dexPending && prev && !prev.dexPending ? prev : j.detail));
+          setErr(null);
+        })
+        .catch(() => { if (!stop) setErr("조회 실패"); });
+    // 2단계: DEX 없이 먼저(≈0.3s) 그린 뒤 곧바로 전체를 덧씌운다. 상장따리는
+    // 늘 처음 보는 코인이라 캐시가 없고, 그 사이 빈 화면이 곧 놓친 시간이다.
+    void load(true).then(() => { if (!stop) void load(); });
+    const id = setInterval(() => void load(), 10_000);
     return () => { stop = true; clearInterval(id); };
   }, [base]);
 
@@ -798,6 +807,11 @@ function DetailPanel({ base }: { base: string }) {
             )}
           </Fragment>
         ))}
+        {d.dexPending && (
+          <span style={{ gridColumn: "1 / -1", fontSize: 11, color: "var(--text-mute)", padding: "4px 0" }}>
+            DEX 견적 조회 중… (풀 유동성·슬리피지)
+          </span>
+        )}
         {d.dex.map((x) => (
           <Fragment key={x.chain}>
             <span style={{ fontWeight: 600, color: x.untradeable ? "var(--text-mute)" : x.verified ? "var(--text)" : "var(--text-mute)" }}>

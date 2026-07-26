@@ -74,6 +74,8 @@ export type ListingDetail = {
   token: (ResolvedToken & { contractsList: { chain: string; address: string; decimals: number }[] }) | null;
   cex: CexRow[];
   dex: DexRow[];
+  /** fast 응답 — DEX는 아직 계산 전. 클라이언트가 곧 전체를 다시 받는다. */
+  dexPending?: boolean;
   dexReady: boolean; // OKX_WEB3 keys present (quotes/buys possible)
   walletReady: boolean; // signing key present (live DEX buy possible)
   kimchiPct: number | null; // once KR-listed: KR price vs cheapest global, %
@@ -121,7 +123,11 @@ async function usdtKrwQuick(): Promise<number | null> {
   } catch { return null; }
 }
 
-export async function buildListingDetail(baseRaw: string): Promise<ListingDetail> {
+/** `fast`: DEX 단계를 건너뛴다. 토큰·CEX·잔고는 병렬 한 방에 끝나지만 DEX는
+ *  체인별 풀 조회 + OKX 견적이라 가장 오래 걸린다. 상장따리는 늘 처음 보는
+ *  코인이라 캐시가 없고, 그동안 화면이 비어 있으면 그게 곧 놓친 시간이다.
+ *  먼저 fast로 그리고 곧바로 전체를 덧씌운다. */
+export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolean }): Promise<ListingDetail> {
   const base = baseRaw.toUpperCase();
   const VENUES: CexRow["venue"][] = ["binance", "bybit", "okx", "upbit", "bithumb"];
 
@@ -148,7 +154,7 @@ export async function buildListingDetail(baseRaw: string): Promise<ListingDetail
   // coming back is also our contract cross-check (real + liquid).
   const dexReady = dexConfigured();
   let dex: DexRow[] = [];
-  if (token) {
+  if (token && !opts?.fast) {
     const entries = Object.entries(token.contracts) as [string, { address: string; decimals: number }][];
     // Collect by INDEX, not by pushing inside the async map — `dex.push` in a
     // Promise.all appended in completion order, so the row order reshuffled on
@@ -158,13 +164,19 @@ export async function buildListingDetail(baseRaw: string): Promise<ListingDetail
       const row: DexRow = { chain, contract: c.address, decimals: c.decimals, verified: false, execPriceUsd: null, premiumVsCgPct: null };
       if (!stable) { row.note = "미지원 체인"; row.untradeable = true; return row; }
       if (!dexReady) { row.note = "OKX_WEB3 키 필요"; return row; }
-      // Quote and pool lookup in parallel — the pool tells us whether this chain
-      // is real at all, the quote tells us at what price.
-      const [q, pair] = await Promise.all([
-        quoteDex(chain, stable, { address: c.address, decimals: c.decimals }, 500),
-        topPair(chain, c.address),
-      ]);
+      // Pool check FIRST (DexScreener, ~100ms) — it tells us whether this chain
+      // is real at all. Only then spend an OKX quote, which is the expensive
+      // call (and slowest exactly when it's going to fail). A new listing is
+      // typically deployed on 3 chains with a pool on one, so this drops the
+      // quote count from N to ~1 without losing anything.
+      const pair = await topPair(chain, c.address);
       if (pair) { row.pairAddress = pair.pairAddress; row.liquidityUsd = pair.liquidityUsd; }
+      if (pair && pair.liquidityUsd < MIN_POOL_USD) {
+        row.untradeable = true;
+        row.note = `풀 유동성 $${Math.round(pair.liquidityUsd).toLocaleString()} — $500도 제대로 안 먹힘`;
+        return row;
+      }
+      const q = await quoteDex(chain, stable, { address: c.address, decimals: c.decimals }, 500);
       if (q && q.toAmount > 0) {
         row.verified = true;
         row.execPriceUsd = 500 / q.toAmount;
