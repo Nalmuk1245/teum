@@ -120,6 +120,34 @@ pm2 logs arb                             # 로그 확인
 ```
 > `next start`(프로덕션)로 돌린다. dev 모드 상시 운용은 webpack·소스맵이 상주해 메모리를 계속 먹고, 실행 중에도 파일 변경에 재컴파일한다.
 
+### ⚠ 재빌드하면 **반드시 재시작** — 안 하면 화면이 검게 뜬다
+
+```bash
+npm run build && pm2 restart arb     # 빌드만 하고 끝내지 말 것
+```
+
+`next build`는 청크 파일명에 새 해시를 붙인다. 실행 중인 프로세스는 **기동 시점의
+빌드**를 기준으로 HTML을 만들므로, 재빌드 후 재시작하지 않으면 HTML이 더 이상
+존재하지 않는 청크를 가리킨다 → 그 요청이 400/404 → **클라이언트 JS가 로드되지
+않아 검은 화면만 뜬다**(SSR HTML은 멀쩡해서 서버 로그엔 아무 에러도 안 남는다).
+
+증상이 나오면 이렇게 확인한다:
+
+```bash
+curl -s localhost:3100/ | grep -oE 'app/page-[a-f0-9]+\.js'   # HTML이 요구하는 청크
+ls .next/static/chunks/app/ | grep '^page-'                    # 디스크에 있는 청크
+```
+
+두 해시가 다르면 재시작하면 끝. 재시작 후에도 폰에 남아 있으면 하드 새로고침
+(브라우저가 옛 HTML을 캐싱했을 수 있다).
+
+프로세스를 직접 죽일 땐 **PID로** 죽인다 — `next start`/`next dev`의 실제 리스너는
+자식 프로세스 `next-server`라서 `pkill -f "next start"` 패턴에 걸리지 않는다.
+
+```bash
+ss -tlnp | grep 3100      # PID 확인 후 kill -9 <pid>
+```
+
 ### 헬스체크 crontab — **필수** (무장 + 복구를 둘 다 한다)
 
 ```bash
