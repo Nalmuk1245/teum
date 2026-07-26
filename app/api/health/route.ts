@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getScan } from "@/lib/scanCache";
 import { isKilled } from "@/lib/killswitch";
 import { CONFIG } from "@/lib/config";
+import { routeDbStats } from "@/lib/tokenRoutes";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,10 @@ export async function GET() {
         dryRun: CONFIG.DRY_RUN,
         uptimeSec: Math.round(process.uptime()),
         rssMb: Math.round(process.memoryUsage().rss / 1048576),
+        // 경로 DB 규모. 이 섹션은 저장할 때마다 통째로 다시 써지므로 커지면
+        // 이벤트 루프가 그만큼 멈춘다 — SQLite로 옮길 시점의 신호다
+        // (임계 2MB, docs/TOKEN_ROUTE_DB.md §9).
+        routeDb: routeDbStats(),
       },
       { status: healthy ? 200 : 503 },
     );

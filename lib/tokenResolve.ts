@@ -23,9 +23,12 @@ const PLATFORM_TO_CHAIN: Record<string, "ethereum" | "bsc" | "base" | "solana"> 
 };
 
 type CacheT = Map<string, { ts: number; v: ResolvedToken | null }>;
-const g = globalThis as unknown as { __arbTokenResolve?: CacheT };
+type InflightT = Map<string, Promise<ResolvedToken | null>>;
+const g = globalThis as unknown as { __arbTokenResolve?: CacheT; __arbTokenResolveInflight?: InflightT };
 g.__arbTokenResolve ??= new Map();
+g.__arbTokenResolveInflight ??= new Map();
 const C = g.__arbTokenResolve;
+const INFLIGHT = g.__arbTokenResolveInflight;
 const TTL = 10 * 60_000;
 const NEG_TTL = 60_000; // "미등록" 부정 캐시는 1분만 — 레이트리밋 오판이 오래 안 굳게
 
@@ -40,12 +43,23 @@ async function cgJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function resolveToken(symbolRaw: string): Promise<ResolvedToken | null> {
+export function resolveToken(symbolRaw: string): Promise<ResolvedToken | null> {
   const symbol = symbolRaw.toUpperCase();
   const hit = C.get(symbol);
   // 성공값은 TTL(10분) 캐시, "미등록(null)"은 짧게(NEG_TTL)만 — 레이트리밋 순간에
   // 잘못 든 null이 오래 굳지 않도록, 또 실제 미등록도 재조회 폭주는 막도록.
-  if (hit && Date.now() - hit.ts < (hit.v ? TTL : NEG_TTL)) return hit.v;
+  if (hit && Date.now() - hit.ts < (hit.v ? TTL : NEG_TTL)) return Promise.resolve(hit.v);
+  // 캐시는 "끝난 뒤"에만 채워진다. 같은 티커를 동시에 물으면 전부 미스로 떨어져
+  // CoinGecko 왕복이 그 수만큼 늘어난다 — 무료 티어에서 이건 곧 429다. 상장 감지
+  // 직후엔 프리워밍·패널·해석이 겹치는 게 정상이라 진행 중인 조회를 공유한다.
+  const running = INFLIGHT.get(symbol);
+  if (running) return running;
+  const p = fetchToken(symbol, hit).finally(() => INFLIGHT.delete(symbol));
+  INFLIGHT.set(symbol, p);
+  return p;
+}
+
+async function fetchToken(symbol: string, hit: { ts: number; v: ResolvedToken | null } | undefined): Promise<ResolvedToken | null> {
   try {
     const sr = await cgJson<{ coins?: { id: string; symbol: string; market_cap_rank: number | null }[] }>(
       `${CG}/search?query=${encodeURIComponent(symbol)}`,

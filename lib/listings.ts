@@ -312,6 +312,11 @@ async function registerPlayInner(
   };
   L.plays.set(base, play);
   saveSection("listingPlays", [...L.plays.entries()]);
+  // 경로 DB 프리워밍. 감지 직후 몇 초 안에 패널을 열게 되는데, 그때 컨트랙트·풀을
+  // 처음부터 캐면 그 왕복이 그대로 대기 시간이 된다. 여기서 미리 채워두면 패널은
+  // 첫 페인트에 차트까지 뜬다. **await 하지 않는다** — 알림·자동매수 경로(~370ms)에
+  // 단 1ms도 얹으면 안 된다.
+  void import("./tokenRoutes").then((m) => m.ensureRoute(base)).catch(() => {});
   // 드릴은 라이브에서 자동매수 금지 (DRY에선 전체 플로우 리허설).
   const { CONFIG } = await import("./config");
   if (fromAnnouncement && g2 && (!opts?.drill || CONFIG.DRY_RUN)) {

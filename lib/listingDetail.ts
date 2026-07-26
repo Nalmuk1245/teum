@@ -4,6 +4,7 @@
 // and my current position. The UI's detail panel is a straight render of this.
 
 import { resolveToken, type ResolvedToken } from "./tokenResolve";
+import { getRoute, ensureRoute, noteLiquidity, topPair, LIQUIDITY_TTL_MS, type RouteChain } from "./tokenRoutes";
 import { QUOTE_STABLES, quoteDex, dexConfigured } from "./dex";
 import { fetchPortfolio } from "./balances";
 import { swr } from "./ttlCache";
@@ -43,28 +44,22 @@ const MAX_SANE_PREMIUM_PCT = 15;
 // 이 미만이면 $500도 제대로 못 먹는다.
 const MIN_POOL_USD = 20_000;
 
-/** DexScreener에서 이 토큰의 최상위(유동성 최대) 풀을 찾는다. */
-async function topPair(chain: string, address: string): Promise<{ pairAddress: string; liquidityUsd: number } | null> {
-  try {
-    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
-      cache: "no-store", signal: AbortSignal.timeout(4000),
-    });
-    const j = (await r.json()) as { pairs?: Array<{ chainId?: string; pairAddress?: string; liquidity?: { usd?: number } }> };
-    const wanted = DS_CHAIN[chain] ?? chain;
-    const best = (j.pairs ?? [])
-      .filter((x) => x.chainId === wanted && x.pairAddress)
-      .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
-    if (!best?.pairAddress) return null;
-    return { pairAddress: best.pairAddress, liquidityUsd: best.liquidity?.usd ?? 0 };
-  } catch {
-    return null;
-  }
+/** 표시 순서: 거래 가능한 체인 먼저, 그다음 풀이 깊은 순. 폴링해도 안 흔들린다. */
+function byTradeability(a: DexRow, b: DexRow): number {
+  if (!!a.untradeable !== !!b.untradeable) return a.untradeable ? 1 : -1;
+  return (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0) || a.chain.localeCompare(b.chain);
 }
-// 우리 체인 키 → DexScreener chainId
-const DS_CHAIN: Record<string, string> = {
-  ethereum: "ethereum", base: "base", bsc: "bsc", polygon: "polygon",
-  arbitrum: "arbitrum", optimism: "optimism", avalanche: "avalanche", solana: "solana",
-};
+
+type ChainEntry = { chain: string; address: string; decimals: number; cached?: RouteChain };
+
+/** 체인 목록의 출처: 경로 DB(검증 통과분)가 있으면 그걸, 없으면 CoinGecko 원본. */
+function chainEntries(route: { chains: RouteChain[] } | null, token: ResolvedToken | null): ChainEntry[] {
+  if (route?.chains.length) {
+    return route.chains.map((c) => ({ chain: c.chain, address: c.contract, decimals: c.decimals, cached: c }));
+  }
+  const raw = Object.entries(token?.contracts ?? {}) as [string, { address: string; decimals: number }][];
+  return raw.map(([chain, c]) => ({ chain, address: c.address, decimals: c.decimals }));
+}
 
 export type ListingDetail = {
   base: string;
@@ -131,8 +126,11 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
   const base = baseRaw.toUpperCase();
   const VENUES: CexRow["venue"][] = ["binance", "bybit", "okx", "upbit", "bithumb"];
 
-  const [token, prices, fx, portfolio] = await Promise.all([
+  const [token, route, prices, fx, portfolio] = await Promise.all([
     resolveToken(base),
+    // fast는 네트워크를 타지 않는다 — 이미 아는 토큰이면 첫 페인트에 차트까지 뜨고,
+    // 모르는 토큰이면 그냥 없는 채로 넘어간다. 전체 응답에서 ensureRoute가 채운다.
+    opts?.fast ? Promise.resolve(getRoute(base)) : ensureRoute(base),
     Promise.all(VENUES.map((v) => cexPrice(v, base))),
     usdtKrwQuick(),
     swr("portfolio", 10_000, fetchPortfolio).catch(() => null as Portfolio | null),
@@ -153,13 +151,30 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
   // DEX rows — quote $500 through OKX per chain the token exists on. A route
   // coming back is also our contract cross-check (real + liquid).
   const dexReady = dexConfigured();
+  const entries = chainEntries(route, token);
   let dex: DexRow[] = [];
-  if (token && !opts?.fast) {
-    const entries = Object.entries(token.contracts) as [string, { address: string; decimals: number }][];
+  if (opts?.fast) {
+    // 아는 토큰이면 풀 주소가 이미 DB에 있다 → 차트를 즉시 띄운다. 견적은 라이브라
+    // verified=false로 두는데, 그것만으로 매수 버튼은 잠긴 채 유지된다.
+    dex = entries.map((e) => {
+      const row: DexRow = {
+        chain: e.chain, contract: e.address, decimals: e.decimals,
+        verified: false, execPriceUsd: null, premiumVsCgPct: null, note: "견적 계산 중",
+      };
+      if (e.cached?.pairAddress) { row.pairAddress = e.cached.pairAddress; row.liquidityUsd = e.cached.liquidityUsd; }
+      if (!QUOTE_STABLES[e.chain]) { row.note = "미지원 체인"; row.untradeable = true; }
+      else if (row.liquidityUsd != null && row.liquidityUsd < MIN_POOL_USD) {
+        row.untradeable = true;
+        row.note = `풀 유동성 $${Math.round(row.liquidityUsd).toLocaleString()} — $500도 제대로 안 먹힘`;
+      }
+      return row;
+    }).sort(byTradeability);
+  } else if (token) {
     // Collect by INDEX, not by pushing inside the async map — `dex.push` in a
     // Promise.all appended in completion order, so the row order reshuffled on
     // every 10s poll and the table visibly flickered.
-    const rows = await Promise.all(entries.map(async ([chain, c]) => {
+    const rows = await Promise.all(entries.map(async (e) => {
+      const chain = e.chain, c = { address: e.address, decimals: e.decimals };
       const stable = QUOTE_STABLES[chain];
       const row: DexRow = { chain, contract: c.address, decimals: c.decimals, verified: false, execPriceUsd: null, premiumVsCgPct: null };
       if (!stable) { row.note = "미지원 체인"; row.untradeable = true; return row; }
@@ -169,8 +184,16 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
       // call (and slowest exactly when it's going to fail). A new listing is
       // typically deployed on 3 chains with a pool on one, so this drops the
       // quote count from N to ~1 without losing anything.
-      const pair = await topPair(chain, c.address);
-      if (pair) { row.pairAddress = pair.pairAddress; row.liquidityUsd = pair.liquidityUsd; }
+      // 1시간 안에 본 풀이면 DB 값을 쓴다 — 풀 주소는 그 정도로 자주 안 바뀌고,
+      // 이게 다시 연 창에서 체인 수만큼의 왕복을 통째로 없앤다.
+      const fresh = e.cached?.pairAddress && e.cached.liquidityAt && Date.now() - e.cached.liquidityAt < LIQUIDITY_TTL_MS;
+      const pair = fresh
+        ? { pairAddress: e.cached!.pairAddress!, liquidityUsd: e.cached!.liquidityUsd ?? 0 }
+        : await topPair(chain, c.address);
+      if (pair) {
+        row.pairAddress = pair.pairAddress; row.liquidityUsd = pair.liquidityUsd;
+        if (!fresh) noteLiquidity(base, chain, pair); // 방금 본 값을 DB에 되먹인다
+      }
       if (pair && pair.liquidityUsd < MIN_POOL_USD) {
         row.untradeable = true;
         row.note = `풀 유동성 $${Math.round(pair.liquidityUsd).toLocaleString()} — $500도 제대로 안 먹힘`;
@@ -200,11 +223,7 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
       if (chain === "solana" && row.verified && !process.env.WALLET_SOL_KEY) row.note = "라이브 매수엔 SOL 지갑 키 필요";
       return row;
     }));
-    // Deterministic order: tradeable first, then by pool depth. Stable across polls.
-    dex = rows.sort((a, b) => {
-      if (!!a.untradeable !== !!b.untradeable) return a.untradeable ? 1 : -1;
-      return (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0) || a.chain.localeCompare(b.chain);
-    });
+    dex = rows.sort(byTradeability);
   }
 
   // Kimchi read once KR side is trading: cheapest global vs cheapest KR.
@@ -216,8 +235,10 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
     base,
     play: recentListings().find((p) => p.base === base) ?? null,
     krDeposits: krDeposits(base).pts,
+    // 컨트랙트 목록도 경로 DB를 우선한다 — 온체인 symbol()이 다른 토큰으로
+    // 판명된 항목은 여기서부터 아예 빠진다.
     token: token
-      ? { ...token, contractsList: (Object.entries(token.contracts) as [string, { address: string; decimals: number }][]).map(([chain, c]) => ({ chain, address: c.address, decimals: c.decimals })) }
+      ? { ...token, contractsList: entries.map((e) => ({ chain: e.chain, address: e.address, decimals: e.decimals })) }
       : null,
     cex, dex, dexReady,
     walletReady: !!process.env.WALLET_PRIVATE_KEY,
