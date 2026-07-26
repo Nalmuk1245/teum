@@ -1,7 +1,7 @@
 "use client";
 
 // 대시보드 탭 — 글래스 시안의 요약 화면을 실데이터로.
-// 구성: 라이브 전환 체크리스트 · 리스크 현황(게이지) · KPI 4장(세션 미니바) ·
+// 구성: 감시 상태(감지 소스·프로세스) · 리스크 현황(게이지) · KPI 4장(세션 미니바) ·
 // 자금 배분(세그먼트 바) · 실시간 기회. 전부 기존 API에서 읽는다.
 
 import React from "react";
@@ -9,7 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Opportunity, Portfolio } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
-import { vlabel, WL_KEY } from "./cockpit-ui";
+import { vlabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
 import type { RiskState } from "./ControlPanel";
 
@@ -80,32 +80,41 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
 }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [tgOk, setTgOk] = useState<boolean | null>(null);
-  const [tradeCount, setTradeCount] = useState<number | null>(null);
   const [trades, setTrades] = useState<{ base: string; kind: string; route: string; realizedPnlUsd: number | null; dryRun: boolean; ts: number }[]>([]);
   const [listWatch, setListWatch] = useState<{ plays: { base: string; venue: string; opensAt?: number; opened: boolean }[]; watching: boolean } | null>(null);
-  const [wl, setWl] = useState(false);
+  // 감시 상태 카드 데이터 — 전부 기존 API에서 읽는다.
+  const [health, setHealth] = useState<{ ok: boolean; scanAgeSec: number | null; killed: boolean; dryRun: boolean; loopLagMs?: { max: number } } | null>(null);
+  const [watch, setWatch] = useState<{ annOkAgoSec: number | null; annBlocked: boolean; mktOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
+  const [gatesBlocked, setGatesBlocked] = useState<number | null>(null);
+  const [tradeCount, setTradeCount] = useState<number | null>(null);
   const [mock, setMock] = useState(true);
 
   useEffect(() => {
     const load = () => {
       fetch("/api/risk", { cache: "no-store" }).then((r) => r.json()).then(setRisk).catch(() => {});
       fetch("/api/balances", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (j.portfolio) { setPortfolio(j.portfolio); setMock(!!j.portfolio.mock); } }).catch(() => {});
+      fetch("/api/health", { cache: "no-store" }).then((r) => r.json()).then(setHealth).catch(() => {});
     };
     load();
     const id = setInterval(load, 15_000);
-    fetch("/api/telegram-test").then((r) => r.json()).then((j) => setTgOk(!!j.configured)).catch(() => {});
     const loadFeeds = () => {
       fetch("/api/trades", { cache: "no-store" }).then((r) => r.json()).then((j) => { setTradeCount(j.stats?.count ?? 0); setTrades((j.trades ?? []).slice(0, 6)); }).catch(() => {});
       fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => {
         const plays = (j.listings ?? []).map((l: { base: string; venue: string; opensAt?: number; opened: boolean }) => ({ base: l.base, venue: l.venue, opensAt: l.opensAt, opened: l.opened }));
         setListWatch({ plays, watching: (j.watch?.plays ?? 0) >= 0 });
+        if (j.watch) setWatch(j.watch);
       }).catch(() => {});
     };
     loadFeeds();
     const fid = setInterval(loadFeeds, 20_000);
-    try { setWl((JSON.parse(localStorage.getItem(WL_KEY) || "[]") as string[]).length > 0); } catch { /* */ }
-    return () => { clearInterval(id); clearInterval(fid); };
+    // 입출금 중단 수 — 느리게 변하는 값이라 5분이면 충분하다.
+    const loadGates = () => fetch("/api/gates", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      const rows = (j.rows ?? []) as { venues: Record<string, { deposit: boolean; withdraw: boolean } | null> }[];
+      setGatesBlocked(rows.filter((r) => Object.values(r.venues).some((s) => s && (!s.deposit || !s.withdraw))).length);
+    }).catch(() => {});
+    loadGates();
+    const gid = setInterval(loadGates, 5 * 60_000);
+    return () => { clearInterval(id); clearInterval(fid); clearInterval(gid); };
   }, []);
 
   // 실데이터 지표 (mock 제외)
@@ -161,15 +170,40 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
   const totalCap = cash + coins + transit;
   const p = (n: number) => (totalCap > 0 ? Math.round((n / totalCap) * 100) : 0);
 
-  // 체크리스트
-  const checks: { label: string; on: boolean }[] = [
-    { label: "모의 리허설 (거래 기록 있음)", on: (tradeCount ?? 0) > 0 },
-    { label: "텔레그램 알림 연결", on: tgOk === true },
-    { label: "거래소 API 키 등록", on: !mock },
-    { label: "출금 화이트리스트 확인", on: wl },
-  ];
-  const done = checks.filter((c) => c.on).length;
-  const progress = Math.round((done / checks.length) * 100);
+  // 감시 상태 — "지금 감시가 제대로 돌고 있나"를 소스별로.
+  // 이 앱의 가치는 상장 감지 지연(ms)인데, 감지 소스가 죽어도 화면은 조용하다 —
+  // 그 침묵을 깨는 카드다. 상태는 3단계: ok(정상) / warn(고장·조치 필요) / off(미설정·대기).
+  type SrcState = "ok" | "warn" | "off";
+  const srcRows: { label: string; state: SrcState; text: string }[] = (() => {
+    const rows: { label: string; state: SrcState; text: string }[] = [];
+    const agoTxt = (s: number | null) => (s == null ? "수신 없음" : s < 90 ? `${s}초 전` : `${Math.round(s / 60)}분 전`);
+    rows.push(!health
+      ? { label: "스캔", state: "off", text: "…" }
+      : health.scanAgeSec != null && health.scanAgeSec < 60
+        ? { label: "스캔", state: "ok", text: `${health.scanAgeSec}초 전` }
+        : { label: "스캔", state: "warn", text: "정지 — 재시작 필요" });
+    rows.push(!watch ? { label: "업비트 공지", state: "off", text: "…" }
+      : watch.annBlocked ? { label: "업비트 공지", state: "warn", text: "차단 (비KR IP)" }
+      : watch.annOkAgoSec != null ? { label: "업비트 공지", state: "ok", text: agoTxt(watch.annOkAgoSec) }
+      : { label: "업비트 공지", state: "off", text: "수신 없음" });
+    rows.push(!watch ? { label: "마켓 diff", state: "off", text: "…" }
+      : watch.mktOkAgoSec != null && watch.mktOkAgoSec < 60 ? { label: "마켓 diff", state: "ok", text: agoTxt(watch.mktOkAgoSec) }
+      : watch.mktOkAgoSec != null ? { label: "마켓 diff", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
+      : { label: "마켓 diff", state: "off", text: "대기" });
+    rows.push(!watch ? { label: "텔레그램 감지", state: "off", text: "…" }
+      : !watch.tgConfigured ? { label: "텔레그램 감지", state: "off", text: "미설정" }
+      : watch.tgOkAgoSec != null ? { label: "텔레그램 감지", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
+      : { label: "텔레그램 감지", state: "off", text: "수신 대기" });
+    const lag = health?.loopLagMs?.max ?? null;
+    rows.push(lag == null ? { label: "프로세스", state: "off", text: "…" }
+      : lag >= 400 ? { label: "프로세스", state: "warn", text: `멈춤 ${Math.round(lag)}ms — 메모리 확인` }
+      : { label: "프로세스", state: "ok", text: "정상" });
+    rows.push(gatesBlocked == null ? { label: "입출금 중단", state: "off", text: "…" }
+      : gatesBlocked > 0 ? { label: "입출금 중단", state: "warn", text: `${gatesBlocked}종` }
+      : { label: "입출금 중단", state: "ok", text: "없음" });
+    return rows;
+  })();
+  const warnCount = srcRows.filter((r) => r.state === "warn").length;
 
   // 스트림 — 상위 6개. `liveOverlay`가 의존성이라 600ms마다 무조건 재정렬됐다.
   // 표시는 소수 2자리이므로 그 해상도로 스냅샷을 떠서 정렬 빈도를 낮춘다.
@@ -193,29 +227,37 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
 
   return (
     <div style={{ paddingBottom: 46 }}>
-      {/* 상단 그리드: 체크리스트 | KPI 2×2 | 리스크 현황 */}
+      {/* 상단 그리드: 감시 상태 | KPI 2×2 | 리스크 현황 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
         <div style={{ ...CARD, gridRow: mobile ? "auto" : "1 / 3", gridColumn: mobile ? "1 / -1" : undefined, padding: "16px 18px" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>라이브 전환 체크리스트</div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)" }}>라이브 전환 전 완료 항목 · RUNBOOK 순서</div>
-          {/* The % label used to live INSIDE the bar at top:-19, which the bar's
-              own `overflow: hidden` clipped away — it was never visible. It sits
-              above the bar now, and the bar keeps its clipping for the fill. */}
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-            <span className="tnum" style={{ fontSize: 11, fontWeight: 700, color: "var(--pos)", lineHeight: 1 }}>{progress}%</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700 }}>감시 상태</span>
+            <span style={{ flex: 1 }} />
+            {health && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
+                background: health.killed ? "var(--neg)" : health.dryRun ? "var(--card-3)" : "var(--pos)",
+                color: health.killed ? "#fff" : health.dryRun ? "var(--text-dim)" : "var(--brand-ink)",
+              }}>
+                {health.killed ? "킬스위치 ON" : health.dryRun ? "모의 (DRY)" : "라이브"}
+              </span>
+            )}
           </div>
-          <div style={{ marginTop: 5, height: 6, borderRadius: 999, background: "var(--card-3)", position: "relative", overflow: "hidden" }}>
-            <div style={{ position: "absolute", inset: 0, width: `${progress}%`, background: "var(--pos)", borderRadius: 999 }} />
+          <div style={{ marginTop: 4, fontSize: 11, color: warnCount > 0 ? "var(--neg)" : "var(--text-mute)" }}>
+            {warnCount > 0 ? `⚠ ${warnCount}개 항목 조치 필요` : "감지 소스·프로세스 전부 정상"}
           </div>
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column" }}>
-            {checks.map((c) => (
-              <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column" }}>
+            {srcRows.map((r) => (
+              <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
                 <span style={{
-                  width: 17, height: 17, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 10, flex: "0 0 auto",
-                  background: c.on ? "var(--pos-soft)" : "transparent", color: c.on ? "var(--pos)" : "transparent",
-                  border: c.on ? "none" : "1.5px solid var(--border-strong)",
-                }}>✓</span>
-                <span style={{ color: c.on ? "var(--text-mute)" : "var(--text-dim)", textDecoration: c.on ? "line-through" : "none" }}>{c.label}</span>
+                  width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
+                  background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
+                }} />
+                <span style={{ color: "var(--text-dim)" }}>{r.label}</span>
+                <span style={{ flex: 1 }} />
+                <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)" }}>
+                  {r.text}
+                </span>
               </div>
             ))}
           </div>
@@ -224,7 +266,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
             onClick={() => onGoTab("control")}
             style={{ marginTop: 12, width: "100%", border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: "var(--radius-sm)", padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
           >
-            운영 탭에서 설정 →
+            운영 탭에서 상세 →
           </button>
         </div>
 
