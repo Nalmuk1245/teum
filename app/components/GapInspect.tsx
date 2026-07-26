@@ -140,6 +140,29 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
         <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
           {line("총차익 (실호가)", pct(gross))}
           {line("예상 왕복비용", `−${opp.costPct.toFixed(2)}%`, "var(--text-dim)")}
+          {/* 헷지 내역 — 테이커만이 아니라 진입 베이시스와 펀딩까지. 베이시스는
+              t0에 확정되는 값이라(현물 매수 + 퍼프 숏 동시) 리스크가 아니라
+              비용/수익이다. 백워데이션이면 순익을 갉아먹는 게 여기서 보여야 한다. */}
+          {opp.hedge && (
+            <div style={{ padding: "2px 0 4px 10px", borderLeft: "2px solid var(--border)", margin: "2px 0 4px" }}>
+              {line("├ 퍼프 테이커 왕복", `−${opp.hedge.takerPct.toFixed(3)}%`, "var(--text-mute)")}
+              {opp.hedge.basisSuspect
+                ? line("├ 현·선 괴리", "확인 불가 — 비용 과소평가 가능", "var(--amber)")
+                : line(
+                    `├ 현·선 괴리 (${opp.hedge.basisPct >= 0 ? "콘탱고" : "백워데이션"})`,
+                    `${opp.hedge.basisPct >= 0 ? "+" : "−"}${Math.abs(opp.hedge.basisPct).toFixed(3)}%`,
+                    opp.hedge.basisPct >= 0 ? "var(--pos)" : "var(--neg)",
+                  )}
+              {line(
+                "└ 펀딩",
+                opp.hedge.settlesInWindow
+                  ? `${opp.hedge.fundingPct <= 0 ? "+" : "−"}${Math.abs(opp.hedge.fundingPct).toFixed(3)}% (창 안 정산)`
+                  : "0% (정산 안 지남)",
+                !opp.hedge.settlesInWindow ? "var(--text-mute)"
+                  : opp.hedge.fundingPct <= 0 ? "var(--pos)" : "var(--neg)",
+              )}
+            </div>
+          )}
           {line("순수익", pct(net), net > 0 ? "var(--pos)" : "var(--neg)")}
           {opp.notionalCapUsd != null && line("호가 한도", usd(opp.notionalCapUsd))}
           {opp.persistence && (

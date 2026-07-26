@@ -325,9 +325,11 @@ function extraCostPct(opp: Opportunity): number {
   let extra = 0;
   // KRW proceeds have to come home eventually.
   if (opp.legs.some((l) => l.quote === "KRW")) extra += CONFIG.REPATRIATION_PCT ?? 0;
-  // Hedged transfer plays pay the perp taker twice.
+  // 헷지 전송형은 테이커 왕복만이 아니라 진입 베이시스·창 안 펀딩까지 문다.
+  // 스캐너가 계산해 붙여둔 분해값을 그대로 쓴다 — 여기서 다시 계산하면 보드가
+  // 보여준 숫자와 게이트가 쓰는 숫자가 갈라진다. 없으면(구버전 스냅샷) 테이커만.
   if (opp.hasPerp && (opp.kind === "kimchi" || opp.kind === "cex-dex")) {
-    extra += (FEES.perpTakerPct.binance ?? 0.045) * 2;
+    extra += opp.hedge?.totalPct ?? (FEES.perpTakerPct.binance ?? 0.045) * 2;
   }
   return extra;
 }

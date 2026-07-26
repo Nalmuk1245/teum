@@ -75,6 +75,9 @@ export type Opportunity = {
    *  worst recent single-step jump and the USDT/KRW (tether-premium) drift that
    *  the coin hedge doesn't cover. */
   transferRisk?: { etaMin: number; driftPct: number; jumpPct: number; fxDriftPct: number; hedgeAdvised: boolean };
+  /** 헷지 실비용 분해 — 테이커 왕복·진입 베이시스·창 안 펀딩. hasPerp인 전송형
+   *  기회에만 붙는다. netPct엔 이미 반영돼 있고, 이 필드는 내역 표시용이다. */
+  hedge?: { takerPct: number; basisPct: number; fundingPct: number; totalPct: number; settlesInWindow: boolean; basisSuspect?: boolean };
   /** Funding-basis timing: when the SHORT leg next settles + both intervals. */
   fundingMeta?: { nextTs: number | null; shortIntervalH: number | null; longIntervalH: number | null };
   note?: string;

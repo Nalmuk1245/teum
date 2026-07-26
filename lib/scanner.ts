@@ -3,12 +3,13 @@
 // the board is meaningful without live/KR data.
 
 import type { Opportunity, ScanContext, TickerMap, Venue } from "./types";
-import { CONFIG, FEES } from "./config";
+import { CONFIG } from "./config";
 import { EXCHANGES } from "./exchanges";
 import { STRATEGIES } from "./strategies";
 import { fetchTransferStatus } from "./transfers";
 import { fetchPerpBases } from "./perps";
 import { fetchFundingRates, fetchMarks } from "./funding";
+import { hedgeCost } from "./hedgeCost";
 import { recordGap, pruneHistory, confidence } from "./history";
 import { listingInfo } from "./listings";
 import { computeCalibrationPct } from "./calibration";
@@ -66,16 +67,18 @@ export async function scanAll(): Promise<Opportunity[]> {
   }
   if (ctx.perps) for (const o of opps) o.hasPerp = ctx.perps.has(o.base);
 
-  // Hedge round-trip cost (perp taker open+close) — charged once hasPerp is
-  // known. The recommended kimchi flow hedges whenever possible, so the board
-  // net assumes it; unhedged coins skip the fee but carry the (bigger) price
-  // risk shown by transferRisk instead.
-  const hedgeRt = (FEES.perpTakerPct.binance ?? 0.045) * 2;
+  // 헷지 실비용 — 테이커 왕복 + 진입 베이시스 + 창 안 펀딩. 권장 김프 플로우는
+  // 가능하면 항상 헷지하므로 보드 순익도 헷지를 전제한다. 퍼프가 없는 코인은
+  // 이 비용을 안 내는 대신 (더 큰) 가격 리스크를 transferRisk로 안는다.
+  // 분해 근거는 lib/hedgeCost.ts 상단 주석.
   for (const o of opps) {
     // 전송형 kinds(kimchi, cex-dex)만 — 전송 중 노출을 헷지한다는 전제의 비용.
     if (o.mock || !o.hasPerp || (o.kind !== "kimchi" && o.kind !== "cex-dex")) continue;
-    o.costPct += hedgeRt;
-    o.netPct -= hedgeRt;
+    const spotUsd = o.legs.find((l) => l.quote === "USDT")?.price ?? 0;
+    const h = hedgeCost(o.base, spotUsd, o.transfer?.etaMin ?? null, ctx.funding, ctx.marks);
+    o.hedge = h;
+    o.costPct += h.totalPct;
+    o.netPct -= h.totalPct;
     if (o.netPct <= 0) o.executable = false;
   }
 
