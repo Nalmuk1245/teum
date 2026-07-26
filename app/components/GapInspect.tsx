@@ -140,27 +140,29 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
         <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
           {line("총차익 (실호가)", pct(gross))}
           {line("예상 왕복비용", `−${opp.costPct.toFixed(2)}%`, "var(--text-dim)")}
-          {/* 헷지 내역 — 테이커만이 아니라 진입 베이시스와 펀딩까지. 베이시스는
-              t0에 확정되는 값이라(현물 매수 + 퍼프 숏 동시) 리스크가 아니라
-              비용/수익이다. 백워데이션이면 순익을 갉아먹는 게 여기서 보여야 한다. */}
+          {/* 헷지 내역. 비용은 테이커 왕복 + (창 안) 펀딩뿐이다 — 진입 베이시스는
+              무기한물 단기 보유에서 회수를 기대할 근거가 없어 비용에 넣지 않고
+              참고로만 보여준다(근거: lib/hedgeCost.ts 상단). */}
           {opp.hedge && (
             <div style={{ padding: "2px 0 4px 10px", borderLeft: "2px solid var(--border)", margin: "2px 0 4px" }}>
               {line("├ 퍼프 테이커 왕복", `−${opp.hedge.takerPct.toFixed(3)}%`, "var(--text-mute)")}
-              {opp.hedge.basisSuspect
-                ? line("├ 현·선 괴리", "확인 불가 — 비용 과소평가 가능", "var(--amber)")
-                : line(
-                    `├ 현·선 괴리 (${opp.hedge.basisPct >= 0 ? "콘탱고" : "백워데이션"})`,
-                    `${opp.hedge.basisPct >= 0 ? "+" : "−"}${Math.abs(opp.hedge.basisPct).toFixed(3)}%`,
-                    opp.hedge.basisPct >= 0 ? "var(--pos)" : "var(--neg)",
-                  )}
               {line(
-                "└ 펀딩",
+                "├ 펀딩",
                 opp.hedge.settlesInWindow
-                  ? `${opp.hedge.fundingPct <= 0 ? "+" : "−"}${Math.abs(opp.hedge.fundingPct).toFixed(3)}% (창 안 정산)`
+                  ? opp.hedge.fundingPct > 0
+                    ? `−${opp.hedge.fundingPct.toFixed(3)}% (창 안 정산)`
+                    : `+${Math.abs(opp.hedge.fundingPct).toFixed(3)}% 수령 예상 (비용 미반영)`
                   : "0% (정산 안 지남)",
                 !opp.hedge.settlesInWindow ? "var(--text-mute)"
                   : opp.hedge.fundingPct <= 0 ? "var(--pos)" : "var(--neg)",
               )}
+              {opp.hedge.basisSuspect
+                ? line("└ 현·선 괴리", "확인 불가 (마크·현물 차이 과대)", "var(--amber)")
+                : line(
+                    `└ 현·선 괴리 (${opp.hedge.basisPct >= 0 ? "콘탱고" : "백워데이션"}, 비용 미반영)`,
+                    `${opp.hedge.basisPct >= 0 ? "+" : "−"}${Math.abs(opp.hedge.basisPct).toFixed(3)}%`,
+                    Math.abs(opp.hedge.basisPct) > 0.5 ? "var(--amber)" : "var(--text-mute)",
+                  )}
             </div>
           )}
           {line("순수익", pct(net), net > 0 ? "var(--pos)" : "var(--neg)")}

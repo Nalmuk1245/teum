@@ -16,6 +16,8 @@ export type TimelineEntry = {
   ok: boolean;
   /** wait = 정상 대기(입금 미확인 등, 실패가 아니다) · retry = 재시도 · rollback = 되돌림 */
   kind?: "wait" | "retry" | "rollback";
+  /** 같은 단계의 연속 대기를 한 줄로 합쳤을 때의 횟수 (없으면 1회). */
+  tries?: number;
   message?: string;
 };
 

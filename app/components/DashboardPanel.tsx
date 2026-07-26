@@ -83,9 +83,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
   const [trades, setTrades] = useState<{ base: string; kind: string; route: string; realizedPnlUsd: number | null; dryRun: boolean; ts: number }[]>([]);
   const [listWatch, setListWatch] = useState<{ plays: { base: string; venue: string; opensAt?: number; opened: boolean }[]; watching: boolean } | null>(null);
   // 감시 상태 카드 데이터 — 전부 기존 API에서 읽는다.
-  const [health, setHealth] = useState<{ ok: boolean; scanAgeSec: number | null; killed: boolean; dryRun: boolean; loopLagMs?: { max: number } } | null>(null);
+  const [health, setHealth] = useState<{ ok: boolean; scanAgeSec: number | null; killed: boolean; dryRun: boolean; loopLagMs?: { worstMs: number; worstAgoSec: number | null } } | null>(null);
   const [watch, setWatch] = useState<{ annOkAgoSec: number | null; annBlocked: boolean; mktOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
   const [gatesBlocked, setGatesBlocked] = useState<number | null>(null);
+  /** 키가 없어 일부 거래소 상태를 못 본 상태 — "중단 없음"이라고 단정할 수 없다. */
+  const [gatesPartial, setGatesPartial] = useState(false);
   const [tradeCount, setTradeCount] = useState<number | null>(null);
   const [mock, setMock] = useState(true);
 
@@ -111,6 +113,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     const loadGates = () => fetch("/api/gates", { cache: "no-store" }).then((r) => r.json()).then((j) => {
       const rows = (j.rows ?? []) as { venues: Record<string, { deposit: boolean; withdraw: boolean } | null> }[];
       setGatesBlocked(rows.filter((r) => Object.values(r.venues).some((s) => s && (!s.deposit || !s.withdraw))).length);
+      setGatesPartial((j.missing?.length ?? 0) > 0);
     }).catch(() => {});
     loadGates();
     const gid = setInterval(loadGates, 5 * 60_000);
@@ -179,9 +182,12 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     const agoTxt = (s: number | null) => (s == null ? "수신 없음" : s < 90 ? `${s}초 전` : `${Math.round(s / 60)}분 전`);
     rows.push(!health
       ? { label: "스캔", state: "off", text: "…" }
-      : health.scanAgeSec != null && health.scanAgeSec < 60
-        ? { label: "스캔", state: "ok", text: `${health.scanAgeSec}초 전` }
-        : { label: "스캔", state: "warn", text: "정지 — 재시작 필요" });
+      : health.scanAgeSec == null
+        // 방금 기동해 첫 스캔이 아직 안 온 상태 — 고장이 아니다.
+        ? { label: "스캔", state: "off", text: "첫 스캔 대기" }
+        : health.scanAgeSec < 60
+          ? { label: "스캔", state: "ok", text: `${health.scanAgeSec}초 전` }
+          : { label: "스캔", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)} — 재시작 필요` });
     rows.push(!watch ? { label: "업비트 공지", state: "off", text: "…" }
       : watch.annBlocked ? { label: "업비트 공지", state: "warn", text: "차단 (비KR IP)" }
       : watch.annOkAgoSec != null ? { label: "업비트 공지", state: "ok", text: agoTxt(watch.annOkAgoSec) }
@@ -194,16 +200,21 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
       : !watch.tgConfigured ? { label: "텔레그램 감지", state: "off", text: "미설정" }
       : watch.tgOkAgoSec != null ? { label: "텔레그램 감지", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
       : { label: "텔레그램 감지", state: "off", text: "수신 대기" });
-    const lag = health?.loopLagMs?.max ?? null;
-    rows.push(lag == null ? { label: "프로세스", state: "off", text: "…" }
-      : lag >= 400 ? { label: "프로세스", state: "warn", text: `멈춤 ${Math.round(lag)}ms — 메모리 확인` }
-      : { label: "프로세스", state: "ok", text: "정상" });
+    const lag = health?.loopLagMs;
+    rows.push(!lag ? { label: "프로세스", state: "off", text: "…" }
+      : lag.worstMs >= 400
+        ? { label: "프로세스", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
+        : { label: "프로세스", state: "ok", text: "정상 (10분 내 멈춤 없음)" });
+    // 키가 없는 거래소는 상태가 null로 와서 집계에서 빠진다. 그걸 "없음"이라고
+    // 초록으로 단정하면, 감시 카드가 모르는 것을 안다고 말하는 셈이 된다.
     rows.push(gatesBlocked == null ? { label: "입출금 중단", state: "off", text: "…" }
       : gatesBlocked > 0 ? { label: "입출금 중단", state: "warn", text: `${gatesBlocked}종` }
+      : gatesPartial ? { label: "입출금 중단", state: "off", text: "일부 거래소만 확인 (키 필요)" }
       : { label: "입출금 중단", state: "ok", text: "없음" });
     return rows;
   })();
   const warnCount = srcRows.filter((r) => r.state === "warn").length;
+  const unknownCount = srcRows.filter((r) => r.state === "off").length;
 
   // 스트림 — 상위 6개. `liveOverlay`가 의존성이라 600ms마다 무조건 재정렬됐다.
   // 표시는 소수 2자리이므로 그 해상도로 스냅샷을 떠서 정렬 빈도를 낮춘다.
@@ -330,7 +341,9 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
             )}
           </div>
           <div style={{ marginTop: 4, fontSize: 11, color: warnCount > 0 ? "var(--neg)" : "var(--text-mute)" }}>
-            {warnCount > 0 ? `⚠ ${warnCount}개 항목 조치 필요` : "감지 소스·프로세스 전부 정상"}
+            {warnCount > 0 ? `⚠ ${warnCount}개 항목 조치 필요`
+              : unknownCount > 0 ? `${unknownCount}개 항목 확인 불가 (미설정·대기)`
+              : "감지 소스·프로세스 전부 정상"}
           </div>
           <div style={{ marginTop: 12, display: "flex", flexDirection: "column" }}>
             {srcRows.map((r) => (

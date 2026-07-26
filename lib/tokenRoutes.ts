@@ -247,8 +247,18 @@ export function verifiedContract(base: string, chain: string): { address: string
   return { address: c.contract, decimals: c.decimals };
 }
 
-/** 진단용 — SQLite 전환 임계 감시(docs/TOKEN_ROUTE_DB.md §9). */
+/** 진단용 — SQLite 전환 임계 감시(docs/TOKEN_ROUTE_DB.md §9).
+ *
+ *  bytes는 **캐시된 값**이다. /api/health가 15초마다 폴링하는데 매번 전체를
+ *  stringify하면, 임계(2MB) 근처에서 그 자체가 150ms 동기 정지를 만든다 —
+ *  이벤트 루프 멈춤을 보고하려고 만든 엔드포인트가 멈춤을 유발하게 된다. */
+let statsCache: { tokens: number; bytes: number; at: number } | null = null;
+const STATS_TTL = 5 * 60_000;
 export function routeDbStats(): { tokens: number; bytes: number } {
   const d = db();
-  return { tokens: Object.keys(d.tokens).length, bytes: JSON.stringify(d).length };
+  const tokens = Object.keys(d.tokens).length;
+  if (!statsCache || Date.now() - statsCache.at > STATS_TTL || statsCache.tokens !== tokens) {
+    statsCache = { tokens, bytes: JSON.stringify(d).length, at: Date.now() };
+  }
+  return { tokens, bytes: statsCache.bytes };
 }

@@ -9,7 +9,12 @@
 
 import { monitorEventLoopDelay } from "perf_hooks";
 
-type G = { __arbLoopLag?: ReturnType<typeof monitorEventLoopDelay>; __arbLagWatch?: NodeJS.Timeout };
+type G = {
+  __arbLoopLag?: ReturnType<typeof monitorEventLoopDelay>;
+  __arbLagWatch?: NodeJS.Timeout;
+  /** 최근 WORST_WINDOW_MS 안의 최악 멈춤 — 감시창 리셋과 무관하게 남는다. */
+  __arbLagWorst?: { ms: number; at: number };
+};
 const g = globalThis as unknown as G;
 if (!g.__arbLoopLag) {
   const h = monitorEventLoopDelay({ resolution: 10 });
@@ -28,16 +33,34 @@ if (!g.__arbLagWatch) {
     if (max >= STALL_MS) {
       const rss = Math.round(process.memoryUsage().rss / 1048576);
       console.warn(`[loop] 멈춤 ${Math.round(max)}ms (최근 5초) · rss ${rss}MB`);
+      // 리셋 전에 남긴다 — 이 값이 /api/health와 대시보드가 보는 유일한 흔적이다.
+      const prev = g.__arbLagWorst;
+      if (!prev || Date.now() - prev.at >= WORST_WINDOW_MS || max >= prev.ms) {
+        g.__arbLagWorst = { ms: Math.round(max), at: Date.now() };
+      }
     }
     h.reset();
   }, 5000);
   g.__arbLagWatch.unref();
 }
 
-export function loopLag(): { p50: number; p99: number; max: number } {
+/** 최악 멈춤을 기억하는 창. 감시가 5초마다 히스토그램을 비우기 때문에, 이게 없으면
+ *  /api/health는 리셋 직후 언제나 "정상"으로 보인다(15초 폴링이면 대부분 그렇다). */
+const WORST_WINDOW_MS = 10 * 60_000;
+
+export function loopLag(): { p50: number; p99: number; worstMs: number; worstAgoSec: number | null } {
   const h = g.__arbLoopLag!;
   const ms = (n: number) => Math.round(n / 1e5) / 10; // ns → ms(소수 1자리)
-  return { p50: ms(h.percentile(50)), p99: ms(h.percentile(99)), max: ms(h.max) };
+  const w = g.__arbLagWorst;
+  const fresh = w && Date.now() - w.at < WORST_WINDOW_MS ? w : null;
+  // 현재 창의 max도 후보에 넣는다 — 감시가 아직 안 훑은 구간을 놓치지 않게.
+  const curMax = ms(h.max);
+  return {
+    p50: ms(h.percentile(50)),
+    p99: ms(h.percentile(99)),
+    worstMs: Math.max(fresh?.ms ?? 0, curMax),
+    worstAgoSec: fresh ? Math.round((Date.now() - fresh.at) / 1000) : null,
+  };
 }
 
 /** 스파이크 원인을 구간별로 좁힐 때 — 읽은 뒤 창을 비운다. */

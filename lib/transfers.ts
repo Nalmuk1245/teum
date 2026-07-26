@@ -110,14 +110,23 @@ async function fetchUpbit(): Promise<Map<string, WalletStatus> | null> {
         deposit: s === "working" || s === "deposit_only",
         withdraw: s === "working" || s === "withdraw_only",
       };
-      // 업비트는 코인이 여러 net_type 행으로 온다 — 코인 요약은 OR로 접는다.
-      const prev = m.get(x.currency);
-      m.set(x.currency, prev ? { deposit: prev.deposit || st.deposit, withdraw: prev.withdraw || st.withdraw } : st);
       const list = nets.get(x.currency) ?? [];
       list.push({ net: x.net_type || x.currency, ...st });
       nets.set(x.currency, list);
     }
-    for (const [base, list] of nets) putNets("upbit", base, list);
+    // 코인 요약은 **우리가 실제로 쓸 체인**의 행으로 정한다. OR로 접으면 "어느 한
+    // 체인이라도 열림"이 되어 게이트가 단조 완화되는데, 이 값이 executable을 만들고
+    // 거기서 실제 출금이 나간다 — TRX가 정지인데 ETH가 열려 있으면 통과시킨 뒤
+    // TRX로 보내 미입금으로 좌초한다. 나머지 3개 거래소가 이미 이 방식이다
+    // (fetchBinance/fetchBybit/fetchOkx). 목표 체인 행이 없을 때만 OR로 내려간다.
+    for (const [base, list] of nets) {
+      putNets("upbit", base, list);
+      const wanted = BINANCE_NET[wantedChainKey(base)];
+      const hit = wanted ? list.find((n) => n.net.toUpperCase() === wanted.toUpperCase()) : undefined;
+      m.set(base, hit
+        ? { deposit: hit.deposit, withdraw: hit.withdraw }
+        : { deposit: list.some((n) => n.deposit), withdraw: list.some((n) => n.withdraw) });
+    }
     return m;
   } catch {
     return null;

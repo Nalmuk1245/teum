@@ -337,7 +337,7 @@ export type TradeRec = {
   buyUsd?: number | null; sellUsd?: number | null; spotPnlUsd?: number | null; hedgePnlUsd?: number | null;
   durationsSec?: Record<string, number>; txs?: { step: string; hash: string; url: string | null }[]; note?: string;
   hedged?: boolean; status?: string;
-  timeline?: { step: string; label: string; at: number; sec: number; ok: boolean; kind?: "wait" | "retry" | "rollback"; message?: string }[];
+  timeline?: { step: string; label: string; at: number; sec: number; ok: boolean; kind?: "wait" | "retry" | "rollback"; tries?: number; message?: string }[];
 };
 
 export type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
@@ -444,7 +444,11 @@ function PnlViz({ trades }: { trades: TradeRec[] }) {
 
 // 거래 목록 — 행 클릭 시 상세(수량·진입/청산가·손익 분해·단계 소요·tx) 펼침.
 function TradeList({ trades }: { trades: TradeRec[] }) {
-  const [open, setOpen] = useState<number | null>(null);
+  // 인덱스가 아니라 거래 자체를 키로 잡는다. /api/trades는 15초마다 폴링되고
+  // 최신이 **앞에** 붙으므로, 인덱스로 열어두면 새 거래가 하나 들어올 때마다
+  // 펼쳐진 칸이 다른 거래의 타임라인·손익·tx를 보여준다. 이번에 그 안에 넣은
+  // 내용이 정확히 오귀속되면 안 되는 것들이다.
+  const [open, setOpen] = useState<string | null>(null);
   const px = (n: number | null | undefined) =>
     n == null ? "—" : n >= 100 ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 1 })}` : n >= 0.01 ? `$${n.toFixed(4)}` : `$${n.toPrecision(3)}`;
   const money = (n: number | null | undefined) =>
@@ -461,10 +465,11 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
         const totalSec = t.durationsSec ? Object.values(t.durationsSec).reduce((s, v) => s + v, 0) : 0;
         const agoMin = Math.round((Date.now() - t.ts) / 60_000);
         const kindKo = t.kind === "kimchi" ? "김프" : t.kind === "cross-cex" ? "크로스" : t.kind === "cex-dex" ? "CEX-DEX" : t.kind;
+        const rid = `${t.ts}:${t.base}`;
         return (
-        <div key={i} style={{ borderTop: "1px solid var(--border)" }}>
+        <div key={rid} style={{ borderTop: "1px solid var(--border)" }}>
           <div
-            onClick={() => setOpen(open === i ? null : i)}
+            onClick={() => setOpen(open === rid ? null : rid)}
             style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: "6px 0", fontSize: 11.5, cursor: "pointer" }}
           >
             <span style={{ minWidth: 0 }}>
@@ -487,7 +492,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
               </span>
             </span>
           </div>
-          {open === i && (
+          {open === rid && (
             <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
               {dLine("시각", new Date(t.ts).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }))}
               {/* 감지 대비 실현 — 이 차이(누수)가 곧 비용 모델의 오차라 캘리브레이션의
@@ -528,7 +533,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
                         <span style={{ color: "var(--text-dim)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                           {e.label}
                           {e.kind === "retry" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>재시도</span>}
-                          {e.kind === "wait" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>대기</span>}
+                          {e.kind === "wait" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>대기{e.tries && e.tries > 1 ? ` ×${e.tries}` : ""}</span>}
                           {e.kind === "rollback" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>롤백</span>}
                           {e.message && <span style={{ color: "var(--text-mute)", marginLeft: 5 }}>{e.message}</span>}
                           {/* 단계 사이의 빈 시간 — 승인 대기나 폴링 간격이 여기 드러난다 */}

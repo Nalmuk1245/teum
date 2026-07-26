@@ -138,6 +138,24 @@ const sleep = (ms: number) => new Promise<void>((res) => { setTimeout(res, ms).u
 // 타임라인 상한 — 입금 폴링이 90분까지 20초 간격으로 돌 수 있어(최대 ~270회)
 // 무제한이면 레코드가 폴링 로그로 뒤덮인다.
 const MAX_TIMELINE = 60;
+
+/**
+ * 타임라인 추가. 연속된 같은 단계의 **대기**는 새 줄을 만들지 않고 마지막 줄에
+ * 합산한다 — 이게 없으면 20분 입금 대기가 60칸을 다 먹고, 정작 봐야 할 매도·청산·
+ * 정산·롤백 줄이 상한에 걸려 사라진다(기록의 목적이 뒤집힌다).
+ * 상한을 넘으면 **앞쪽**을 버린다: 끝(무엇이 어떻게 끝났나)이 더 중요하다.
+ */
+function pushTimeline(eng: Engine, e: TimelineEntry): void {
+  const last = eng.timeline[eng.timeline.length - 1];
+  if (last && e.kind === "wait" && last.kind === "wait" && last.step === e.step) {
+    last.sec = Math.round((e.at + e.sec * 1000 - last.at) / 1000); // 첫 대기 시작부터 누적
+    last.tries = (last.tries ?? 1) + 1;
+    last.message = e.message;
+    return;
+  }
+  eng.timeline.push(e);
+  if (eng.timeline.length > MAX_TIMELINE) eng.timeline.splice(0, eng.timeline.length - MAX_TIMELINE);
+}
 function recordExecFailure(base: string, stepLabel: string) {
   const now = Date.now();
   E.fails = E.fails.filter((t) => now - t < CB_WINDOW_MS);
@@ -300,7 +318,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
   return out;
 }
 
-async function revalidate(eng: Engine, sizeUsd: number) {
+async function revalidate(eng: Engine, sizeUsd: number, hedged: boolean) {
   if (eng.opp.mock) return { ok: true as const };
   try {
     // fresh: 돈이 움직이기 직전 — 캐시된 호가로 판단하지 않는다
@@ -312,7 +330,7 @@ async function revalidate(eng: Engine, sizeUsd: number) {
     // measured execution leak — real cash that quote.ts knows nothing about. The
     // gate compared against 0 and therefore passed trades whose true net was
     // negative, which is exactly the marginal band kimchi lives in.
-    const extra = extraCostPct(eng.opp);
+    const extra = extraCostPct(eng.opp, hedged);
     if (q.execNetPct <= extra) {
       return {
         ok: false as const,
@@ -328,14 +346,17 @@ async function revalidate(eng: Engine, sizeUsd: number) {
 
 /** Cost the depth quote does NOT price, but the board's model does. Kept here so
  *  the pre-order gate compares like with like. */
-function extraCostPct(opp: Opportunity): number {
+function extraCostPct(opp: Opportunity, hedged: boolean): number {
   let extra = 0;
   // KRW proceeds have to come home eventually.
   if (opp.legs.some((l) => l.quote === "KRW")) extra += CONFIG.REPATRIATION_PCT ?? 0;
-  // 헷지 전송형은 테이커 왕복만이 아니라 진입 베이시스·창 안 펀딩까지 문다.
-  // 스캐너가 계산해 붙여둔 분해값을 그대로 쓴다 — 여기서 다시 계산하면 보드가
-  // 보여준 숫자와 게이트가 쓰는 숫자가 갈라진다. 없으면(구버전 스냅샷) 테이커만.
-  if (opp.hasPerp && (opp.kind === "kimchi" || opp.kind === "cex-dex")) {
+  // 헷지 비용은 **이 런이 실제로 헷지할 때만** 낸다. hasPerp(퍼프가 존재함)로
+  // 판단하면 hedge:false로 띄운 런에도 헷지 비용을 매기게 되는데, 그 런은 퍼프
+  // 포지션이 없으므로 테이커도 펀딩도 발생하지 않는다 — 게이트를 근거 없이
+  // 조이거나(비용 과대) 느슨하게(펀딩 크레딧) 만든다.
+  // 값은 스캐너가 붙여둔 분해를 그대로 쓴다: 여기서 다시 계산하면 보드가 보여준
+  // 숫자와 게이트가 쓰는 숫자가 갈라진다. 없으면(구버전 스냅샷) 테이커 왕복만.
+  if (hedged && opp.hasPerp && (opp.kind === "kimchi" || opp.kind === "cex-dex")) {
     extra += opp.hedge?.totalPct ?? (FEES.perpTakerPct.binance ?? 0.045) * 2;
   }
   return extra;
@@ -384,7 +405,7 @@ async function loop(id: string) {
     }
 
     if (REVALIDATE_STEPS.has(step.id)) {
-      const v = await revalidate(eng, run().sizeUsd);
+      const v = await revalidate(eng, run().sizeUsd, run().hedge);
       if (eng.cancelled) { eng.busy = false; return; }
       if (!v.ok) {
         patch(id, {
@@ -407,15 +428,13 @@ async function loop(id: string) {
     eng.durations[step.id] = Math.round((Date.now() - stepT0) / 1000);
     // 시각까지 남긴다 — 재시도·대기·실패도 각각 한 줄이다. durations는 마지막
     // 시도만 덮어쓰므로, "왜 늦었나"는 이 목록에만 남는다.
-    if (eng.timeline.length < MAX_TIMELINE) {
-      eng.timeline.push({
-        step: step.id, label: step.label, at: stepT0,
-        sec: Math.round((Date.now() - stepT0) / 1000),
-        ok: r.ok,
-        kind: r.pending ? "wait" : eng.timeline.some((e) => e.step === step.id) ? "retry" : undefined,
-        message: r.message,
-      });
-    }
+    pushTimeline(eng, {
+      step: step.id, label: step.label, at: stepT0,
+      sec: Math.round((Date.now() - stepT0) / 1000),
+      ok: r.ok,
+      kind: r.pending ? "wait" : eng.timeline.some((e) => e.step === step.id) ? "retry" : undefined,
+      message: r.message,
+    });
     if (eng.cancelled) { eng.busy = false; return; }
 
     const upd: Partial<RunView> = {};
@@ -471,12 +490,10 @@ async function loop(id: string) {
             const rbT0 = Date.now();
             try { rb = await callStep(id, eng, sid, { rollback: true }); }
             catch (e) { rb = { ok: false, message: e instanceof Error ? e.message : "롤백 실패" }; }
-            if (eng.timeline.length < MAX_TIMELINE) {
-              eng.timeline.push({
-                step: sid, label: `${run().plan[j].label} 롤백`, at: rbT0,
-                sec: Math.round((Date.now() - rbT0) / 1000), ok: rb.ok, kind: "rollback", message: rb.message,
-              });
-            }
+            pushTimeline(eng, {
+              step: sid, label: `${run().plan[j].label} 롤백`, at: rbT0,
+              sec: Math.round((Date.now() - rbT0) / 1000), ok: rb.ok, kind: "rollback", message: rb.message,
+            });
             allOk = allOk && rb.ok;
             statuses[sid] = rb.ok ? "rolledback" : "error";
             messages[sid] = `${messages[sid] ?? ""} · ${rb.ok ? "롤백됨" : `롤백 실패(${rb.message ?? "?"}) — 수동`}`;

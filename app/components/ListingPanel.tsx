@@ -143,6 +143,19 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   const [histOpen, setHistOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
+  // PC 2단 배치에서 우측 컬럼이 데스크탑 표(최소 ~390px)를 담을 수 있는가.
+  // 좌측 목록이 400px 고정이므로 창이 이만큼은 돼야 한다. 그 아래(태블릿 세로,
+  // 반쪽 창)에서는 상세를 모바일 배치로 접는다 — 안 접으면 매수 버튼이 잘린다.
+  // 서버에선 알 수 없는 값이라 false로 시작해 마운트 후 정정한다(mobile.tsx와 동일).
+  const [tight, setTight] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 900px)");
+    const sync = () => setTight(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   // 히스토리에서 여는 경로. 상세는 목록 쪽에 그려지는데 히스토리는 카드 맨 아래라,
   // 모바일에선 열어도 화면 밖이라 아무 일도 안 일어난 것처럼 보인다 — 그래서 스크롤을
   // 같이 옮긴다. PC는 상세가 전체 화면을 차지하므로 필요 없다.
@@ -408,7 +421,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
             <span style={{ flex: 1 }} />
             <button type="button" style={BTN_GHOST} onClick={() => setSelected(null)}>닫기</button>
           </div>
-          <DetailPanel base={selected} />
+          <DetailPanel base={selected} narrow={tight} />
         </div>
       ) : (
         <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
@@ -591,8 +604,13 @@ function CandleMini({ chain, contract }: { chain: string; contract: string }) {
 }
 
 // ── 상세·실행 패널 — ①신호 ②차트 ③매수·매도 ④포지션 ⑤참고 ────────────────────
-function DetailPanel({ base }: { base: string }) {
-  const mob = useIsMobile(); // 표를 3열로 접어 매수·매도 버튼이 화면 밖으로 안 나가게
+function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }) {
+  // 표를 3열로 접어 매수·매도 버튼이 화면 밖으로 안 나가게.
+  // `narrow`: 뷰포트는 데스크탑이어도 **이 패널이 들어앉은 컬럼이 좁을 때**(PC
+  // 상장 탭의 400px+1fr 분할) 쓰는 플래그. 데스크탑 표는 최소 ~390px를 요구하는데
+  // 768px 창이면 우측 컬럼이 ~330px라, 감싸는 카드가 overflow:hidden이라서
+  // 마지막 auto 컬럼(매수·매도 버튼)이 그냥 잘려 클릭조차 못 하게 된다.
+  const mob = useIsMobile() || !!narrow;
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sizeUsd, setSizeUsd] = useState("500");
@@ -614,13 +632,15 @@ function DetailPanel({ base }: { base: string }) {
   // 기다리는 쪽도 멈춘 건지 오는 중인지 알 수 있다.
   const [openMs, setOpenMs] = useState<{ fast: number | null; full: number | null }>({ fast: null, full: null });
   const [waiting, setWaiting] = useState(0);
+  const t0Ref = useRef(0);
   useEffect(() => {
+    t0Ref.current = performance.now();
     setD(null); setErr(null); setOpenMs({ fast: null, full: null }); setWaiting(0);
   }, [base]);
 
   useEffect(() => {
     let stop = false;
-    const t0 = performance.now();
+    const t0 = t0Ref.current || performance.now();
     const load = (fast?: boolean) =>
       fetch(`/api/listing-detail?base=${encodeURIComponent(base)}${fast ? "&fast=1" : ""}`, { cache: "no-store" })
         .then((r) => r.json())
@@ -637,10 +657,19 @@ function DetailPanel({ base }: { base: string }) {
     // 2단계: DEX 없이 먼저(≈0.3s) 그린 뒤 곧바로 전체를 덧씌운다. 상장따리는
     // 늘 처음 보는 코인이라 캐시가 없고, 그 사이 빈 화면이 곧 놓친 시간이다.
     void load(true).then(() => { if (!stop) void load(); });
-    const tick = setInterval(() => { if (!stop) setWaiting(Math.round((performance.now() - t0) / 100) / 10); }, 100);
     const id = setInterval(() => void load(), 10_000);
-    return () => { stop = true; clearInterval(id); clearInterval(tick); };
+    return () => { stop = true; clearInterval(id); };
   }, [base]);
+
+  // 경과 초 카운터 — **응답이 오기 전에만** 돈다. `d`를 의존성에 넣어 첫 응답이
+  // 도착하면 인터벌이 사라진다. 계속 돌려두면 100ms마다 DetailPanel 전체(차트
+  // 440px + 표들)를 리렌더하는데, 이 패널은 이제 PC에서 목록과 나란히 상주하므로
+  // 그 낭비가 영구적이 된다.
+  useEffect(() => {
+    if (d) return;
+    const tick = setInterval(() => setWaiting(Math.round((performance.now() - t0Ref.current) / 100) / 10), 100);
+    return () => clearInterval(tick);
+  }, [d, base]);
 
   // 온체인 보유량 — 신호 스트립(덤핑압력)과 ⑤ 상세가 같은 데이터를 쓴다.
   const [holdings, setHoldings] = useState<Holdings | null>(null);
