@@ -65,6 +65,39 @@ const CACHE = g.__arbHoldingsCache;
 const PREV = g.__arbHoldingsPrev;
 const TTL = 60_000;
 
+// ── 절대 기다리게 하지 않는 조회 ──────────────────────────────────────────────
+// 이 조회는 체인 3개 × 주소록 전체 RPC라 실측 14초다. 그걸 요청 연결을 잡은 채
+// 기다리게 하면 브라우저의 동일 서버 6연결 한도를 하나 차지하고, 상세 패널의
+// 다른 요청(listing-detail)이 그 뒤에 줄을 선다 — "조회 3.8초"의 정체가 이거였다.
+// 그래서 API는 이 함수만 쓴다: 있으면(낡았어도) 즉시 주고 뒤에서 갱신, 없으면
+// pending을 즉시 주고 뒤에서 구축한다. 연결은 어느 경우에도 ms 안에 풀린다.
+const gi = globalThis as unknown as {
+  __arbHoldingsInflight?: Map<string, Promise<unknown>>;
+  // fetchHoldings는 성공만 CACHE에 넣는다. 에러를 안 기억하면 에러 심볼은
+  // pending이 영원히 반복되며 14초 작업을 계속 다시 돈다 — 짧게만 기억한다.
+  __arbHoldingsErr?: Map<string, { ts: number; error: string }>;
+};
+gi.__arbHoldingsInflight ??= new Map();
+gi.__arbHoldingsErr ??= new Map();
+const ERR_TTL = 60_000;
+
+export function peekHoldings(symbol: string): { v: HoldingsResult | { error: string } | null; pending: boolean } {
+  const key = symbol.toUpperCase();
+  const hit = CACHE.get(key);
+  const err = gi.__arbHoldingsErr!.get(key);
+  const fresh = (hit && Date.now() - hit.ts < TTL) || (err && Date.now() - err.ts < ERR_TTL);
+  if (!fresh && !gi.__arbHoldingsInflight!.has(key)) {
+    const p = fetchHoldings(key, { fresh: true })
+      .then((r) => { if ("error" in r) gi.__arbHoldingsErr!.set(key, { ts: Date.now(), error: r.error }); })
+      .catch(() => {})
+      .finally(() => gi.__arbHoldingsInflight!.delete(key));
+    gi.__arbHoldingsInflight!.set(key, p);
+  }
+  if (hit) return { v: hit.v, pending: false }; // 낡은 값도 값이다 — 뒤에서 갱신 중
+  if (err && Date.now() - err.ts < ERR_TTL) return { v: { error: err.error }, pending: false };
+  return { v: null, pending: true };
+}
+
 export async function fetchHoldings(symbolRaw: string, opts?: { fresh?: boolean }): Promise<HoldingsResult | { error: string }> {
   const symbol = symbolRaw.toUpperCase();
   const hit = CACHE.get(symbol);

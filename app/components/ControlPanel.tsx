@@ -607,10 +607,16 @@ export function HoldingsCard() {
     if (!q) return;
     setBusy(true); setErr(null);
     try {
-      const j = await (await fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(q)}`, { cache: "no-store" })).json();
-      if (j.stats) setStats(j.stats);
-      if (j.error) { setErr(j.error); setData(null); }
-      else setData(j.holdings);
+      // pending = 서버가 뒤에서 구축 중 (연결을 오래 잡지 않는 API). 여기는
+      // 사용자가 버튼을 눌러 기다리는 화면이라 3초 간격으로 될 때까지 다시 묻는다.
+      for (;;) {
+        const j = await (await fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(q)}`, { cache: "no-store" })).json();
+        if (j.stats) setStats(j.stats);
+        if (j.pending) { await new Promise((r) => setTimeout(r, 3000)); continue; }
+        if (j.error) { setErr(j.error); setData(null); }
+        else setData(j.holdings);
+        break;
+      }
     } catch { setErr("조회 실패"); }
     finally { setBusy(false); }
   };

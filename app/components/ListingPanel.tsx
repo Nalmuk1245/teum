@@ -644,13 +644,20 @@ function DetailPanel({ base }: { base: string }) {
   const [holdErr, setHoldErr] = useState<string | null>(null);
   useEffect(() => {
     let stop = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
     const load = () => fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(base)}`, { cache: "no-store" })
       .then((r) => r.json())
-      .then((j) => { if (!stop) { if (j.holdings) { setHoldings(j.holdings); setHoldErr(null); } else setHoldErr(j.error ?? null); } })
+      .then((j) => {
+        if (stop) return;
+        // pending = 서버가 뒤에서 구축 중 (연결을 잡고 기다리는 대신 즉시 반환).
+        // 60초 폴링을 기다리면 첫 화면이 그만큼 비므로 3초 뒤 다시 묻는다.
+        if (j.pending) { retry = setTimeout(load, 3000); return; }
+        if (j.holdings) { setHoldings(j.holdings); setHoldErr(null); } else setHoldErr(j.error ?? null);
+      })
       .catch(() => {});
     load();
     const id = setInterval(load, 60_000);
-    return () => { stop = true; clearInterval(id); };
+    return () => { stop = true; clearInterval(id); if (retry) clearTimeout(retry); };
   }, [base]);
 
   // 매수 실행 — DEX면 응답 tx를 잡아 상태 추적 시작.
