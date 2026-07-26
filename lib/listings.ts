@@ -55,7 +55,50 @@ export type ListingPlay = {
   peakPct?: number; // max % above announcement price seen so far
   peakAt?: number; // when the peak was seen
   surgeAlerted?: boolean; // hot-wallet inflow alert already sent
+  /** 감지 타이밍(ms) — 이 제품의 승부처라 구간을 쪼개 기록한다.
+   *  publishLagMs가 진짜 실력치(공지가 뜬 뒤 몇 ms 만에 봤나),
+   *  나머지는 우리 코드가 쓴 시간이라 줄일 수 있는 몫이다. */
+  detect?: DetectTiming;
 };
+
+export type DetectSource = "ann" | "market" | "tg";
+export type DetectTiming = {
+  at: number; // 감지 시각 (ms epoch)
+  source: DetectSource;
+  publishedAt?: number; // 공지 발행 시각 (API가 줄 때만)
+  publishLagMs?: number; // at − publishedAt  ← 발행 후 우리가 본 시각까지
+  pollLagMs?: number; // at − 폴 요청 시작  ← 이번 요청에 쓴 시간
+  alertMs?: number; // 감지 → 텔레그램 발송
+  autoBuyMs?: number; // 감지 → 자동매수 주문 전송
+  venueLookupMs?: number; // 감지 → 해외 거래소 가격 확보
+};
+
+// ms 정밀도 로그 한 줄. pm2 로그에 그대로 남아 나중에 grep으로 집계할 수 있다.
+function logDetect(base: string, d: DetectTiming, extra?: string) {
+  const parts = [
+    `src=${d.source}`,
+    d.publishLagMs != null ? `publishLag=${d.publishLagMs}ms` : null,
+    d.pollLagMs != null ? `pollLag=${d.pollLagMs}ms` : null,
+    d.venueLookupMs != null ? `venue=${d.venueLookupMs}ms` : null,
+    d.alertMs != null ? `alert=${d.alertMs}ms` : null,
+    d.autoBuyMs != null ? `autoBuy=${d.autoBuyMs}ms` : null,
+    extra,
+  ].filter(Boolean);
+  console.log(`[listing] ${new Date(d.at).toISOString()} ${base} ${parts.join(" ")}`);
+}
+
+/** 공지 객체에서 발행 시각을 찾아본다 — 업비트가 필드명을 바꿔도 견디게 후보를 넓게. */
+function publishedAtOf(raw: Record<string, unknown>): number | undefined {
+  for (const k of ["listed_at", "first_listed_at", "created_at", "published_at", "updated_at"]) {
+    const v = raw[k];
+    if (typeof v === "number" && v > 1e12) return v;
+    if (typeof v === "string") {
+      const t = Date.parse(v);
+      if (Number.isFinite(t) && t > 0) return t;
+    }
+  }
+  return undefined;
+}
 
 type State = {
   annSeen: Set<number>; // announcement ids already processed
@@ -235,7 +278,7 @@ const claiming = new Set<string>();
 
 async function registerPlay(
   base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean,
-  opts?: { opensAt?: number | null; drill?: boolean },
+  opts?: { opensAt?: number | null; drill?: boolean; detect?: DetectTiming },
 ) {
   if (claiming.has(base)) return; // another registration for this base is mid-flight
   claiming.add(base);
@@ -248,7 +291,7 @@ async function registerPlay(
 
 async function registerPlayInner(
   base: string, venue: "upbit" | "bithumb", title: string | undefined, fromAnnouncement: boolean,
-  opts?: { opensAt?: number | null; drill?: boolean },
+  opts?: { opensAt?: number | null; drill?: boolean; detect?: DetectTiming },
 ) {
   const existing = L.plays.get(base);
   if (existing && fromAnnouncement) {
@@ -256,26 +299,37 @@ async function registerPlayInner(
     if (opts?.opensAt && !existing.opensAt) { existing.opensAt = opts.opensAt; saveSection("listingPlays", [...L.plays.entries()]); }
     return;
   }
+  const detect = opts?.detect;
   const g2 = await globalVenueFor(base);
+  if (detect) detect.venueLookupMs = Date.now() - detect.at;
   const play: ListingPlay = {
-    base, venue, announcedAt: existing?.announcedAt ?? Date.now(),
+    base, venue, announcedAt: existing?.announcedAt ?? detect?.at ?? Date.now(),
     overseas: !!g2, globalVenue: g2?.venue, globalPrice: g2?.price,
     opened: existing?.opened ?? false, title,
     opensAt: opts?.opensAt ?? existing?.opensAt, drill: opts?.drill,
     buys: existing?.buys, sells: existing?.sells,
+    detect: detect ?? existing?.detect,
   };
   L.plays.set(base, play);
   saveSection("listingPlays", [...L.plays.entries()]);
   // 드릴은 라이브에서 자동매수 금지 (DRY에선 전체 플로우 리허설).
   const { CONFIG } = await import("./config");
-  if (fromAnnouncement && g2 && (!opts?.drill || CONFIG.DRY_RUN)) void autoBuy(base, g2.venue, g2.price);
+  if (fromAnnouncement && g2 && (!opts?.drill || CONFIG.DRY_RUN)) {
+    if (detect) detect.autoBuyMs = Date.now() - detect.at;
+    void autoBuy(base, g2.venue, g2.price);
+  }
   const head = fromAnnouncement ? "📢 상장 공지" : "🚨 거래 개시";
+  if (detect) detect.alertMs = Date.now() - detect.at;
   void notifyNow(
     `${head} — <b>${base}</b> (${venue === "upbit" ? "업비트" : "빗썸"})\n` +
     (g2
       ? `해외 매수 지금: <b>${g2.venue}</b> @ ${g2.price}\n${fromAnnouncement ? "→ 거래개시 전 선점 · 김프 스파이크 대비" : "→ 거래 개시됨(늦음)"}`
       : "해외 미상장 → 상장 펌핑만 (김프 아님)"),
   );
+  if (detect) {
+    logDetect(base, detect, `reacted(감지→알림)`);
+    saveSection("listingPlays", [...L.plays.entries()]); // 채워진 구간 persist
+  }
   // Follow-up: on-chain exchange holdings (dump-supply signal). Fire-and-forget
   // so the primary alert is never delayed by RPC/CoinGecko.
   if (fromAnnouncement) {
@@ -291,7 +345,10 @@ async function registerPlayInner(
 
 // ── Announcement poll (primary) ───────────────────────────────────────────────
 async function pollAnnouncements() {
-  let items: { id: number; title: string }[] = [];
+  let items: { id: number; title: string; publishedAt?: number }[] = [];
+  // Stamp BEFORE the request: `at − pollT0` is time this poll cycle cost us,
+  // which is the part we can actually shrink (vs the publish lag we can't).
+  const pollT0 = Date.now();
   try {
     const r = await fetch("https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade", {
       headers: ANN_HEADERS, cache: "no-store", signal: AbortSignal.timeout(4000),
@@ -302,7 +359,11 @@ async function pollAnnouncements() {
     L.srcOk.ann = Date.now();
     const j = await r.json();
     const list = j?.data?.notices ?? j?.data?.list ?? j?.data ?? [];
-    items = (Array.isArray(list) ? list : []).map((x: { id: number; title: string }) => ({ id: x.id, title: x.title })).filter((x) => x.id && x.title);
+    items = (Array.isArray(list) ? list : [])
+      .map((x: Record<string, unknown>) => ({
+        id: x.id as number, title: x.title as string, publishedAt: publishedAtOf(x),
+      }))
+      .filter((x) => x.id && x.title);
   } catch { return; }
   if (!items.length) return;
 
@@ -324,7 +385,16 @@ async function pollAnnouncements() {
     // 풀어줬고, registerPlay 자체가 본문 HTTP 조회 뒤에 호출돼 알림과 자동매수가
     // 최대 4초 늦었다 — 여기가 이 제품의 승부처다.)
     const titleOpensAt = parseOpenTimeKst(it.title);
-    for (const t of tickers) void registerPlay(t, "upbit", it.title, true, { opensAt: titleOpensAt });
+    const at = Date.now();
+    const detect: DetectTiming = {
+      at, source: "ann", publishedAt: it.publishedAt,
+      publishLagMs: it.publishedAt ? at - it.publishedAt : undefined,
+      pollLagMs: at - pollT0,
+    };
+    // Log the DETECTION immediately — before any downstream work — so the
+    // timestamp is the moment we knew, not the moment we finished reacting.
+    logDetect([...tickers].join(","), detect, `notice=${it.id} "${it.title.slice(0, 40)}"`);
+    for (const t of tickers) void registerPlay(t, "upbit", it.title, true, { opensAt: titleOpensAt, detect });
     if (titleOpensAt == null) {
       const noticeId = it.id;
       const bases = [...tickers];
@@ -358,9 +428,18 @@ function diffMarkets(venue: "upbit" | "bithumb", now: Set<string>) {
   if (prev && L.primedMkt) {
     for (const base of now) {
       if (!prev.has(base)) {
+        const at = Date.now();
         const play = L.plays.get(base);
-        if (play) { play.opened = true; play.openedAt = Date.now(); } // announcement play now trading
-        else void registerPlay(base, venue, undefined, false); // no notice seen → fallback
+        if (play) {
+          play.opened = true;
+          play.openedAt = at;
+          // 공지 감지 → 실제 거래 개시까지 걸린 시간. 선점 창이 얼마였는지 = 이 값.
+          const lead = play.detect?.at ? at - play.detect.at : null;
+          console.log(`[listing] ${new Date(at).toISOString()} ${base} src=market OPENED${lead != null ? ` leadFromDetect=${lead}ms` : ""}`);
+        } else {
+          logDetect(base, { at, source: "market" }, "공지 미감지 → 마켓 diff로 최초 인지(늦음)");
+          void registerPlay(base, venue, undefined, false, { detect: { at, source: "market" } });
+        }
       }
     }
   }
@@ -421,8 +500,12 @@ export function listingHistory(): ListingHistoryRow[] {
 export async function startDrill(base: string): Promise<void> {
   L.plays.delete(base); // 재드릴 허용
   void notifyNow(`🥁 [드릴] 상장 공지 시뮬 — <b>${base}</b> (업비트) · 실제 상장 아님`);
+  // 드릴도 감지 타이밍 경로를 그대로 태운다 — 리허설의 목적이 "실제와 같은 흐름"이고,
+  // 반응 구간(거래소 탐색·알림·자동매수)이 몇 ms인지 여기서 미리 볼 수 있어야 한다.
+  const at = Date.now();
   await registerPlay(base, "upbit", `[드릴] ${base} KRW 마켓 디지털 자산 추가 (모의)`, true, {
-    drill: true, opensAt: Date.now() + 10 * 60_000, // 10분 뒤 개장 가정 → 카운트다운 리허설
+    drill: true, opensAt: at + 10 * 60_000, // 10분 뒤 개장 가정 → 카운트다운 리허설
+    detect: { at, source: "ann" },
   });
 }
 
@@ -534,6 +617,7 @@ async function pollTgChannel() {
   if (!channels.length) return;
   let any = false;
   for (const channel of channels) {
+    const tgT0 = Date.now(); // 이 채널 요청에 쓴 시간 (감지 지연의 우리 몫)
     let html = "";
     try {
       const r = await fetch(`https://t.me/s/${channel}`, { cache: "no-store", signal: AbortSignal.timeout(5000), redirect: "follow" });
@@ -561,7 +645,10 @@ async function pollTgChannel() {
       TICKER_RE.lastIndex = 0;
       while ((m = TICKER_RE.exec(t))) tickers.add(m[1]);
       const opensAt = parseOpenTimeKst(t);
-      for (const tk of tickers) void registerPlay(tk, krVenue, t.slice(0, 80), true, { opensAt });
+      const at = Date.now();
+      const detect: DetectTiming = { at, source: "tg", pollLagMs: at - tgT0 };
+      logDetect([...tickers].join(","), detect, `tg "${t.slice(0, 40)}"`);
+      for (const tk of tickers) void registerPlay(tk, krVenue, t.slice(0, 80), true, { opensAt, detect });
     }
   }
   if (any) { L.srcOk.tg = Date.now(); L.primedTg = true; }
