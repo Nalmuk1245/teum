@@ -9,6 +9,7 @@
 import React from "react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { vlabel, beep } from "./cockpit-ui";
+import { useIsMobile } from "../mobile";
 
 type Buy = { where: string; usd: number; qty: number | null; price: number | null; ts: number; dry: boolean };
 type Listing = {
@@ -68,6 +69,52 @@ const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid
 
 // 실행 표 공통 그리드: 처 | 가격 | 내 자금 | 비고 | 액션
 const EXEC_COLS = "84px minmax(70px,1fr) minmax(60px,1fr) minmax(80px,1.2fr) auto";
+// 모바일: 고정 최소폭 5열(84+70+60+80+버튼 ≈ 430px)은 360px 폰을 넘겨 매수·매도
+// 버튼이 화면 밖으로 밀린다. 이름·가격·버튼만 남기고 나머지는 전폭 한 줄로 내린다.
+const EXEC_COLS_M = "minmax(0,1fr) minmax(0,auto) auto";
+
+// ── 에러 문구 — 원문 대신 "무엇을 해야 하는지"를 말한다 ──────────────────────
+// 라우트·라이브러리가 내는 실제 문자열에 맞춰 분류한다. 분류에 걸리면 사람 말로
+// 바꾸고 원문은 괄호로 남긴다(디버깅을 위해). 안 걸리면 원문 그대로.
+type ErrKind = { title: string; hint?: string; tone: "warn" | "bad" | "info" };
+function explainError(raw: string): ErrKind {
+  const e = raw ?? "";
+  const m = (re: RegExp) => re.test(e);
+  // 우리가 일부러 막은 것 — 고장이 아니다
+  if (m(/킬 스위치/)) return { title: "킬 스위치가 켜져 있습니다", hint: "운영 탭에서 해제 후 다시 시도", tone: "info" };
+  if (m(/리스크 한도/)) return { title: "리스크 한도에 걸렸습니다", hint: e.replace(/^.*리스크 한도\s*—\s*/, ""), tone: "info" };
+  if (m(/인증 실패|EXEC_TOKEN/)) return { title: "실행 토큰 인증 실패", hint: "설정 ⚙에서 EXEC_TOKEN 등록(라이브 실행에 필요)", tone: "warn" };
+  // 설정이 빠진 것 — 넣으면 해결
+  if (m(/OKX_WEB3 키|OKX Web3 키/)) return { title: "OKX Web3 키가 없습니다", hint: "설정 ⚙ → OKX Web3 등록", tone: "warn" };
+  if (m(/SOL 지갑 키|WALLET_SOL_KEY/)) return { title: "솔라나 지갑 키가 없습니다", hint: "WALLET_SOL_KEY·WALLET_ADDR_SOL 설정", tone: "warn" };
+  if (m(/개인지갑 키 없음|지갑 키/)) return { title: "개인지갑 키가 없습니다", hint: "설정 ⚙ → 개인지갑 (라이브 전송에 필요)", tone: "warn" };
+  if (m(/키 없음|key|unauthor|401|403/i)) return { title: "API 키가 없거나 권한이 부족합니다", hint: "설정 ⚙에서 해당 거래소 키 확인", tone: "warn" };
+  // 시장 쪽 사정 — 다른 경로를 쓰라는 뜻
+  if (m(/미지원 체인/)) return { title: "이 체인은 아직 지원하지 않습니다", hint: "다른 체인이나 CEX로", tone: "info" };
+  if (m(/컨트랙트 해석 실패|컨트랙트 미확인/)) return { title: "토큰 컨트랙트를 확정하지 못했습니다", hint: "심볼이 겹치는 토큰일 수 있음 — 수동 확인 전엔 매수 금지", tone: "bad" };
+  if (m(/해외 미상장/)) return { title: "해외 거래소에 아직 없습니다", hint: "DEX로만 살 수 있습니다", tone: "info" };
+  if (m(/route|라우트|liquidity|유동성|no pool/i)) return { title: "이 체인엔 살 수 있는 풀이 없습니다", hint: "다른 체인이나 CEX로 사세요", tone: "bad" };
+  if (m(/슬리피지/)) return { title: "슬리피지가 상한을 넘었습니다", hint: "규모를 줄이거나 호가가 회복될 때까지 대기", tone: "warn" };
+  if (m(/잔고|insufficient|balance/i)) return { title: "잔고가 부족합니다", hint: "해당 거래소·지갑 잔고 확인", tone: "warn" };
+  if (m(/가스|gas/i)) return { title: "가스가 부족합니다", hint: "지갑에 해당 체인 네이티브 코인 충전", tone: "warn" };
+  if (m(/허니팟|honeypot|전송세|transfer tax/i)) return { title: "매도 제한 토큰으로 의심됩니다", hint: "허니팟·전송세 — 사지 마세요", tone: "bad" };
+  // 일시적
+  if (m(/timeout|시간 초과|응답 없음|network|fetch failed/i)) return { title: "서버 응답이 없습니다", hint: "일시적일 수 있음 — 잠시 후 자동 재시도", tone: "warn" };
+  if (m(/rate|too many|429/i)) return { title: "요청이 너무 잦습니다 (레이트리밋)", hint: "잠시 후 다시", tone: "warn" };
+  if (m(/규모가 0|base 필요|필요$/)) return { title: "입력값이 비었습니다", hint: e, tone: "info" };
+  return { title: e || "알 수 없는 오류", tone: "warn" };
+}
+function ErrBox({ raw, compact }: { raw: string; compact?: boolean }) {
+  const k = explainError(raw);
+  const color = k.tone === "bad" ? "var(--neg)" : k.tone === "info" ? "var(--text-dim)" : "var(--amber)";
+  return (
+    <div style={{ fontSize: 11, color, padding: compact ? "4px 8px" : "6px 10px", background: "var(--card)", borderRadius: 9, border: `1px solid ${k.tone === "bad" ? "var(--neg-soft)" : "var(--border)"}` }}>
+      <b>{k.title}</b>
+      {k.hint && <span style={{ color: "var(--text-dim)", marginLeft: 6 }}>· {k.hint}</span>}
+      {k.title !== raw && <span style={{ color: "var(--text-mute)", marginLeft: 6, fontSize: 10 }}>({raw.slice(0, 60)})</span>}
+    </div>
+  );
+}
 
 /** 개장 카운트다운 — 1초 틱, 임박(5분)부터 앰버. */
 function Countdown({ opensAt }: { opensAt: number }) {
@@ -364,25 +411,8 @@ export const TV_SYMBOL: Record<string, (b: string) => string> = {
 // 스왑 미리보기 — OKX 견적으로 예상 수령·유효 단가·최소 수령(슬리피지)·
 // 가격임팩트·수수료·가스·라우팅 + 토큰 안전성(허니팟·전송세).
 function SwapPreview({ base, pv }: { base: string; pv: PreviewData | { error: string } }) {
-  if ("error" in pv) {
-    // 원문 에러만 띄우면 "미리보기 실패 · route not found"처럼 읽는 사람이 뭘
-    // 해야 할지 알 수 없다. 흔한 원인은 정해져 있으니 그걸 그대로 말해준다.
-    const e = pv.error ?? "";
-    const human =
-      /route|liquidity|no pool|not found/i.test(e)
-        ? "이 체인엔 살 수 있는 풀이 없습니다 — 다른 체인이나 CEX로 사세요"
-        : /key|unauthor|403|401/i.test(e)
-          ? "OKX Web3 키가 없거나 권한이 부족합니다 (설정 ⚙에서 등록)"
-          : /timeout|network|fetch/i.test(e)
-            ? "견적 서버 응답 없음 — 잠시 후 자동 재시도됩니다"
-            : null;
-    return (
-      <div style={{ fontSize: 11, color: "var(--amber)", padding: "6px 10px", background: "var(--card)", borderRadius: 9, border: "1px solid var(--border)" }}>
-        {human ?? `미리보기 실패 · ${e}`}
-        {human && <span style={{ color: "var(--text-mute)", marginLeft: 6 }}>({e})</span>}
-      </div>
-    );
-  }
+  if ("error" in pv) return <ErrBox raw={pv.error} />;
+
   const cell = (label: string, val: React.ReactNode, tone?: string) => (
     <div style={{ minWidth: 0 }}>
       <div style={{ ...CAP, whiteSpace: "nowrap" }}>{label}</div>
@@ -542,11 +572,13 @@ function CandleMini({ chain, contract }: { chain: string; contract: string }) {
 
 // ── 상세·실행 패널 — ①신호 ②차트 ③매수·매도 ④포지션 ⑤참고 ────────────────────
 function DetailPanel({ base }: { base: string }) {
+  const mob = useIsMobile(); // 표를 3열로 접어 매수·매도 버튼이 화면 밖으로 안 나가게
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sizeUsd, setSizeUsd] = useState("500");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
   // DEX 매수 미리보기(체인별) + 최근 스왑 tx 상태
   const [preview, setPreview] = useState<Record<string, PreviewData | "loading" | { error: string }>>({});
   const [lastTx, setLastTx] = useState<{ chain: string; hash: string; url: string | null } | null>(null);
@@ -585,15 +617,16 @@ function DetailPanel({ base }: { base: string }) {
 
   // 매수 실행 — DEX면 응답 tx를 잡아 상태 추적 시작.
   const act = useCallback(async (key: string, url: string, body: Record<string, unknown>) => {
-    setBusy(key); setMsg(null);
+    setBusy(key); setMsg(null); setErrMsg(null);
     try {
       const j = await (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
-      setMsg(`${j.ok ? "✓" : "✗"} ${j.message ?? ""}${j.dryRun ? " (모의)" : ""}`);
+      setMsg(j.ok ? `✓ ${j.message ?? "완료"}${j.dryRun ? " (모의)" : ""}` : null);
+      setErrMsg(j.ok ? null : (j.message ?? "요청 실패"));
       if (j.ok && j.tx?.hash && typeof body.chain === "string") {
         setLastTx({ chain: body.chain, hash: j.tx.hash, url: j.tx.url ?? null });
         setTxStatus({ status: j.tx.hash.startsWith("sim:") ? "success" : "pending", failReason: null });
       }
-    } catch { setMsg("✗ 요청 실패"); }
+    } catch { setMsg(null); setErrMsg("네트워크 오류 — 요청이 서버에 닿지 못했습니다"); }
     finally { setBusy(null); }
   }, []);
 
@@ -725,23 +758,23 @@ function DetailPanel({ base }: { base: string }) {
           />
         </span>
       ))}
-      <div style={{ display: "grid", gridTemplateColumns: EXEC_COLS, gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
-        {th("매수처")}{th("가격", "right")}{th("내 자금", "right")}{th("비고", "right")}<span />
+      <div style={{ display: "grid", gridTemplateColumns: mob ? EXEC_COLS_M : EXEC_COLS, gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
+        {th("매수처")}{th("가격", "right")}{!mob && th("내 자금", "right")}{!mob && th("비고", "right")}<span />
         {[...globals, ...krs].map((r) => (
           <Fragment key={r.venue}>
             <span style={{ fontWeight: 600, color: r.listed ? "var(--text)" : "var(--text-mute)" }}>{vlabel(r.venue as never) ?? r.venue}</span>
             <span className="tnum" style={{ textAlign: "right", color: r.listed ? "var(--text)" : "var(--text-mute)" }}>
               {r.listed ? (r.priceKrw != null ? `₩${r.priceKrw.toLocaleString()}` : `$${fmtPx(r.priceUsd)}`) : "미상장"}
             </span>
-            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : "키없음"}</span>
-            <span className="tnum" style={{ textAlign: "right",
+            {!mob && <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : "키없음"}</span>}
+            {!mob && <span className="tnum" style={{ textAlign: "right",
               color: (r.myCoinQty ?? 0) > 0 ? "var(--amber)"
                 : play && !play.opened && r.venue === play.venue ? "var(--amber)" : "var(--text-mute)",
               fontWeight: play && !play.opened && r.venue === play.venue ? 700 : 400 }}>
               {(r.myCoinQty ?? 0) > 0 ? `보유 ${r.myCoinQty!.toFixed(3)}`
                 : play && !play.opened && r.venue === play.venue ? "★ 상장 예정 — 개장 후 매도처"
                 : ["upbit", "bithumb"].includes(r.venue) ? "개장 후 매도처" : "—"}
-            </span>
+            </span>}
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
               {r.listed && ["binance", "bybit", "okx"].includes(r.venue) && (
                 <button type="button" style={BTN} disabled={busy != null || size <= 0}
@@ -756,6 +789,13 @@ function DetailPanel({ base }: { base: string }) {
                 </button>
               )}
             </span>
+            {mob && (
+              <div className="tnum" style={{ gridColumn: "1 / -1", display: "flex", gap: 10, flexWrap: "wrap", fontSize: 10.5, color: "var(--text-mute)", marginTop: -1 }}>
+                <span>{r.myCashUsd != null ? `자금 ${fmtUsd(r.myCashUsd)}` : "키없음"}</span>
+                {(r.myCoinQty ?? 0) > 0 && <span style={{ color: "var(--amber)" }}>보유 {r.myCoinQty!.toFixed(3)}</span>}
+                {play && !play.opened && r.venue === play.venue && <span style={{ color: "var(--amber)", fontWeight: 700 }}>★ 상장 예정 — 개장 후 매도처</span>}
+              </div>
+            )}
           </Fragment>
         ))}
         {d.dex.map((x) => (
@@ -767,12 +807,16 @@ function DetailPanel({ base }: { base: string }) {
             <span className="tnum" style={{ textAlign: "right", color: x.untradeable ? "var(--text-mute)" : undefined, textDecoration: x.untradeable ? "line-through" : undefined }}>
               {x.execPriceUsd != null ? `$${fmtPx(x.execPriceUsd)}` : "—"}
             </span>
-            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-              {x.liquidityUsd != null ? `풀 $${x.liquidityUsd >= 1e6 ? (x.liquidityUsd / 1e6).toFixed(1) + "M" : Math.round(x.liquidityUsd / 1000) + "K"}` : d.walletReady ? "지갑" : "키없음"}
-            </span>
-            <span className="tnum" style={{ textAlign: "right", color: x.untradeable ? "var(--neg)" : x.premiumVsCgPct == null ? "var(--text-mute)" : x.premiumVsCgPct > 1 ? "var(--amber)" : "var(--text-dim)" }}>
-              {x.untradeable ? (x.note ?? "거래불가") : x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
-            </span>
+            {!mob && (
+              <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+                {x.liquidityUsd != null ? `풀 $${x.liquidityUsd >= 1e6 ? (x.liquidityUsd / 1e6).toFixed(1) + "M" : Math.round(x.liquidityUsd / 1000) + "K"}` : d.walletReady ? "지갑" : "키없음"}
+              </span>
+            )}
+            {!mob && (
+              <span className="tnum" style={{ textAlign: "right", color: x.untradeable ? "var(--neg)" : x.premiumVsCgPct == null ? "var(--text-mute)" : x.premiumVsCgPct > 1 ? "var(--amber)" : "var(--text-dim)" }}>
+                {x.untradeable ? (x.note ?? "거래불가") : x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
+              </span>
+            )}
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
               {x.verified && !x.untradeable && preview[x.chain] === "loading" && (
                 <span style={{ ...CAP, alignSelf: "center" }}>견적…</span>
@@ -788,6 +832,12 @@ function DetailPanel({ base }: { base: string }) {
                 </button>
               )}
             </span>
+            {mob && (
+              <div className="tnum" style={{ gridColumn: "1 / -1", display: "flex", gap: 10, flexWrap: "wrap", fontSize: 10.5, color: x.untradeable ? "var(--neg)" : "var(--text-mute)", marginTop: -1 }}>
+                <span>{x.liquidityUsd != null ? `풀 $${x.liquidityUsd >= 1e6 ? (x.liquidityUsd / 1e6).toFixed(1) + "M" : Math.round(x.liquidityUsd / 1000) + "K"}` : d.walletReady ? "지갑" : "키없음"}</span>
+                <span>{x.untradeable ? (x.note ?? "거래불가") : x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? ""}</span>
+              </div>
+            )}
             {preview[x.chain] && preview[x.chain] !== "loading" && (
               <div style={{ gridColumn: "1 / -1", margin: "2px 0 6px" }}>
                 <SwapPreview base={base} pv={preview[x.chain] as PreviewData | { error: string }} />
@@ -811,7 +861,8 @@ function DetailPanel({ base }: { base: string }) {
       {!d.dexReady && d.dex.length > 0 && (
         <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-mute)" }}>DEX 실행가·매수는 OKX_WEB3 키 필요{!d.walletReady ? " · 라이브 매수는 지갑 키 필요" : ""}</div>
       )}
-      {msg && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
+      {msg && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: "var(--pos)" }}>{msg}</div>}
+      {errMsg && <div style={{ marginTop: 8 }}><ErrBox raw={errMsg} /></div>}
 
       {/* ③.5 거래소 핫월렛 잔고 — 상장 시 덤프 압력 (온체인 라벨 기반) */}
       {sec("거래소 핫월렛 잔고", (
@@ -974,7 +1025,7 @@ function DetailPanel({ base }: { base: string }) {
               )}
             </span>
           ))}
-          <div style={{ display: "grid", gridTemplateColumns: EXEC_COLS, gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: mob ? EXEC_COLS_M : EXEC_COLS, gap: "3px 10px", fontSize: 11.5, alignItems: "center" }}>
             {th("구분")}{th("수량", "right")}{th("금액", "right")}{th("단가", "right")}<span style={{ ...CAP, textAlign: "right" }}>시각</span>
             {[...buys.map((b) => ({ ...b, kind: "매수" as const })), ...sells.map((s) => ({ ...s, kind: "매도" as const }))]
               .sort((a, b) => a.ts - b.ts)
