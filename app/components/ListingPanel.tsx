@@ -25,7 +25,13 @@ type Watch = {
   tgConfigured: boolean; tgChannel: string | null; tgOkAgoSec: number | null; plays: number;
 };
 type CexRow = { venue: string; listed: boolean; priceUsd: number | null; priceKrw: number | null; myCashUsd: number | null; myCoinQty: number | null };
-type DexRow = { chain: string; contract: string; decimals: number; verified: boolean; execPriceUsd: number | null; premiumVsCgPct: number | null; note?: string };
+// 서버 타입(lib/listingDetail.ts DexRow)과 필드가 일치해야 한다 — 로컬 재선언이라
+// 서버에 필드를 추가할 때 여기도 같이 고쳐야 UI가 그 값을 볼 수 있다.
+type DexRow = {
+  chain: string; contract: string; decimals: number; verified: boolean;
+  execPriceUsd: number | null; premiumVsCgPct: number | null;
+  pairAddress?: string; liquidityUsd?: number; untradeable?: boolean; note?: string;
+};
 type Detail = {
   base: string; play: Listing | null;
   krDeposits?: { ts: number; up: number; bt: number }[];
@@ -359,7 +365,23 @@ export const TV_SYMBOL: Record<string, (b: string) => string> = {
 // 가격임팩트·수수료·가스·라우팅 + 토큰 안전성(허니팟·전송세).
 function SwapPreview({ base, pv }: { base: string; pv: PreviewData | { error: string } }) {
   if ("error" in pv) {
-    return <div style={{ fontSize: 11, color: "var(--amber)", padding: "6px 10px", background: "var(--card)", borderRadius: 9, border: "1px solid var(--border)" }}>미리보기 실패 · {pv.error}</div>;
+    // 원문 에러만 띄우면 "미리보기 실패 · route not found"처럼 읽는 사람이 뭘
+    // 해야 할지 알 수 없다. 흔한 원인은 정해져 있으니 그걸 그대로 말해준다.
+    const e = pv.error ?? "";
+    const human =
+      /route|liquidity|no pool|not found/i.test(e)
+        ? "이 체인엔 살 수 있는 풀이 없습니다 — 다른 체인이나 CEX로 사세요"
+        : /key|unauthor|403|401/i.test(e)
+          ? "OKX Web3 키가 없거나 권한이 부족합니다 (설정 ⚙에서 등록)"
+          : /timeout|network|fetch/i.test(e)
+            ? "견적 서버 응답 없음 — 잠시 후 자동 재시도됩니다"
+            : null;
+    return (
+      <div style={{ fontSize: 11, color: "var(--amber)", padding: "6px 10px", background: "var(--card)", borderRadius: 9, border: "1px solid var(--border)" }}>
+        {human ?? `미리보기 실패 · ${e}`}
+        {human && <span style={{ color: "var(--text-mute)", marginLeft: 6 }}>({e})</span>}
+      </div>
+    );
   }
   const cell = (label: string, val: React.ReactNode, tone?: string) => (
     <div style={{ minWidth: 0 }}>
@@ -416,13 +438,17 @@ function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: De
       label: vlabel(r.venue as never) ?? r.venue,
       src: `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(TV_SYMBOL[r.venue](base))}&interval=5&theme=dark&style=1&locale=kr&hide_side_toolbar=1&allow_symbol_change=0&save_image=0&withdateranges=0`,
     })),
-    ...dex.map((x) => ({
+    // DexScreener 임베드는 **페어(풀) 주소**를 요구한다 — 토큰 컨트랙트를 넣으면
+    // 그냥 빈 화면이 뜬다. pairAddress가 없으면 볼 풀이 없다는 뜻이라 탭도 안 만든다.
+    ...dex.filter((x) => x.pairAddress && !x.untradeable).map((x) => ({
       key: `dex:${x.chain}`,
       label: `DEX·${x.chain}`,
-      src: `https://dexscreener.com/${x.chain}/${x.contract}?embed=1&theme=dark&trades=0&info=0`,
+      src: `https://dexscreener.com/${x.chain}/${x.pairAddress}?embed=1&theme=dark&trades=0&info=0`,
     })),
-    // 네이티브 캔들 (OKX 시세) — iframe 실패/미상장 대비, 빠르고 가벼움
-    ...dex.filter((x) => x.verified).map((x) => ({
+    // 네이티브 캔들 (OKX 시세) — iframe 실패/미상장 대비, 빠르고 가벼움.
+    // 거래 불가 체인은 제외 — 토큰이 3개 체인에 배포돼도 풀은 보통 하나뿐인데,
+    // 체인마다 탭을 만들면 죽은 체인이 거래 가능한 것처럼 보인다.
+    ...dex.filter((x) => x.verified && !x.untradeable).map((x) => ({
       key: `candle:${x.chain}`,
       label: `캔들·${x.chain === "ethereum" ? "eth" : x.chain}`,
       candle: { chain: x.chain, contract: x.contract },
@@ -573,11 +599,11 @@ function DetailPanel({ base }: { base: string }) {
 
   // verified DEX 미리보기 자동 로드 — 클릭 없이 유동성·슬리피지가 바로 뜨게.
   // 상세가 뜨거나 매수 금액이 바뀌면(디바운스) 각 DEX를 병렬 재견적한다.
-  const dexKey = d?.dex.filter((x) => x.verified).map((x) => x.chain).join(",") ?? "";
+  const dexKey = d?.dex.filter((x) => x.verified && !x.untradeable).map((x) => x.chain).join(",") ?? "";
   useEffect(() => {
     const usd = Number(sizeUsd) || 0;
     if (!d || usd <= 0) return;
-    const targets = d.dex.filter((x) => x.verified);
+    const targets = d.dex.filter((x) => x.verified && !x.untradeable);
     if (!targets.length) return;
     let stop = false;
     const t = setTimeout(() => {
@@ -734,21 +760,28 @@ function DetailPanel({ base }: { base: string }) {
         ))}
         {d.dex.map((x) => (
           <Fragment key={x.chain}>
-            <span style={{ fontWeight: 600, color: x.verified ? "var(--text)" : "var(--text-mute)" }}>DEX·{x.chain === "ethereum" ? "eth" : x.chain}</span>
-            <span className="tnum" style={{ textAlign: "right" }}>{x.execPriceUsd != null ? `$${fmtPx(x.execPriceUsd)}` : "—"}</span>
-            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{d.walletReady ? "지갑" : "키없음"}</span>
-            <span className="tnum" style={{ textAlign: "right", color: x.premiumVsCgPct == null ? "var(--text-mute)" : x.premiumVsCgPct > 1 ? "var(--amber)" : "var(--text-dim)" }}>
-              {x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
+            <span style={{ fontWeight: 600, color: x.untradeable ? "var(--text-mute)" : x.verified ? "var(--text)" : "var(--text-mute)" }}>
+              DEX·{x.chain === "ethereum" ? "eth" : x.chain}
+              {x.untradeable && <span style={{ marginLeft: 5, fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>거래불가</span>}
+            </span>
+            <span className="tnum" style={{ textAlign: "right", color: x.untradeable ? "var(--text-mute)" : undefined, textDecoration: x.untradeable ? "line-through" : undefined }}>
+              {x.execPriceUsd != null ? `$${fmtPx(x.execPriceUsd)}` : "—"}
+            </span>
+            <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+              {x.liquidityUsd != null ? `풀 $${x.liquidityUsd >= 1e6 ? (x.liquidityUsd / 1e6).toFixed(1) + "M" : Math.round(x.liquidityUsd / 1000) + "K"}` : d.walletReady ? "지갑" : "키없음"}
+            </span>
+            <span className="tnum" style={{ textAlign: "right", color: x.untradeable ? "var(--neg)" : x.premiumVsCgPct == null ? "var(--text-mute)" : x.premiumVsCgPct > 1 ? "var(--amber)" : "var(--text-dim)" }}>
+              {x.untradeable ? (x.note ?? "거래불가") : x.premiumVsCgPct != null ? `슬립 ${x.premiumVsCgPct > 0 ? "+" : ""}${x.premiumVsCgPct.toFixed(2)}%` : x.note ?? "—"}
             </span>
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
-              {x.verified && preview[x.chain] === "loading" && (
+              {x.verified && !x.untradeable && preview[x.chain] === "loading" && (
                 <span style={{ ...CAP, alignSelf: "center" }}>견적…</span>
               )}
-              <button type="button" style={BTN} disabled={busy != null || size <= 0 || !x.verified}
+              <button type="button" style={BTN} disabled={busy != null || size <= 0 || !x.verified || !!x.untradeable}
                 onClick={() => void act(`dex:${x.chain}`, "/api/listing-dex-buy", { base, chain: x.chain, sizeUsd: size })}>
                 {busy === `dex:${x.chain}` ? "…" : "매수"}
               </button>
-              {posQty > 0 && x.verified && (
+              {posQty > 0 && x.verified && !x.untradeable && (
                 <button type="button" style={BTN_SELL} disabled={busy != null}
                   onClick={() => void act(`dexsell:${x.chain}`, "/api/listing-sell", { base, where: `dex:${x.chain}` })}>
                   매도
