@@ -241,6 +241,22 @@ export function GatesCard() {
     );
     return <span style={{ display: "inline-flex", gap: 4 }}>{tag(s.deposit, "입")}{tag(s.withdraw, "출")}</span>;
   };
+
+  // 행 펼침 — 어떤 체인이 열리고 막혔는지. "코인이 열렸다"는 요약은 어느 한
+  // 체인만 열려 있어도 참이라, 실제 전송 경로를 고르려면 체인 단위가 필요하다.
+  const [openBase, setOpenBase] = useState<string | null>(null);
+  type NetRow = { net: string; deposit: boolean; withdraw: boolean; feeCoin?: number; isDefault?: boolean };
+  const [nets, setNets] = useState<Record<string, Record<string, NetRow[]>>>({});
+  const toggleRow = (base: string) => {
+    const next = openBase === base ? null : base;
+    setOpenBase(next);
+    if (next && !nets[next]) {
+      fetch(`/api/gate-networks?coin=${encodeURIComponent(next)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j) => setNets((p) => ({ ...p, [next]: j.networks ?? {} })))
+        .catch(() => {});
+    }
+  };
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>입출금 상태 조회</div>
@@ -271,8 +287,39 @@ export function GatesCard() {
             {data.venues.map((v) => <span key={v} style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{VENUE_LABEL[v] ?? v}</span>)}
             {rows.map((r) => (
               <Fragment key={r.base}>
-                <span style={{ fontWeight: 700 }}>{r.base}</span>
-                {data.venues.map((v) => <span key={v}>{cell(r.venues[v])}</span>)}
+                <span onClick={() => toggleRow(r.base)}
+                  style={{ fontWeight: 700, cursor: "pointer", color: openBase === r.base ? "var(--brand-2)" : undefined }}>
+                  {r.base} <span style={{ fontSize: 9, color: "var(--text-mute)" }}>{openBase === r.base ? "▲" : "▼"}</span>
+                </span>
+                {data.venues.map((v) => <span key={v} onClick={() => toggleRow(r.base)} style={{ cursor: "pointer" }}>{cell(r.venues[v])}</span>)}
+                {openBase === r.base && (
+                  <div style={{ gridColumn: "1 / -1", margin: "2px 0 6px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9 }}>
+                    {!nets[r.base] ? (
+                      <span style={{ fontSize: 11, color: "var(--text-mute)" }}>체인 조회 중…</span>
+                    ) : Object.keys(nets[r.base]).length === 0 ? (
+                      <span style={{ fontSize: 11, color: "var(--text-mute)" }}>
+                        체인 상세 없음 — 빗썸 공개 API는 코인 단위만 제공하고, 나머지 거래소는 키 등록 후 체인별 상태가 보입니다
+                      </span>
+                    ) : (
+                      Object.entries(nets[r.base]).map(([venue, list]) => (
+                        <div key={venue} style={{ padding: "3px 0" }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-dim)", marginRight: 8 }}>{VENUE_LABEL[venue] ?? venue}</span>
+                          <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+                            {list.map((n) => (
+                              <span key={n.net} className="tnum" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>
+                                <b style={{ color: n.isDefault ? "var(--text)" : "var(--text-dim)" }}>{n.net}</b>
+                                {" "}
+                                <span style={{ fontWeight: 700, color: n.deposit ? "var(--pos)" : "var(--neg)" }}>입</span>
+                                <span style={{ fontWeight: 700, color: n.withdraw ? "var(--pos)" : "var(--neg)" }}>출</span>
+                                {n.feeCoin != null && <span style={{ color: "var(--text-mute)" }}> 수수료 {n.feeCoin}</span>}
+                              </span>
+                            ))}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </Fragment>
             ))}
           </div>
@@ -289,6 +336,7 @@ export type TradeRec = {
   qty?: number | null; entryPriceUsd?: number | null; exitPriceUsd?: number | null;
   buyUsd?: number | null; sellUsd?: number | null; spotPnlUsd?: number | null; hedgePnlUsd?: number | null;
   durationsSec?: Record<string, number>; txs?: { step: string; hash: string; url: string | null }[]; note?: string;
+  hedged?: boolean; status?: string;
 };
 
 export type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
@@ -408,23 +456,46 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
   );
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {trades.slice(0, 10).map((t, i) => (
+      {trades.slice(0, 10).map((t, i) => {
+        const totalSec = t.durationsSec ? Object.values(t.durationsSec).reduce((s, v) => s + v, 0) : 0;
+        const agoMin = Math.round((Date.now() - t.ts) / 60_000);
+        const kindKo = t.kind === "kimchi" ? "김프" : t.kind === "cross-cex" ? "크로스" : t.kind === "cex-dex" ? "CEX-DEX" : t.kind;
+        return (
         <div key={i} style={{ borderTop: "1px solid var(--border)" }}>
           <div
             onClick={() => setOpen(open === i ? null : i)}
-            style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", padding: "5px 0", fontSize: 11.5, cursor: "pointer" }}
+            style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: "6px 0", fontSize: 11.5, cursor: "pointer" }}
           >
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              <b>{t.base}</b> <span style={{ color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                <b>{t.base}</b>
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-2)" }}>{kindKo}</span>
+                {t.dryRun && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 8, padding: "0 4px" }}>모의</span>}
+                {t.status && t.status !== "done" && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>{t.status}</span>}
+              </span>
+              <span style={{ display: "block", fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
+                {t.route} · {usd(t.sizeUsd)}{totalSec > 0 ? ` · ${totalSec >= 90 ? `${Math.round(totalSec / 60)}분` : `${totalSec}초`} 소요` : ""} · {agoMin < 60 ? `${agoMin}분 전` : agoMin < 1440 ? `${Math.round(agoMin / 60)}시간 전` : `${Math.round(agoMin / 1440)}일 전`}
+              </span>
             </span>
-            <span className="tnum" style={{ color: "var(--text-mute)" }}>{usd(t.sizeUsd)}</span>
-            <span className="tnum" style={{ minWidth: 60, textAlign: "right", color: (t.realizedNetPct ?? t.detectedNetPct) >= 0 ? "var(--pos)" : "var(--neg)" }}>
-              {t.realizedNetPct != null ? `${t.realizedNetPct >= 0 ? "+" : ""}${t.realizedNetPct.toFixed(2)}%` : `~${t.detectedNetPct.toFixed(2)}%`}
+            <span style={{ textAlign: "right" }}>
+              <span className="tnum" style={{ display: "block", fontWeight: 700, color: (t.realizedNetPct ?? t.detectedNetPct) >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                {t.realizedNetPct != null ? `${t.realizedNetPct >= 0 ? "+" : ""}${t.realizedNetPct.toFixed(2)}%` : `~${t.detectedNetPct.toFixed(2)}%`}
+              </span>
+              <span className="tnum" style={{ display: "block", fontSize: 10, color: t.realizedPnlUsd == null ? "var(--text-mute)" : t.realizedPnlUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                {t.realizedPnlUsd != null ? `${t.realizedPnlUsd >= 0 ? "+" : "−"}$${Math.abs(t.realizedPnlUsd).toFixed(2)}` : "미실현"}
+              </span>
             </span>
           </div>
           {open === i && (
             <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
               {dLine("시각", new Date(t.ts).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }))}
+              {/* 감지 대비 실현 — 이 차이(누수)가 곧 비용 모델의 오차라 캘리브레이션의
+                  근거다. 보드가 약속한 것과 실제로 남은 것의 간격을 숨기면 안 된다. */}
+              {dLine("감지 순수익", `${t.detectedNetPct >= 0 ? "+" : ""}${t.detectedNetPct.toFixed(2)}%`)}
+              {t.realizedNetPct != null && dLine(
+                "실현 순수익 (누수)",
+                <>{`${t.realizedNetPct >= 0 ? "+" : ""}${t.realizedNetPct.toFixed(2)}%`}<span style={{ color: (t.realizedNetPct - t.detectedNetPct) >= 0 ? "var(--pos)" : "var(--neg)", marginLeft: 6 }}>({(t.realizedNetPct - t.detectedNetPct) >= 0 ? "+" : ""}{(t.realizedNetPct - t.detectedNetPct).toFixed(2)}%p)</span></>,
+              )}
               {t.qty != null && dLine("수량", `${t.qty.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${t.base}`)}
               {t.entryPriceUsd != null && dLine("평균 진입가", px(t.entryPriceUsd))}
               {t.exitPriceUsd != null && dLine(
@@ -463,11 +534,13 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
                   ))}
                 </div>
               )}
+              {t.hedged != null && dLine("헷지", t.hedged ? "퍼프 숏 병행" : "무헷지", t.hedged ? undefined : "var(--amber)")}
               {t.note && <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-mute)" }}>{t.note}</div>}
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

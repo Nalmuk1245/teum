@@ -21,6 +21,34 @@ import { BINANCE_NET, chainKeyFromLabel } from "./chains";
 import { COIN_NETWORK, COIN_NETWORK_DEFAULT } from "./config";
 import { setLiveNetwork } from "./networks";
 
+// ── 네트워크(체인)별 상세 ─────────────────────────────────────────────────────
+// 거래소 응답에는 체인별 입출금 상태가 이미 들어 있는데, 코인 한 줄로 접으면서
+// 버리고 있었다. "ETH는 열렸는데 BSC는 막힘" 같은 정보가 곧 전송 경로 선택이므로
+// 같은 스윕에서 보존한다 — 추가 API 호출은 없다.
+export type NetDetail = {
+  net: string;            // 거래소가 부르는 체인 이름 (ETH, BSC, TRC20, …)
+  deposit: boolean;
+  withdraw: boolean;
+  feeCoin?: number;       // 출금 수수료 (코인 단위) — 주는 거래소만
+  isDefault?: boolean;    // 그 거래소의 기본 체인
+};
+type NetsByVenue = Partial<Record<Venue, NetDetail[]>>;
+const gn = globalThis as unknown as { __arbGateNets?: Map<string, NetsByVenue> };
+gn.__arbGateNets ??= new Map();
+
+/** 스윕이 채운 코인별 체인 상세. 키 없는 거래소는 항목 자체가 없다. */
+export function gateNetworks(base: string): NetsByVenue {
+  return gn.__arbGateNets!.get(base.toUpperCase()) ?? {};
+}
+
+function putNets(venue: Venue, base: string, nets: NetDetail[]): void {
+  if (!nets.length) return;
+  const m = gn.__arbGateNets!;
+  const e = m.get(base) ?? {};
+  e[venue] = nets;
+  m.set(base, e);
+}
+
 // ── Bithumb (public) ──────────────────────────────────────────────────────────
 async function fetchBithumb(): Promise<Map<string, WalletStatus>> {
   const m = new Map<string, WalletStatus>();
@@ -72,16 +100,24 @@ async function fetchUpbit(): Promise<Map<string, WalletStatus> | null> {
       headers: { Authorization: `Bearer ${upbitJwt(key, secret)}` },
       cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
-    const arr = (await res.json()) as Array<{ currency: string; wallet_state: string }>;
+    const arr = (await res.json()) as Array<{ currency: string; wallet_state: string; net_type?: string | null }>;
     if (!Array.isArray(arr)) return null;
     const m = new Map<string, WalletStatus>();
+    const nets = new Map<string, NetDetail[]>();
     for (const x of arr) {
       const s = x.wallet_state; // working | withdraw_only | deposit_only | paused | unsupported
-      m.set(x.currency, {
+      const st = {
         deposit: s === "working" || s === "deposit_only",
         withdraw: s === "working" || s === "withdraw_only",
-      });
+      };
+      // 업비트는 코인이 여러 net_type 행으로 온다 — 코인 요약은 OR로 접는다.
+      const prev = m.get(x.currency);
+      m.set(x.currency, prev ? { deposit: prev.deposit || st.deposit, withdraw: prev.withdraw || st.withdraw } : st);
+      const list = nets.get(x.currency) ?? [];
+      list.push({ net: x.net_type || x.currency, ...st });
+      nets.set(x.currency, list);
     }
+    for (const [base, list] of nets) putNets("upbit", base, list);
     return m;
   } catch {
     return null;
@@ -120,6 +156,10 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       m.set(c.coin, net
         ? { deposit: !!net.depositEnable, withdraw: !!net.withdrawEnable }
         : { deposit: !!c.depositAllEnable, withdraw: !!c.withdrawAllEnable });
+      putNets("binance", c.coin, (c.networkList ?? []).map((n) => ({
+        net: n.network, deposit: !!n.depositEnable, withdraw: !!n.withdrawEnable,
+        feeCoin: n.withdrawFee ? Number(n.withdrawFee) : undefined, isDefault: !!n.isDefault,
+      })));
       // Feed the LIVE network facts (chain label, confirms, fee) so strategies +
       // the depth quote use real values instead of the curated tables.
       if (net) {
@@ -174,6 +214,9 @@ async function fetchBybit(): Promise<Map<string, WalletStatus> | null> {
             deposit: chains.some((c) => c.chainDeposit === "1"),
             withdraw: chains.some((c) => c.chainWithdraw === "1"),
           });
+      putNets("bybit", r.coin, chains.map((c) => ({
+        net: c.chain, deposit: c.chainDeposit === "1", withdraw: c.chainWithdraw === "1",
+      })));
     }
     return m;
   } catch {
@@ -223,6 +266,11 @@ async function fetchOkx(): Promise<Map<string, WalletStatus> | null> {
       m.set(coin, net
         ? { deposit: !!net.canDep, withdraw: !!net.canWd }
         : { deposit: rows.some((r) => r.canDep), withdraw: rows.some((r) => r.canWd) });
+      putNets("okx", coin, rows.map((r) => ({
+        // OKX 체인명은 "USDT-ERC20" 꼴 — 코인 접두는 떼고 네트워크만 남긴다.
+        net: r.chain ? r.chain.replace(`${coin}-`, "") : coin,
+        deposit: !!r.canDep, withdraw: !!r.canWd,
+      })));
     }
     return m;
   } catch {
