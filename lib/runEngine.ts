@@ -577,6 +577,12 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   });
   trimRuns();
   persistRuns();
+  // 경로 프리워밍 — 컨트랙트 교차 검증(CoinGecko+온체인)은 콜드에서 ~2초인데,
+  // 그걸 쓰는 recv/transfer는 buy·withdraw 뒤 몇 분 후에야 온다. 지금 시작해
+  // 두면 그때는 항상 웜(0ms)이다. await 안 함 — 실행 시작을 1ms도 늦추지 않는다.
+  if (cfg.opp.kind === "kimchi" || cfg.opp.kind === "cex-dex") {
+    void import("./tokenRoutes").then((m) => m.ensureRoute(cfg.opp.base)).catch(() => {});
+  }
   void loop(id);
   return { id };
 }
