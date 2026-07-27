@@ -251,6 +251,52 @@ export function verifiedContract(base: string, chain: string): { address: string
   return { address: c.contract, decimals: c.decimals };
 }
 
+// ── 워머 — KR 상장 유니버스를 미리 전부 채운다 ────────────────────────────────
+// 지금까지 DB는 소극적으로 채워졌다(감지·실행·패널 열람 시점). 그러면 처음 보는
+// 코인의 콜드 구축(~2초)이 런타임에 밟힌다. 유니버스(업비트+빗썸 KRW, ~500개)를
+// 배경에서 한 번 훑어두면 런타임 해석은 사실상 항상 웜(0~43ms)이다.
+//
+// 속도 조절이 핵심이다: 토큰당 CoinGecko 2회 호출인데 무료 티어는 분당 10~30회다.
+// 10초에 1토큰(분당 12호출)으로 기어가면 500개 ≈ 84분 — 하루 한 번 도는 배경
+// 작업으론 충분하고, 레이트리밋을 안 건드려 상장 감지 경로의 CG 예산을 안 뺏는다.
+// 이미 웜인 토큰은 스킵이라 2회차부터는 몇 분 만에 끝난다.
+const WARM_INTERVAL_MS = 10_000;
+const WARM_RESWEEP_MS = 6 * 3600_000; // 한 바퀴 끝나면 6시간 쉬었다 다시
+const WARM_BACKOFF_MS = 5 * 60_000;   // 연속 실패(CG 다운/429) 시 5분 휴식
+const WARM_FAIL_LIMIT = 5;
+
+type GW = { __arbRouteWarmer?: boolean };
+const gw = globalThis as unknown as GW;
+
+/** 배경 워머 시작 (중복 호출 안전). universe()는 KR 상장 베이스 목록을 준다. */
+export function startRouteWarmer(universe: () => Promise<string[]>): void {
+  if (gw.__arbRouteWarmer) return;
+  gw.__arbRouteWarmer = true;
+  void (async () => {
+    // 기동 직후엔 스캔·감지가 먼저 자리 잡게 잠깐 양보한다.
+    await new Promise((r) => setTimeout(r, 60_000));
+    for (;;) {
+      let fails = 0;
+      let built = 0;
+      try {
+        const bases = await universe();
+        for (const base of bases) {
+          if (getRoute(base)) continue; // 웜(부정 캐시 포함) — 스킵
+          const r = await ensureRoute(base);
+          if (r) { built++; fails = 0; } else if (++fails >= WARM_FAIL_LIMIT) {
+            // CG가 죽었거나 레이트리밋 — 밀어붙이면 감지 경로 예산까지 태운다.
+            await new Promise((res) => setTimeout(res, WARM_BACKOFF_MS));
+            fails = 0;
+          }
+          await new Promise((res) => setTimeout(res, WARM_INTERVAL_MS));
+        }
+        if (built > 0) console.log(`[route-warmer] ${built}개 구축 · DB ${Object.keys(db().tokens).length}개`);
+      } catch { /* 유니버스 조회 실패 — 다음 바퀴에 */ }
+      await new Promise((r) => setTimeout(r, WARM_RESWEEP_MS));
+    }
+  })();
+}
+
 /** 진단용 — SQLite 전환 임계 감시(docs/TOKEN_ROUTE_DB.md §9).
  *
  *  bytes는 **캐시된 값**이다. /api/health가 15초마다 폴링하는데 매번 전체를

@@ -171,6 +171,20 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   if (!C.loop) {
     C.loop = setInterval(() => void refresh(), REFRESH_MS);
     startListingWatch(); // 상장따리: notice/TG/market watchers
+    // 경로 DB 워머 — KR 유니버스의 공식 컨트랙트를 미리 검증·적재해 둔다.
+    // 런타임 해석(recv/transfer)이 콜드 구축을 밟는 일이 없어진다.
+    void import("./tokenRoutes").then(({ startRouteWarmer }) =>
+      startRouteWarmer(async () => {
+        const { upbitKrwMarkets } = await import("./exchanges");
+        const up = (await upbitKrwMarkets()).map((m) => m.replace(/^KRW-/, ""));
+        // 빗썸 목록은 공개 게이트 스윕이 이미 들고 있다 — 별도 호출 없이 재사용.
+        const { fetchTransferStatus } = await import("./transfers");
+        const { swr } = await import("./ttlCache");
+        const ts = await swr("gates", 60_000, fetchTransferStatus);
+        const bt = [...(ts.byVenue.bithumb?.keys() ?? [])];
+        return [...new Set([...up, ...bt])];
+      }),
+    ).catch(() => {});
     startWatchdog(
       () => ({ scanTs: C.ts, liveOpps: C.opps.filter((o) => !o.mock).length }),
       // Recovery: force the latch open if a tick is wedged, then scan now.
