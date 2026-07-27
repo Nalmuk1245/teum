@@ -7,7 +7,7 @@
 // 모든 표는 같은 그리드 문법(처 | 가격 | 내 자금 | 비고 | 액션)을 쓴다.
 
 import React from "react";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vlabel, beep } from "./cockpit-ui";
 import { useIsMobile } from "../mobile";
 
@@ -156,9 +156,9 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  // 히스토리에서 여는 경로. 상세는 목록 쪽에 그려지는데 히스토리는 카드 맨 아래라,
-  // 모바일에선 열어도 화면 밖이라 아무 일도 안 일어난 것처럼 보인다 — 그래서 스크롤을
-  // 같이 옮긴다. PC는 상세가 전체 화면을 차지하므로 필요 없다.
+  // 히스토리에서 여는 경로. 히스토리는 목록 카드 맨 아래라 상세(모바일: 목록 위
+  // 인라인 / PC: 우측 컬럼 상단)가 화면 밖에서 열려 무반응처럼 보인다 — 열린
+  // 상세 블록(DETAIL_ANCHOR)으로 스크롤을 같이 옮긴다.
   const openDetail = (base: string) => {
     setSelected(base);
     requestAnimationFrame(() => {
@@ -372,7 +372,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
                   {/* 지난 상장도 다시 열어본다 — 그때 왜 그 값이 나왔는지 보려면
                       결국 같은 상세 패널이 필요하다. 티커 자체가 그 입구다. */}
                   <button type="button" onClick={() => openDetail(h.base)} title={`${h.base} 상세 열기`}
-                    style={{ fontWeight: 700, background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: selected === h.base ? "var(--brand)" : "var(--text)", textDecoration: "underline", textDecorationColor: "var(--border)", textUnderlineOffset: 3 }}>
+                    style={{ fontSize: 11, fontWeight: 700, background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: selected === h.base ? "var(--brand)" : "var(--text)", textDecoration: "underline", textDecorationColor: "var(--border)", textUnderlineOffset: 3 }}>
                     {h.base}
                   </button>
                   <span className="tnum" style={{ color: "var(--text-mute)" }}>
@@ -404,7 +404,6 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     );
   }
 
-  // ── PC: 종목 미선택 = 좌 목록 + 우 안내 / 선택 = 상세 풀스크린(목록 접힘) ──
   // ── PC: 목록은 항상 좌측에 산다 — 선택은 우측 상세만 바꾼다 ──
   // 예전엔 선택하면 상세가 전체 화면을 덮고 목록이 접혔다. 이 화면이 제일
   // 중요한 순간은 상장 이벤트 중인데, 그때 한 코인을 실행하느라 새 감지가
@@ -414,7 +413,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       <div style={{ minWidth: 0 }}>{mainCard}</div>
       {selected ? (
         // sticky 금지 — 상세가 화면보다 길어서(차트 440px+표) 걸면 하단이 안 닿는다
-        <div key={selected} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden" }}>
+        <div key={selected} id={DETAIL_ANCHOR} className="panel-in" style={{ ...CARD, padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
             <span style={{ fontWeight: 700, fontSize: 15 }}>{selected}</span>
             <span style={CAP}>상세 · 실행</span>
@@ -603,7 +602,85 @@ function CandleMini({ chain, contract }: { chain: string; contract: string }) {
   );
 }
 
-// ── 상세·실행 패널 — ①신호 ②차트 ③매수·매도 ④포지션 ⑤참고 ────────────────────
+// ── 지갑 → 거래소 입금 섹션 ───────────────────────────────────────────────────
+// DEX 매수분을 개장 전에 매도처(주로 KR)로 옮기는 다리. 주소·컨트랙트 검증은
+// 전부 서버(/api/listing-transfer)가 한다 — 이 컴포넌트는 수량·목적지 선택 UI다.
+const TRANSFER_CHAINS = ["ethereum", "bsc", "base", "arbitrum", "optimism", "polygon", "avalanche"];
+const TRANSFER_VENUES = ["upbit", "bithumb", "binance", "bybit", "okx"] as const;
+
+function TransferSection({ base, play, dex, busy, act }: {
+  base: string;
+  play: { venue?: string } | null;
+  dex: DexRow[];
+  busy: string | null;
+  act: (key: string, url: string, body: Record<string, unknown>) => Promise<void>;
+}) {
+  // 체인 후보: 이 토큰이 존재하는 체인 중 전송 배선이 있는 것(EVM)만.
+  const chains = useMemo(() => {
+    const fromDex = dex.map((x) => x.chain).filter((c: string) => TRANSFER_CHAINS.includes(c));
+    return fromDex.length ? fromDex : ["ethereum"];
+  }, [dex]);
+  const [chain, setChain] = useState(chains[0]);
+  const [venue, setVenue] = useState<string>(play?.venue ?? "upbit");
+  const [qty, setQty] = useState("");
+  const [bal, setBal] = useState<number | null>(null);
+  useEffect(() => { if (!chains.includes(chain)) setChain(chains[0]); }, [chains, chain]);
+
+  // 지갑 잔고 — 수량 프리필. 체인이 바뀌면 다시 읽는다.
+  useEffect(() => {
+    let stop = false;
+    setBal(null);
+    fetch(`/api/listing-transfer?base=${encodeURIComponent(base)}&chain=${chain}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => { if (!stop) setBal(typeof j.qty === "number" ? j.qty : null); })
+      .catch(() => {});
+    return () => { stop = true; };
+  }, [base, chain]);
+
+  const qn = Number(qty);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ ...CAP, color: "var(--text-dim)" }}>지갑 → 거래소 입금</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>개장 전에 매도처로 — 입금주소·컨트랙트는 서버가 검증</span>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={chain} onChange={(e) => setChain(e.target.value)}
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
+          {chains.map((c) => <option key={c} value={c}>{c === "ethereum" ? "eth" : c}</option>)}
+        </select>
+        <span style={{ color: "var(--text-mute)", fontSize: 12 }}>→</span>
+        <select value={venue} onChange={(e) => setVenue(e.target.value)}
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
+          {TRANSFER_VENUES.map((v) => (
+            <option key={v} value={v}>
+              {vlabel(v as never) ?? v}{play?.venue === v ? " ★" : ""}
+            </option>
+          ))}
+        </select>
+        <input value={qty} onChange={(e) => setQty(e.target.value)} placeholder="수량" inputMode="decimal"
+          className="tnum"
+          style={{ width: 110, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 }} />
+        <button type="button" style={BTN_GHOST} disabled={bal == null || bal <= 0}
+          onClick={() => bal != null && setQty(String(Math.floor(bal * 1e6) / 1e6))}
+          title="지갑 잔고 전액">
+          전액{bal != null ? ` (${bal >= 1 ? bal.toFixed(3) : bal.toPrecision(3)})` : ""}
+        </button>
+        <button type="button" style={BTN} disabled={busy != null || !(qn > 0)}
+          onClick={() => void act("transfer", "/api/listing-transfer", { base, chain, venue, qty: qn })}>
+          {busy === "transfer" ? "…" : "입금 전송"}
+        </button>
+      </div>
+      {bal != null && bal <= 0 && (
+        <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--text-mute)" }}>
+          이 체인 지갑 잔고 0 — DEX 매수 후 사용하거나 다른 체인을 선택하세요
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 상세·실행 패널 — ①신호 ②차트 ③매수·매도 ③′입금 ④포지션 ⑤참고 ──────────────
 function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }) {
   // 표를 3열로 접어 매수·매도 버튼이 화면 밖으로 안 나가게.
   // `narrow`: 뷰포트는 데스크탑이어도 **이 패널이 들어앉은 컬럼이 좁을 때**(PC
@@ -1104,6 +1181,12 @@ function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }) {
           </>
         );
       })()}
+
+      {/* ③′ 지갑 → 거래소 입금 — DEX에서 산 코인을 개장 전에 매도처로 옮겨 두는
+          다리. 개장 후 팔려면 개장 전에 도착해 있어야 한다. 입금주소는 서버가
+          거래소 API에서 직접 받고(클라이언트 주소 불신), 컨트랙트는 검증 경로를
+          거친다 — 검증 실패 코인은 서버가 차단하고 수동 등록을 안내한다. */}
+      <TransferSection base={base} play={play} dex={d.dex} busy={busy} act={act} />
 
       {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (
