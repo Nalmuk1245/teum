@@ -140,7 +140,11 @@ const kimchi: Strategy = {
       const transfer: TransferGate = {
         withdraw: { venue: buyVenue, enabled: wStat ? wStat.withdraw : null },
         deposit: { venue: sellVenue, enabled: dStat ? dStat.deposit : null },
-        etaMin: isReverse ? Math.max(baseEta, 60) : baseEta, // KR withdrawal freeze
+        // 역프 60분: 운영자 결정(2026-07-27) — KR 출금 동결(24~72h)은 **신규 원화
+        // 입금분**에 걸리고, 이 계좌는 기존 예치금으로 돌므로 해당 없음. 감사
+        // R3(역프 펀딩 과소)도 같은 이유로 기각. 신규 입금으로 운용을 바꾸면
+        // 이 가정이 깨진다 — 그때는 이 값과 hedgeCost 펀딩 창을 같이 늘릴 것.
+        etaMin: isReverse ? Math.max(baseEta, 60) : baseEta,
         blocked: false,
         network: coinNetwork(base),
       };

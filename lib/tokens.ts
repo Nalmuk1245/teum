@@ -80,16 +80,33 @@ const OKX_CHAIN_SHORT: Record<string, string> = {
   gnosis: "gno", celo: "celo", ronin: "ronin", wemix: "wemix", monad: "monad",
 };
 
+// 내 지갑의 특정 토큰 잔고 (raw). "이 배포본을 실제로 들고 있는가"의 확인용.
+async function erc20BalanceRaw(chainKey: string, address: string, owner: string): Promise<bigint | null> {
+  try {
+    const { JsonRpcProvider, Contract } = await import("ethers");
+    const provider = new JsonRpcProvider(CHAINS[chainKey].rpc, undefined, { staticNetwork: true });
+    const c = new Contract(address, ["function balanceOf(address) view returns (uint256)"], provider);
+    return BigInt(await c.balanceOf(owner));
+  } catch { return null; }
+}
+
 /** tokenFor의 비동기 확장 — 큐레이션 맵에 없으면 자동 해석 (EVM만).
  *
- *  우선순위: ① 큐레이션 맵 ② 경로 DB의 온체인 검증분 ③ OKX 토큰리스트
+ *  우선순위: ① 큐레이션 맵 ② 경로 DB(없으면 즉석 구축) ③ OKX 토큰리스트
  *            ④ 내 지갑 실보유 토큰(OKX 잔고).
  *
- *  ②~④는 전부 온체인 symbol()이 base와 일치해야 통과한다. 이 함수의 반환값으로
- *  실제 자금이 나가기 때문에 — 심볼만 같은 클론 토큰을 집으면 그대로 소각이다.
- *  지갑 보유분을 마지막으로 내린 이유도 같다: 누구나 내 주소로 같은 심볼의
- *  가짜 토큰을 에어드랍할 수 있고, 예전 순서에선 그게 1순위로 이겼다.
- *  decimals는 리스트에서, 없으면 온체인 decimals()로 확정. */
+ *  이 함수의 반환값으로 실제 자금이 나간다. 원칙은 하나다: **독립 소스가 교차
+ *  확인해 주지 않는 컨트랙트는 채택하지 않는다.**
+ *
+ *  - 심볼 검증(symbol()==base)은 필요조건이지 충분조건이 아니다 — 에어드랍 클론도
+ *    자기 symbol()은 정직하게 같은 값을 돌려준다(감사 R2). 그래서:
+ *  - ③ 리스트 후보는 경로 DB(CoinGecko)와 주소가 일치하거나, 아니면 **내가 그
+ *    배포본을 실제로 보유 중**이어야 한다. 리스트의 정본과 거래소가 실제로 출금해
+ *    준 배포본이 다르면(브리지/재배포) 보유량 0인 주소를 쫓다 recv가 영원히
+ *    대기했다(감사 R1) — 잔고 요건이 그 좌초를 막는다.
+ *  - ④ 보유분 단독은 채택하지 않는다. 보유 사실도 심볼도 공격자가 만들 수 있는
+ *    값이라, 경로 DB가 같은 주소를 가리킬 때만 통과한다. 교차 확인이 전무하면
+ *    unknown → 송금 차단(수동 확인)이 정답이다. */
 export async function resolveWalletAsset(base: string, chainKey: string): Promise<WalletAsset> {
   const cur = tokenFor(base, chainKey);
   if (cur.known) return cur;
@@ -102,32 +119,51 @@ export async function resolveWalletAsset(base: string, chainKey: string): Promis
   };
 
   try {
-    // ② 경로 DB — 이미 온체인 검증을 통과한 항목만 나온다 (네트워크 왕복 0).
-    const { verifiedContract } = await import("./tokenRoutes");
+    // ② 경로 DB — 온체인 검증 통과분이면 즉답. 없으면 즉석 구축해 본다:
+    // CoinGecko(사람이 큐레이션한 심볼→컨트랙트) + 온체인 symbol()이 이 함수의
+    // 유일한 독립 소스라, 아래 ③④의 교차 확인 기준이 된다. ensureRoute는
+    // 진행 중 조회 공유 + 60초 부정 캐시가 있어 폴링(20초 주기)에서도 싸다.
+    const { verifiedContract, ensureRoute } = await import("./tokenRoutes");
     const known = verifiedContract(base, chainKey);
     if (known) return { kind: "token", known: true, address: known.address, decimals: known.decimals };
+    const route = await ensureRoute(base).catch(() => null);
+    const routeChain = route?.chains.find((c) => c.chain === chainKey) ?? null;
+    if (routeChain?.trust === "onchain") {
+      return { kind: "token", known: true, address: routeChain.contract, decimals: routeChain.decimals };
+    }
+    const corroborated = (addr: string) =>
+      !!routeChain && routeChain.contract.toLowerCase() === addr.toLowerCase();
 
     const { allTokens } = await import("./dex");
+    const evmAddr = process.env.WALLET_ADDR_EVM ?? null;
 
-    // ③ OKX 토큰리스트 — 심볼 유일할 때만 (중복 심볼 = 모호 → 차단 유지).
+    // ③ OKX 토큰리스트 — 심볼 유일 + symbol() 일치 + (경로 DB 일치 또는 실보유).
     const list = await allTokens(chainKey);
     const t = list.get(base);
     if (t && (await symbolMatches(t.address))) {
-      return { kind: "token", known: true, address: t.address, decimals: t.decimals };
+      if (corroborated(t.address)) {
+        return { kind: "token", known: true, address: t.address, decimals: t.decimals };
+      }
+      if (!routeChain && evmAddr) {
+        // 경로 DB가 이 체인을 모를 때: 내가 이 배포본을 실제로 들고 있어야 채택.
+        // (리스트 정본 ≠ 거래소가 보낸 배포본이면 잔고가 0이고, recv 폴링 중이면
+        //  도착 후 재해석 때 잔고가 생겨 통과한다 — 좌초 대신 자연 수렴.)
+        const bal = await erc20BalanceRaw(chainKey, t.address, evmAddr);
+        if (bal != null && bal > 0n) {
+          return { kind: "token", known: true, address: t.address, decimals: t.decimals };
+        }
+      }
     }
 
-    // ④ 지갑이 실제 들고 있는 토큰 — 리스트에 아직 없는 신규 상장이 여기서 잡힌다.
+    // ④ 지갑 실보유 — 경로 DB가 같은 주소를 가리킬 때만.
     const short = OKX_CHAIN_SHORT[chainKey];
-    if (short) {
+    if (short && routeChain) {
       const { okxAllWalletCoins } = await import("./okxWallet");
-      const evmAddr = process.env.WALLET_ADDR_EVM ?? null;
       const coins = await okxAllWalletCoins({ evm: evmAddr }).catch(() => null);
       const held = coins?.find((c) => c.symbol === base && c.chain === short && c.contract);
       // 네이티브 표기는 contract가 비어 오므로 여기 오면 항상 토큰.
-      if (held?.contract && (await symbolMatches(held.contract))) {
-        const dec = list.get(base)?.address.toLowerCase() === held.contract.toLowerCase()
-          ? list.get(base)!.decimals
-          : await erc20Decimals(chainKey, held.contract);
+      if (held?.contract && corroborated(held.contract) && (await symbolMatches(held.contract))) {
+        const dec = routeChain.decimals ?? (await erc20Decimals(chainKey, held.contract));
         if (dec != null) return { kind: "token", known: true, address: held.contract, decimals: dec };
       }
     }
