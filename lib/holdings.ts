@@ -89,7 +89,9 @@ export function peekHoldings(symbol: string): { v: HoldingsResult | { error: str
   if (!fresh && !gi.__arbHoldingsInflight!.has(key)) {
     const p = fetchHoldings(key, { fresh: true })
       .then((r) => { if ("error" in r) gi.__arbHoldingsErr!.set(key, { ts: Date.now(), error: r.error }); })
-      .catch(() => {})
+      // reject도 메모한다 — 안 남기면 pending이 계속 참이라 클라이언트 3초
+      // 재시도가 14초짜리 스윕을 매번 새로 지폈다 (감사 R6).
+      .catch((e) => gi.__arbHoldingsErr!.set(key, { ts: Date.now(), error: e instanceof Error ? e.message : "조회 실패" }))
       .finally(() => gi.__arbHoldingsInflight!.delete(key));
     gi.__arbHoldingsInflight!.set(key, p);
   }

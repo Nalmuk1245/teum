@@ -33,12 +33,18 @@ export type NetDetail = {
   isDefault?: boolean;    // 그 거래소의 기본 체인
 };
 type NetsByVenue = Partial<Record<Venue, NetDetail[]>>;
-const gn = globalThis as unknown as { __arbGateNets?: Map<string, NetsByVenue> };
+const gn = globalThis as unknown as {
+  __arbGateNets?: Map<string, NetsByVenue>;
+  /** 거래소별 마지막 성공 스윕 시각 — 키가 죽으면 상세가 낡는데, 시각이 없으면
+   *  몇 시간 전 withdraw:true를 현재값처럼 서빙하게 된다 (감사 R8). */
+  __arbGateNetsAt?: Partial<Record<Venue, number>>;
+};
 gn.__arbGateNets ??= new Map();
+gn.__arbGateNetsAt ??= {};
 
-/** 스윕이 채운 코인별 체인 상세. 키 없는 거래소는 항목 자체가 없다. */
-export function gateNetworks(base: string): NetsByVenue {
-  return gn.__arbGateNets!.get(base.toUpperCase()) ?? {};
+/** 스윕이 채운 코인별 체인 상세 + 거래소별 채집 시각. 키 없는 거래소는 항목 자체가 없다. */
+export function gateNetworks(base: string): { nets: NetsByVenue; fetchedAt: Partial<Record<Venue, number>> } {
+  return { nets: gn.__arbGateNets!.get(base.toUpperCase()) ?? {}, fetchedAt: { ...gn.__arbGateNetsAt } };
 }
 
 function putNets(venue: Venue, base: string, nets: NetDetail[]): void {
@@ -47,6 +53,7 @@ function putNets(venue: Venue, base: string, nets: NetDetail[]): void {
   const e = m.get(base) ?? {};
   e[venue] = nets;
   m.set(base, e);
+  gn.__arbGateNetsAt![venue] = Date.now();
 }
 
 // ── Bithumb (public) ──────────────────────────────────────────────────────────

@@ -50,9 +50,12 @@ type Db = { schema: 1; tokens: Record<string, TokenRoute> };
 
 const SCHEMA = 1;
 const ROUTE_TTL = 30 * 24 * 3600_000; // 컨트랙트·검증 재확인 주기
+// 체인이 하나도 없는 경로는 짧게만 신뢰한다. 일시 원인(부분 응답·전 체인 검증
+// 실패)으로 빈 경로가 되면 verifiedContract가 계속 null → 전송이 계속 차단되는데,
+// 그 상태가 30일 굳으면 fail-closed가 fail-stuck이 된다 (감사 R7).
+const EMPTY_ROUTE_TTL = 3600_000;
 /** 풀 주소·유동성을 재사용해도 되는 기간. 이보다 오래되면 다시 조회한다. */
 export const LIQUIDITY_TTL_MS = 3600_000;
-const LIQ_TTL = LIQUIDITY_TTL_MS;
 const UNKNOWN_TTL = 60_000; // 부정 캐시 — 레이트리밋 오판이 오래 굳지 않게
 // persist가 섹션을 통째로 다시 쓰므로 무한정 키우면 저장할 때마다 이벤트 루프가
 // 멈춘다. 실측 ~960B/토큰이라 2000개면 약 1.9MB — 쓰기 지연이 눈에 띄기 시작하는
@@ -62,11 +65,9 @@ const MAX_TOKENS = 2000;
 type G = {
   __arbRoutes?: Db;
   __arbRouteBuild?: Map<string, Promise<TokenRoute | null>>;
-  __arbRouteLiq?: Map<string, Promise<void>>;
 };
 const g = globalThis as unknown as G;
 g.__arbRouteBuild ??= new Map();
-g.__arbRouteLiq ??= new Map();
 
 function db(): Db {
   if (!g.__arbRoutes) {
@@ -91,7 +92,7 @@ export function getRoute(base: string): TokenRoute | null {
   const r = db().tokens[base.toUpperCase()];
   if (!r) return null;
   if (r.unknownAt) return Date.now() - r.unknownAt < UNKNOWN_TTL ? r : null;
-  if (Date.now() - r.updatedAt > ROUTE_TTL) return null;
+  if (Date.now() - r.updatedAt > (r.chains.length ? ROUTE_TTL : EMPTY_ROUTE_TTL)) return null;
   return r;
 }
 
@@ -99,7 +100,7 @@ export function getRoute(base: string): TokenRoute | null {
 async function checkSymbol(chain: string, address: string, base: string): Promise<boolean | null> {
   if (CHAINS[chain]?.family !== "evm") return null; // 비EVM 검증 미배선
   try {
-    const { erc20Symbol } = await import("./tokens");
+    const { erc20Symbol } = await import("./erc20");
     const sym = await erc20Symbol(chain, address);
     return sym ? sym.toUpperCase() === base.toUpperCase() : null;
   } catch {
@@ -194,36 +195,6 @@ export async function ensureRoute(base: string): Promise<TokenRoute | null> {
     }
   })();
   g.__arbRouteBuild!.set(key, p);
-  return p;
-}
-
-/** 풀 유동성만 배경 갱신(1h). 표시·1차 필터용이며 실행 판단의 단독 근거가 아니다. */
-export function refreshLiquidity(base: string): Promise<void> {
-  const key = base.toUpperCase();
-  const running = g.__arbRouteLiq!.get(key);
-  if (running) return running;
-
-  const r = db().tokens[key];
-  const stale = (r?.chains ?? []).filter((c) => !c.liquidityAt || Date.now() - c.liquidityAt > LIQ_TTL);
-  if (!stale.length) return Promise.resolve();
-
-  const p = (async () => {
-    try {
-      await Promise.all(stale.map(async (c) => {
-        const pair = await topPair(c.chain, c.contract);
-        if (!pair) return;
-        c.pairAddress = pair.pairAddress;
-        c.liquidityUsd = pair.liquidityUsd;
-        c.liquidityAt = Date.now();
-      }));
-      persist();
-    } catch {
-      /* 유동성 갱신 실패는 무해 — 다음 호출에 다시 시도 */
-    } finally {
-      g.__arbRouteLiq!.delete(key);
-    }
-  })();
-  g.__arbRouteLiq!.set(key, p);
   return p;
 }
 

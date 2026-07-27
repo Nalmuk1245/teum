@@ -93,19 +93,11 @@ const fail = (message: string): StepResult => ({ ok: false, dryRun: CONFIG.DRY_R
 async function walletBalanceOf(base: string, chainKey: string): Promise<number | null> {
   const addr = destAddr(chainKey);
   if (!addr) return null;
-  try {
-    const { JsonRpcProvider, Contract, formatUnits, formatEther } = await import("ethers");
-    const provider = new JsonRpcProvider(getChain(chainKey)!.rpc);
-    const asset = await resolveWalletAsset(base, chainKey);
-    if (asset.kind === "token") {
-      const c = new Contract(asset.address, ["function balanceOf(address) view returns (uint256)"], provider);
-      return Number(formatUnits(await c.balanceOf(addr), asset.decimals));
-    }
-    if (asset.kind === "native") return Number(formatEther(await provider.getBalance(addr)));
-    return null; // contract unknown
-  } catch {
-    return null;
-  }
+  const { erc20Balance, nativeBalance } = await import("./erc20");
+  const asset = await resolveWalletAsset(base, chainKey);
+  if (asset.kind === "token") return erc20Balance(chainKey, asset.address, addr, asset.decimals);
+  if (asset.kind === "native") return nativeBalance(chainKey, addr);
+  return null; // contract unknown
 }
 
 /** Has the coin actually LANDED in our wallet?

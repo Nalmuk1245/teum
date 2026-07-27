@@ -29,19 +29,11 @@ export async function GET(req: Request) {
   if (!base || !ch) return NextResponse.json({ qty: null });
   const owner = process.env.WALLET_ADDR_EVM ?? walletAddress();
   if (!owner || ch.family !== "evm") return NextResponse.json({ qty: null });
-  try {
-    const { JsonRpcProvider, Contract, formatUnits, formatEther } = await import("ethers");
-    const provider = new JsonRpcProvider(ch.rpc, undefined, { staticNetwork: true });
-    const asset = await resolveWalletAsset(base, chain);
-    if (asset.kind === "token") {
-      const c = new Contract(asset.address, ["function balanceOf(address) view returns (uint256)"], provider);
-      return NextResponse.json({ qty: Number(formatUnits(await c.balanceOf(owner), asset.decimals)) });
-    }
-    if (asset.kind === "native") {
-      return NextResponse.json({ qty: Number(formatEther(await provider.getBalance(owner))) });
-    }
-    return NextResponse.json({ qty: null, unresolved: true });
-  } catch { return NextResponse.json({ qty: null }); }
+  const { erc20Balance, nativeBalance } = await import("@/lib/erc20");
+  const asset = await resolveWalletAsset(base, chain);
+  if (asset.kind === "token") return NextResponse.json({ qty: await erc20Balance(chain, asset.address, owner, asset.decimals) });
+  if (asset.kind === "native") return NextResponse.json({ qty: await nativeBalance(chain, owner) });
+  return NextResponse.json({ qty: null, unresolved: true });
 }
 
 export async function POST(req: Request) {

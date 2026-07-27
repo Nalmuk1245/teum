@@ -47,28 +47,11 @@ export function tokenFor(base: string, chainKey: string): WalletAsset {
   return { kind: "unknown", known: false };
 }
 
-// 온체인 decimals() 직접 확인 — OKX가 decimals를 안 줄 때의 정답지.
-async function erc20Decimals(chainKey: string, address: string): Promise<number | null> {
-  try {
-    const { JsonRpcProvider, Contract } = await import("ethers");
-    const provider = new JsonRpcProvider(CHAINS[chainKey].rpc, undefined, { staticNetwork: true });
-    const c = new Contract(address, ["function decimals() view returns (uint8)"], provider);
-    return Number(await c.decimals());
-  } catch { return null; }
-}
-
-// 온체인 symbol() 직접 확인 — cex-dex 동적 후보가 "바낸의 그 코인"과 같은
-// 토큰인지 검증하는 데 쓴다(CoinGecko 대체). 로컬/공개 RPC라 CG처럼 레이트리밋
-// 예산을 갉아먹지 않는다. 실패(구형 bytes32 심볼 등) = null → 호출부에서 강등.
-export async function erc20Symbol(chainKey: string, address: string): Promise<string | null> {
-  try {
-    const { JsonRpcProvider, Contract } = await import("ethers");
-    const provider = new JsonRpcProvider(CHAINS[chainKey].rpc, undefined, { staticNetwork: true });
-    const c = new Contract(address, ["function symbol() view returns (string)"], provider);
-    const sym = String(await c.symbol()).trim();
-    return sym.length ? sym : null;
-  } catch { return null; }
-}
+// 온체인 읽기는 lib/erc20.ts 한 곳 — 기존 임포터를 위해 재수출한다.
+// (symbol 검증은 cex-dex 동적 후보·전송 컨트랙트 교차 확인이 같이 쓴다.
+//  공개 RPC라 CoinGecko처럼 레이트리밋 예산을 갉아먹지 않는다.)
+import { erc20Symbol, erc20Decimals, erc20BalanceRaw } from "./erc20";
+export { erc20Symbol };
 
 // okxWallet 체인 표기 ↔ chains.ts 키
 const OKX_CHAIN_SHORT: Record<string, string> = {
@@ -79,16 +62,6 @@ const OKX_CHAIN_SHORT: Record<string, string> = {
   cronos: "cro", fantom: "ftm", manta: "manta", metis: "metis",
   gnosis: "gno", celo: "celo", ronin: "ronin", wemix: "wemix", monad: "monad",
 };
-
-// 내 지갑의 특정 토큰 잔고 (raw). "이 배포본을 실제로 들고 있는가"의 확인용.
-async function erc20BalanceRaw(chainKey: string, address: string, owner: string): Promise<bigint | null> {
-  try {
-    const { JsonRpcProvider, Contract } = await import("ethers");
-    const provider = new JsonRpcProvider(CHAINS[chainKey].rpc, undefined, { staticNetwork: true });
-    const c = new Contract(address, ["function balanceOf(address) view returns (uint256)"], provider);
-    return BigInt(await c.balanceOf(owner));
-  } catch { return null; }
-}
 
 /** tokenFor의 비동기 확장 — 큐레이션 맵에 없으면 자동 해석 (EVM만).
  *

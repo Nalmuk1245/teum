@@ -14,7 +14,7 @@
 
 import { loadSection, saveSection } from "./persist";
 import { CHAINS } from "./chains";
-import { erc20Symbol } from "./tokens";
+import { erc20Symbol, erc20Decimals } from "./erc20";
 
 export type ManualToken = {
   address: string;
@@ -69,14 +69,7 @@ export async function addManualToken(
   // 온체인 확인 — 이 주소가 실재하는 토큰이고, 심볼이 말하는 대로인가.
   const [symbol, decimals] = await Promise.all([
     erc20Symbol(chain, address),
-    (async () => {
-      try {
-        const { JsonRpcProvider, Contract } = await import("ethers");
-        const provider = new JsonRpcProvider(ch.rpc, undefined, { staticNetwork: true });
-        const c = new Contract(address, ["function decimals() view returns (uint8)"], provider);
-        return Number(await c.decimals());
-      } catch { return null; }
-    })(),
+    erc20Decimals(chain, address),
   ]);
   if (decimals == null) {
     // decimals조차 못 읽으면 토큰 컨트랙트가 아니거나 RPC가 죽었다 — force로도 불가.
