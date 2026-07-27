@@ -27,6 +27,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <PnlCard />
         <GatesCard />
+        <ManualTokenCard />
       </div>
     );
   }
@@ -49,6 +50,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         </div>
         <div style={col}>
           <GatesCard />
+          <ManualTokenCard />
         </div>
       </div>
     </div>
@@ -201,6 +203,99 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
             </div>
             <div style={{ fontSize: 10, color: "var(--text-mute)", marginTop: 3 }}>손실 한도까지 {usd(Math.max(0, rs.maxDailyLossUsd - loss))} 남음</div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 수동 컨트랙트 등록 — 자동 교차 확인이 못 뚫는 극신생 코인용 ──────────────
+// 이 주소로 실제 자금이 나간다. 서버가 등록 시점에 온체인 symbol()·decimals()를
+// 확인하고, 심볼이 다르면 강제 체크 없이는 저장하지 않는다.
+const MANUAL_CHAINS = ["ethereum", "bsc", "base", "arbitrum", "optimism", "polygon", "avalanche"];
+
+function ManualTokenCard() {
+  type Row = { base: string; chain: string; entry: { address: string; decimals: number; symbol: string | null; verified: boolean; addedAt: number } };
+  const [rows, setRows] = useState<Row[]>([]);
+  const [form, setForm] = useState({ base: "", chain: "ethereum", address: "" });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [needForce, setNeedForce] = useState<string | null>(null); // 서버가 알려준 불일치 사유
+
+  const load = () => fetch("/api/manual-token", { cache: "no-store" }).then((r) => r.json())
+    .then((j) => setRows(j.tokens ?? [])).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const submit = async (force: boolean) => {
+    setBusy(true); setMsg(null);
+    try {
+      const j = await (await fetch("/api/manual-token", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...form, force }),
+      })).json();
+      if (j.ok) {
+        setMsg(`✓ 등록됨 — 온체인 ${j.symbol ?? "?"} · ${j.decimals} decimals${j.verified ? "" : " (심볼 미일치 — 강제)"}`);
+        setNeedForce(null); setForm({ base: "", chain: form.chain, address: "" }); load();
+      } else if (j.foundSymbol !== undefined) {
+        setNeedForce(j.message); // 심볼 불일치 — 강제 등록 버튼 노출
+      } else { setMsg(`✗ ${j.message ?? "등록 실패"}`); setNeedForce(null); }
+    } catch { setMsg("✗ 요청 실패"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>수동 컨트랙트 등록</div>
+      <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 8 }}>
+        자동 교차 확인(CoinGecko·온체인)이 못 잡는 극신생 코인의 공식 컨트랙트를 직접 등록 — 전송 경로가 최우선으로 사용
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 6, marginBottom: 6 }}>
+        <input value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value.toUpperCase() })} placeholder="코인 (예: EUL)"
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12.5, outline: "none", minWidth: 0 }} />
+        <select value={form.chain} onChange={(e) => setForm({ ...form, chain: e.target.value })}
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
+          {MANUAL_CHAINS.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+      <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="컨트랙트 주소 (0x…)"
+        className="tnum"
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 11.5, outline: "none", marginBottom: 6 }} />
+      {needForce ? (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: "var(--neg)", marginBottom: 6 }}>⚠ {needForce}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" disabled={busy} onClick={() => void submit(true)}
+              style={{ border: "1px solid var(--neg)", background: "transparent", color: "var(--neg)", borderRadius: 9, padding: "6px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+              그래도 등록 (책임 확인)
+            </button>
+            <button type="button" disabled={busy} onClick={() => setNeedForce(null)}
+              style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "6px 12px", fontSize: 11.5, cursor: "pointer" }}>
+              취소
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" disabled={busy || !form.base.trim() || !form.address.trim()} onClick={() => void submit(false)}
+          style={{ width: "100%", border: "none", borderRadius: 9, padding: "8px 0", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: busy || !form.base.trim() || !form.address.trim() ? 0.5 : 1, marginBottom: 6 }}>
+          {busy ? "온체인 확인 중…" : "온체인 확인 후 등록"}
+        </button>
+      )}
+      {msg && <div style={{ fontSize: 11, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)", marginBottom: 6 }}>{msg}</div>}
+      {rows.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+          {rows.map((r) => (
+            <div key={r.base + r.chain} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 11.5 }}>
+              <b>{r.base}</b>
+              <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{r.chain}</span>
+              {!r.entry.verified && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>심볼 미일치</span>}
+              <span className="tnum" style={{ fontSize: 10, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                {r.entry.address}
+              </span>
+              <button type="button" title="삭제"
+                onClick={() => { void fetch(`/api/manual-token?base=${r.base}&chain=${r.chain}`, { method: "DELETE" }).then(load); }}
+                style={{ border: "none", background: "transparent", color: "var(--text-mute)", cursor: "pointer", fontSize: 12 }}>✕</button>
+            </div>
+          ))}
         </div>
       )}
     </div>

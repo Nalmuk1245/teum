@@ -108,6 +108,14 @@ async function erc20BalanceRaw(chainKey: string, address: string, owner: string)
  *    값이라, 경로 DB가 같은 주소를 가리킬 때만 통과한다. 교차 확인이 전무하면
  *    unknown → 송금 차단(수동 확인)이 정답이다. */
 export async function resolveWalletAsset(base: string, chainKey: string): Promise<WalletAsset> {
+  // ⓪ 운영자 수동 등록 — 최상위 권위. 자동 소스가 커버 못 하는 극신생 코인을
+  // 운영자가 직접 뚫는 경로라, 큐레이션보다도 먼저 본다 (등록 절차에 온체인
+  // 확인이 들어 있다 — lib/manualTokens.ts).
+  {
+    const { manualToken } = await import("./manualTokens");
+    const man = manualToken(base, chainKey);
+    if (man) return { kind: "token", known: true, address: man.address, decimals: man.decimals };
+  }
   const cur = tokenFor(base, chainKey);
   if (cur.known) return cur;
   if (CHAINS[chainKey]?.family !== "evm") return cur; // 자동 해석은 EVM만 (SPL/TRC20 전송 미배선)

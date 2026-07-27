@@ -444,7 +444,7 @@ export async function runStep(
       const to = fetched?.address || "0xDRYRUN_DEST";
       // 큐레이션 → 내 지갑 보유 컨트랙트(OKX) → 토큰리스트 순 자동 해석.
       const asset = await resolveWalletAsset(opp.base, chain);
-      if (asset.kind === "unknown" && !dry) return fail(`${opp.base} 토큰 컨트랙트 미확인 — 송금 차단`);
+      if (asset.kind === "unknown" && !dry) return fail(`${opp.base} 토큰 컨트랙트 미확인 — 송금 차단 (운영 탭 > 수동 컨트랙트 등록으로 뚫을 수 있음)`);
       // FLOOR, never round: toFixed rounds half-up, so a balance of 1.0000004
       // became a 1.000001 request and the transfer reverted on insufficient
       // funds (gas burned, and past the irreversible boundary so no rollback).
