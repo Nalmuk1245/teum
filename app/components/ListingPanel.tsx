@@ -7,7 +7,7 @@
 // 모든 표는 같은 그리드 문법(처 | 가격 | 내 자금 | 비고 | 액션)을 쓴다.
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { beep } from "./cockpit-ui";
+import { beep, VenueLink } from "./cockpit-ui";
 import {
   CAP, CARD, BTN, BTN_GHOST, INPUT, DETAIL_ANCHOR,
   fmtPx, ago, Countdown,
@@ -189,9 +189,12 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         const open = selected === l.base;
         return (
           <div key={l.base + l.venue} id={open ? DETAIL_ANCHOR : undefined} style={{ borderBottom: "1px solid var(--border)" }}>
-            <button
-              type="button"
+            {/* button이 아니라 role="button" div — 안에 거래소 딥링크 <a>가 들어가는데,
+                <button> 안의 <a>는 비허용 중첩이라 브라우저마다 클릭이 오동작한다. */}
+            <div
+              role="button" tabIndex={0}
               onClick={() => setSelected(open ? null : l.base)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(open ? null : l.base); } }}
               style={{ display: "block", width: "100%", textAlign: "left", background: open ? "var(--card-2)" : "transparent", border: "none", padding: "10px 14px", cursor: "pointer", color: "var(--text)", boxShadow: open ? "inset 2px 0 0 var(--brand)" : undefined }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -200,7 +203,10 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
                 <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-ink)", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px", whiteSpace: "nowrap" }}>
                   {l.opened ? "거래개시" : "공지"}
                 </span>
-                <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{l.venue === "upbit" ? "업비트" : "빗썸"} · {ago(l.announcedAt)} 전</span>
+                <span style={{ color: "var(--text-mute)", fontSize: 11 }}>
+                  {/* 개장 순간 거래소 화면을 바로 열어야 한다 — 행 클릭(상세)과 분리된 링크 */}
+                  <VenueLink venue={l.venue} base={l.base} label={l.venue === "upbit" ? "업비트" : "빗썸"} style={{ color: "var(--text-mute)" }} /> · {ago(l.announcedAt)} 전
+                </span>
                 <span style={{ flex: 1 }} />
                 {!l.opened && l.opensAt != null && <Countdown opensAt={l.opensAt} />}
               </div>
@@ -211,7 +217,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
                 {l.peakPct != null && <span className="tnum" style={{ color: l.peakPct > 0 ? "var(--pos)" : "var(--text-mute)" }}>피크 +{l.peakPct.toFixed(1)}%</span>}
                 {pos > 0 && <span className="tnum" style={{ fontWeight: 700, color: "var(--amber)" }}>보유 {pos.toFixed(3)}</span>}
               </div>
-            </button>
+            </div>
             {/* 모바일: 인라인 상세 / PC: 우측 패널 */}
             {!wide && open && <DetailPanel base={l.base} />}
           </div>

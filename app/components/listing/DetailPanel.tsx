@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { vlabel } from "../cockpit-ui";
+import { vlabel, VenueLink } from "../cockpit-ui";
 import { useIsMobile } from "../../mobile";
 import {
   CAP, BTN, BTN_SELL, BTN_GHOST, INPUT, EXEC_COLS, EXEC_COLS_M,
@@ -389,7 +389,10 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
         {th("매수처")}{th("가격", "right")}{!mob && th("내 자금", "right")}{!mob && th("비고", "right")}<span />
         {[...globals, ...krs].map((r) => (
           <Fragment key={r.venue}>
-            <span style={{ fontWeight: 600, color: r.listed ? "var(--text)" : "var(--text-mute)" }}>{vlabel(r.venue as never) ?? r.venue}</span>
+            <span style={{ fontWeight: 600, color: r.listed ? "var(--text)" : "var(--text-mute)" }}>
+              {/* 상장된 거래소만 딥링크 — 미상장 거래소로 보내는 링크는 낚시다 */}
+              {r.listed ? <VenueLink venue={r.venue} base={base} /> : (vlabel(r.venue as never) ?? r.venue)}
+            </span>
             <span className="tnum" style={{ textAlign: "right", color: r.listed ? "var(--text)" : "var(--text-mute)" }}>
               {r.listed ? (r.priceKrw != null ? `₩${r.priceKrw.toLocaleString()}` : `$${fmtPx(r.priceUsd)}`) : "미상장"}
             </span>

@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Opportunity } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
-import { KIND_META, vlabel, PersistChip } from "./cockpit-ui";
+import { KIND_META, vlabel, PersistChip, VenueLink } from "./cockpit-ui";
 import { TransferPanel } from "./ExecuteModal";
 import { TV_SYMBOL } from "./ListingPanel";
 
@@ -93,7 +93,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
         <span style={{ fontWeight: 700, fontSize: 15 }}>{opp.base}</span>
         <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>{km.label}</span>
         <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
-          {buy && sell ? <>매수 {vlabel(buy.venue)} <span style={{ color: "var(--text-mute)" }}>→</span> 매도 {vlabel(sell.venue)}</> : null}
+          {buy && sell ? <>매수 <VenueLink venue={buy.venue} base={opp.base} /> <span style={{ color: "var(--text-mute)" }}>→</span> 매도 <VenueLink venue={sell.venue} base={opp.base} /></> : null}
         </span>
         <span style={{ flex: 1 }} />
         <span className="tnum" style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-0.03em", color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>

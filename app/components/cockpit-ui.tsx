@@ -161,6 +161,37 @@ export const VENUE_LABEL: Record<string, string> = {
 
 export const vlabel = (v?: string) => (v ? VENUE_LABEL[v] ?? v : "—");
 
+// ── 거래소 딥링크 — 그 코인의 거래 화면을 바로 연다 ──────────────────────────
+// 수동 매매는 결국 거래소 화면에서 하게 되는데, 매번 앱을 열고 검색하는 왕복이
+// 상장 순간엔 곧 놓친 시간이다. 표준 웹 URL이라 폰에선 유니버설 링크로 앱이
+// 열리고, PC에선 새 탭이다. 지원 안 하는 venue는 null — 호출부가 링크를 안 단다.
+export function venueTradeUrl(venue: string, base: string): string | null {
+  const b = base.toUpperCase();
+  switch (venue) {
+    case "upbit": return `https://upbit.com/exchange?code=CRIX.UPBIT.KRW-${b}`;
+    case "bithumb": return `https://www.bithumb.com/react/trade/order/${b}-KRW`;
+    case "binance": return `https://www.binance.com/en/trade/${b}_USDT`;
+    case "bybit": return `https://www.bybit.com/en/trade/spot/${b}/USDT`;
+    case "okx": return `https://www.okx.com/trade-spot/${b.toLowerCase()}-usdt`;
+    default: return null;
+  }
+}
+
+/** 거래소명 + ↗ 링크. url이 없으면 라벨만 (링크 없는 척 안 한다). */
+export function VenueLink({ venue, base, label: labelOverride, style }: { venue: string; base: string; label?: string; style?: React.CSSProperties }) {
+  const url = venueTradeUrl(venue, base);
+  const label = labelOverride ?? vlabel(venue) ?? venue;
+  if (!url) return <span style={style}>{label}</span>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" title={`${label}에서 ${base.toUpperCase()} 거래 화면 열기`}
+      // 클릭이 행 선택 등 부모 핸들러로 번지지 않게 — 링크는 링크만 한다.
+      onClick={(e) => e.stopPropagation()}
+      style={{ color: "inherit", textDecoration: "none", ...style }}>
+      {label}<span style={{ fontSize: "0.85em", opacity: 0.6, marginLeft: 2 }}>↗</span>
+    </a>
+  );
+}
+
 export const WL_KEY = "ac.whitelist.v1";
 
 export function statusChip(enabled: boolean | null): { t: string; c: string } {
