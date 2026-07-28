@@ -8,11 +8,10 @@
 import type { Opportunity, ScanContext, StrategyKind, TransferGate, Venue } from "./types";
 import {
   CONFIG, FEES, NETWORK_PCT, NETWORK_PCT_DEFAULT,
-  TRANSFER_ETA_MIN, TRANSFER_ETA_DEFAULT_MIN,
   COIN_NETWORK, COIN_NETWORK_DEFAULT,
 } from "./config";
 import { walletStatus } from "./transfers";
-import { coinNetwork, withdrawFeeCoin } from "./networks";
+import { coinNetwork, withdrawFeeCoin, transferEtaMin } from "./networks";
 import { erc20Symbol } from "./tokens";
 import { chainKeyFromLabel } from "./chains";
 import { quoteDex, gasPriceWei, gasCostUsd, dexConfigured, CEXDEX_CHAINS, allTokens, type DexToken } from "./dex";
@@ -136,7 +135,8 @@ const kimchi: Strategy = {
       // so a KR-buy leg is NOT a 1-minute settlement — reflect a realistic ETA
       // and flag it so the operator doesn't treat it as a fast arb.
       const isReverse = !buyGlobal; // buying on the KR venue
-      const baseEta = TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN;
+      // 컨펌 시간 기반 실질 ETA — 라이브 컨펌 수(바낸 minConfirm)가 있으면 그 기반.
+      const baseEta = transferEtaMin(base);
       const transfer: TransferGate = {
         withdraw: { venue: buyVenue, enabled: wStat ? wStat.withdraw : null },
         deposit: { venue: sellVenue, enabled: dStat ? dStat.deposit : null },
@@ -248,7 +248,7 @@ const crossCex: Strategy = {
       const transfer: TransferGate = {
         withdraw: { venue: lo.v, enabled: walletStatus(ctx.transfers, lo.v, base)?.withdraw ?? null },
         deposit: { venue: hi.v, enabled: walletStatus(ctx.transfers, hi.v, base)?.deposit ?? null },
-        etaMin: TRANSFER_ETA_MIN[base] ?? TRANSFER_ETA_DEFAULT_MIN,
+        etaMin: transferEtaMin(base),
         blocked: false,
         network: coinNetwork(base),
       };
@@ -384,7 +384,6 @@ const DEXDEX_REF_USD = 2000; // quote size — gas% and depth are size-dependent
 const CEXDEX_TTL_MS = 60_000; // OKX web3 rate limits — refresh once a minute
 const CEXDEX_MEV_PCT = 0.1; // sandwich/re-quote buffer
 const CEXDEX_SEND_GAS = 65_000; // ERC20 transfer 가스 (지갑→거래소 입금 전송)
-const CHAIN_ETA_MIN: Record<string, number> = { ethereum: 5, base: 2, bsc: 2 };
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type CexDexCache = { opps: Opportunity[]; ts: number; busy: boolean };
@@ -467,7 +466,7 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
       const netChainKey = chainKeyFromLabel(netInfo.chain);
       const chainMatch: boolean | null = netChainKey ? netChainKey === uni.chain : null; // null = 미상
       const wStat = walletStatus(ctx.transfers, "binance", base); // null = 키 없음/미상장
-      const etaMin = TRANSFER_ETA_MIN[base] ?? CHAIN_ETA_MIN[uni.chain] ?? TRANSFER_ETA_DEFAULT_MIN;
+      const etaMin = transferEtaMin(base); // 컨펌 시간 기반 (미상 코인은 내부에서 테이블→기본값 강등)
       const mk = (dir: "buyDex" | "sellDex", grossPct: number, gasUnits: number, dexPrice: number) => {
         // ±8% 넘는 "갭"은 차익이 아니라 죽은 풀이거나 다른 토큰이다 — 행 자체를
         // 만들지 않는다 (메이저 $2000 기준 실제 괴리는 수 % 안에서 소멸).
