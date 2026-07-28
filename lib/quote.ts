@@ -88,7 +88,7 @@ export async function estimateLegSlippage(
   symbol: string,
   side: "buy" | "sell",
   size: { quoteAmount?: number; baseQty?: number },
-): Promise<{ slipPct: number; filled: boolean } | null> {
+): Promise<{ slipPct: number; filled: boolean; vwap?: number } | null> {
   const ad = getAdapter(venue);
   if (!ad?.fetchOrderBook) return null;
   const book = await ad.fetchOrderBook(symbol);
@@ -101,14 +101,15 @@ export async function estimateLegSlippage(
     const r = buyInto(lv(book.asks), target);
     if (r.base <= 0) return { slipPct: Infinity, filled: false };
     const vwap = target / r.base;
-    return { slipPct: ((vwap - book.asks[0].price) / book.asks[0].price) * 100, filled: r.filled };
+    // vwap은 **거래소 표기 통화**(KR이면 KRW) — 모의 체결이 이 값으로 채운다.
+    return { slipPct: ((vwap - book.asks[0].price) / book.asks[0].price) * 100, filled: r.filled, vwap };
   }
   const qty = size.baseQty ?? 0;
   if (qty <= 0) return null;
   const r = sellInto(lv(book.bids), qty);
   if (!r.filled && r.proceeds <= 0) return { slipPct: Infinity, filled: false };
   const vwap = r.proceeds / qty; // full qty basis; partial fill drags vwap down (conservative)
-  return { slipPct: ((book.bids[0].price - vwap) / book.bids[0].price) * 100, filled: r.filled };
+  return { slipPct: ((book.bids[0].price - vwap) / book.bids[0].price) * 100, filled: r.filled, vwap };
 }
 
 export async function quoteOpportunity(

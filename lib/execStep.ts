@@ -3,7 +3,7 @@
 // 않는 엔진 경로에서도 동일한 가드(킬스위치·리스크·슬리피지)가 적용된다.
 
 import type { Opportunity } from "./types";
-import { CONFIG, TAG_REQUIRED } from "./config";
+import { CONFIG, TAG_REQUIRED, FEES } from "./config";
 import { sendToken, walletAddress } from "./wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 import { fetchDepositAddress } from "./deposits";
@@ -16,6 +16,7 @@ import { checkEntry, recordPnl } from "./risk";
 import { notifyNow } from "./telegram";
 import { recordTrade, type TimelineEntry } from "./trades";
 import { estimateLegSlippage } from "./quote";
+import { SIM, simLatency, simEtaMs, simInjectFail } from "./simEnv";
 import { withdrawFeeCoin, withdrawMinCoin } from "./networks";
 import { fetchUsdKrw } from "./exchanges";
 import type { StepId } from "./execPlan";
@@ -110,10 +111,18 @@ async function walletBalanceOf(base: string, chainKey: string): Promise<number |
  *
  *  Returns `pending` (not a failure) while waiting — the engine polls it. */
 async function walletArrival(
-  opp: Opportunity, qty: number, dry: boolean, before?: number,
+  opp: Opportunity, qty: number, dry: boolean, before?: number, sinceTs?: number,
 ): Promise<StepResult> {
   const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
   if (dry) {
+    // 모의 대기 — 즉시 성공하면 폴링 경로·타임라인 대기 줄이 미검증으로 남는다.
+    // 지갑 도착은 전송 여정의 중간이므로 압축 ETA의 40% 지점에 도착시킨다.
+    const eta = simEtaMs(opp.transfer?.etaMin) * 0.4;
+    const since = sinceTs ?? 0;
+    if (since > 0 && Date.now() - since < eta) {
+      const remain = Math.ceil((eta - (Date.now() - since)) / 1000);
+      return { ok: false, pending: true, dryRun: true, message: `지갑 수신 대기 (모의 ETA ${remain}초 남음 · SIM_TIME_SCALE=${SIM.timeScale})` };
+    }
     return { ok: true, dryRun: true, message: "지갑 수신 확인 (모의)", tx: { hash: `sim:${chain || "chain"}:recv:${opp.base}`, url: null } };
   }
   if (!chain) return fail("체인 미상 — 수신 확인 불가");
@@ -198,6 +207,11 @@ export async function runStep(
   if (!readOnlyStep && isKilled()) {
     return fail("킬 스위치 활성 — 실행 차단");
   }
+  // 모의 장애 주입 (SIM_FAIL_PCT) — 롤백·서킷 브레이커·재시도 UI 리허설용.
+  if (dry) {
+    const injected = simInjectFail(stepId);
+    if (injected) return fail(injected);
+  }
   if (isEntry) {
     if (!(sizeUsd > 0)) return fail("주문 규모가 0 이하");
     // 스냅샷 신선도 — 라이브 진입은 2분 넘은 기회로 시작하지 않는다
@@ -241,6 +255,24 @@ export async function runStep(
         : buy.venue === "bithumb" ? await bithumbOrder(opp.base, "bid", qty)
         : null;
       if (!r) return unwired(`${buy.venue} ${opp.base} 매수`);
+      // 모의 체결 — 그 순간의 실호가 VWAP로 채운다. 스냅샷가 체결이면 모의
+      // 손익이 항상 보드 숫자와 같아져 리허설 기록이 아무것도 말해주지 않는다.
+      // (수수료는 체결가에 반영 — settle이 실체결 경로로 실현 손익을 계산하게 된다.)
+      if (dry && r.ok && SIM.bookFills) {
+        await simLatency();
+        const quoteAmt = buy.quote === "KRW" ? qty * (buy.price || 0) : sizeUsd;
+        const est = await estimateLegSlippage(buy.venue, buy.symbol, "buy", { quoteAmount: quoteAmt }).catch(() => null);
+        if (est?.filled && est.vwap && est.vwap > 0) {
+          const fee = (FEES.takerPct[buy.venue] ?? 0.1) / 100;
+          // vwap은 거래소 표기 통화(KR이면 KRW) — 수량은 통화 무관, 지출은 그
+          // 통화 그대로 fill에 실어 settle의 기존 환산 경로(toUsd)를 태운다.
+          const simQty = (quoteAmt / est.vwap) * (1 - fee);
+          return {
+            ...r, message: `${r.message} · 모의체결 VWAP ${est.vwap.toPrecision(6)} ${buy.quote} (슬립 ${est.slipPct.toFixed(3)}%)`,
+            filledQty: simQty, fill: { qty: simQty, quote: quoteAmt, ccy: buy.quote },
+          };
+        }
+      }
       // A live entry with no fill quantity would make every downstream step use
       // the nominal scan-price estimate: hedge mis-sized, withdrawal possibly
       // exceeding the balance, and settle unable to compute realized P&L (so
@@ -337,6 +369,7 @@ export async function runStep(
     case "withdraw": {
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
       // DRY: show a simulated withdraw tx chip (parity with transfer/deposit).
+      if (dry) await simLatency(); // 출금 접수도 실전은 몇 초 걸린다
       const simTx = dry ? { hash: `sim:${chain || "chain"}:withdraw:${opp.base}`, url: null } : undefined;
       // Live: an unresolvable chain must never fall through to a guessed
       // network/address — wrong-chain sends are permanent loss.
@@ -461,10 +494,20 @@ export async function runStep(
     // Personal-wallet arrival check. Used by the kimchi hop (between the
     // exchange withdrawal and the wallet→exchange send) and by cex-dex sellDex.
     case "recv":
-      return walletArrival(opp, qty, dry, opts.walletBefore);
+      return walletArrival(opp, qty, dry, opts.walletBefore, opts.sinceTs);
     case "deposit": {
       // cex-dex sellDex: "입금 확인" = 개인지갑 온체인 수신 확인.
       if (sell?.venue === "dex") return walletArrival(opp, qty, dry, opts.walletBefore);
+      // 모의 대기 — 입금 폴링 경로(pending 반복 → 타임라인 대기 줄 → 확정)를
+      // 실전과 같은 모양으로 굴린다. 압축 ETA 전체 지점에서 입금이 확정된다.
+      if (dry) {
+        const eta = simEtaMs(opp.transfer?.etaMin);
+        const since = opts.sinceTs ?? 0;
+        if (since > 0 && Date.now() - since < eta) {
+          const remain = Math.ceil((eta - (Date.now() - since)) / 1000);
+          return { ok: false, pending: true, dryRun: true, message: `입금 대기 (모의 ETA ${remain}초 남음 · SIM_TIME_SCALE=${SIM.timeScale})` };
+        }
+      }
       const r = await checkDeposit(sell?.venue ?? "upbit", opp.base, opts.sinceTs ?? Date.now() - 60 * 60 * 1000);
       // DRY → sim chip; LIVE → real credited txid from the deposit record.
       const dtx = r.dryRun
@@ -490,6 +533,20 @@ export async function runStep(
         : sell.venue === "bithumb" ? await bithumbOrder(opp.base, "ask", qty)
         : null;
       if (!r) return unwired(`${sell.venue} ${opp.base} 매도`);
+      // 모의 체결 — 매도 시점의 실호가 VWAP. 매수와 매도 사이에 (모의) 전송
+      // 시간이 흘렀으므로, 이 재조회가 전송 중 가격 변동을 리허설 손익에 싣는다.
+      if (dry && r.ok && SIM.bookFills) {
+        await simLatency();
+        const est = await estimateLegSlippage(sell.venue, sell.symbol, "sell", { baseQty: qty }).catch(() => null);
+        if (est?.filled && est.vwap && est.vwap > 0) {
+          const fee = (FEES.takerPct[sell.venue] ?? 0.1) / 100;
+          const proceeds = qty * est.vwap * (1 - fee);
+          return {
+            ...r, message: `${r.message} · 모의체결 VWAP ${est.vwap.toPrecision(6)} ${sell.quote} (슬립 ${est.slipPct.toFixed(3)}%)`,
+            filledQty: qty, fill: { qty, quote: proceeds, ccy: sell.quote },
+          };
+        }
+      }
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: sell.quote } };
     }
     case "close": {
