@@ -14,6 +14,26 @@ import { loadSection, saveSection } from "./persist";
 import { primeUpbitMarkets } from "./exchanges";
 
 const ANN_POLL_MS = 2500; // announcements are a sub-second race — poll tight
+
+// ── 스크레이핑 소스 방어 (공지·TG) ────────────────────────────────────────────
+// 이 둘은 공식 API가 아니라 웹 엔드포인트다 — 문서화된 한도가 없고, Cloudflare/
+// 텔레그램의 봇 감지가 지키고 있다. KR IP여도 예외가 아니다. 두 가지가 차단을
+// 부른다: ① 로봇처럼 정확한 고정 주기 ② 챌린지를 받고도 같은 속도로 계속 두드리기
+// (일시 챌린지가 장기 IP 차단으로 승격되는 전형적 경로).
+// → 주기에 ±30% 지터를 섞고, 차단·429를 만나면 지수 백오프(최대 10분) 후 복귀한다.
+// 공지가 막혀도 마켓 diff(공식 시세 API, 문서화된 한도 내)가 감지를 백업한다.
+const SCRAPE_BACKOFF_MAX_MS = 10 * 60_000;
+const jittered = (ms: number) => ms * (0.7 + Math.random() * 0.6);
+
+/** 실패 시 4배 지수 백오프, 성공 시 리셋. 반환값 = 다음 폴까지 대기(ms). */
+function nextScrapeDelay(baseMs: number, backoff: { ms: number }, blocked: boolean): number {
+  if (blocked) {
+    backoff.ms = Math.min(SCRAPE_BACKOFF_MAX_MS, (backoff.ms || baseMs) * 4);
+    return jittered(backoff.ms);
+  }
+  backoff.ms = 0;
+  return jittered(baseMs);
+}
 const MKT_POLL_MS = 3000;
 const FRESH_MS = 60 * 60_000; // keep a play visible for 1h
 
@@ -673,9 +693,29 @@ export function startListingWatch(): void {
   for (const l of L.loops) clearInterval(l);
   L.loops = [];
   void pollAnnouncements(); void pollMarkets(); void pollTgChannel();
-  L.loops.push(setInterval(() => void pollAnnouncements(), ANN_POLL_MS));
+  // 공지·TG는 setInterval이 아니라 자기 재스케줄 — 차단 시 백오프 간격이
+  // 다음 폴에 반영돼야 하는데 고정 인터벌로는 불가능하다.
+  const annBackoff = { ms: 0 };
+  const annLoop = () => {
+    const t = setTimeout(async () => {
+      await pollAnnouncements().catch(() => { L.srcOk.annBlocked = true; });
+      L.loops[annSlot] = annLoop();
+    }, nextScrapeDelay(ANN_POLL_MS, annBackoff, L.srcOk.annBlocked));
+    return t;
+  };
+  const tgBackoff = { ms: 0 };
+  const tgLoop = () => {
+    const t = setTimeout(async () => {
+      await pollTgChannel().catch(() => {});
+      L.loops[tgSlot] = tgLoop();
+      // TG는 blocked 플래그가 없다 — "채널이 설정됐고 한때 수신했는데 1분 넘게
+      // 끊김"을 차단 신호로 쓴다 (미설정·초기 상태는 백오프 대상이 아니다).
+    }, nextScrapeDelay(TG_POLL_MS, tgBackoff, !!process.env.LISTING_TG_CHANNEL && L.primedTg === true && Date.now() - L.srcOk.tg > 60_000));
+    return t;
+  };
+  const annSlot = L.loops.push(annLoop()) - 1;
+  const tgSlot = L.loops.push(tgLoop()) - 1;
   L.loops.push(setInterval(() => void pollMarkets(), MKT_POLL_MS));
-  L.loops.push(setInterval(() => void pollTgChannel(), TG_POLL_MS));
   L.loops.push(setInterval(() => void trackPlays(), TRACK_MS)); // 피크·급증 추적
 }
 
