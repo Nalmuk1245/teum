@@ -166,16 +166,85 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
         />
       </div>
 
-      {/* ── Per-venue detail ── */}
-      {allVenues.map((v) => (
-        <VenueCard key={v.venue} v={v} isMobile={isMobile} totalUsd={pf.totalUsd} />
-      ))}
+      {/* ── 거래소별 — 한 줄 요약 표, 클릭 시 코인 목록 펼침 ──
+          (예전: 거래소마다 풀 카드 6개 세로 스택 — 자산별 합산과 같은 코인을
+           두 번 보여주며 스크롤만 늘렸다. 상세는 원할 때만 편다.) */}
+      <VenueSummary venues={allVenues} totalUsd={pf.totalUsd} isMobile={isMobile} />
 
-      {/* ── 지갑 도구: 크로스체인 브릿지 + 온체인 히스토리 ── */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
-        <BridgeCard />
-        <WalletHistoryCard />
+      {/* ── 지갑 도구 — 잔고와 성격이 다르므로 접이식으로 분리 ── */}
+      <ToolsSection isMobile={isMobile} />
+    </div>
+  );
+}
+
+// ── 거래소별 요약 — venue당 한 줄 (현금·코인·합계·비중), 클릭 펼침 ────────────
+function VenueSummary({ venues, totalUsd, isMobile }: { venues: VenueBalance[]; totalUsd: number; isMobile?: boolean }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const connected = venues.filter((v) => v.connected);
+  const missing = venues.filter((v) => !v.connected).map((v) => VLABEL[v.venue] ?? v.venue);
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+      <div style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>거래소별</div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(64px,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.3fr) 14px", gap: 8, fontSize: 10, color: "var(--text-mute)", padding: "0 0 4px" }}>
+        <span>거래소</span><span style={{ textAlign: "right" }}>현금</span><span style={{ textAlign: "right" }}>코인</span><span style={{ textAlign: "right" }}>합계 · 비중</span><span />
       </div>
+      {connected.map((v) => {
+        const label = VLABEL[v.venue] ?? v.venue;
+        const coinsUsd = v.coins.reduce((s, c) => s + c.usdValue, 0);
+        const opened = open === v.venue;
+        const rows = [
+          ...(v.cashUsd > 0 ? [{ asset: v.cashLabel, amount: v.cashRaw, usdValue: v.cashUsd, sub: "현금", sharePct: v.totalUsd > 0 ? (v.cashUsd / v.totalUsd) * 100 : 0 }] : []),
+          ...v.coins.map((c) => ({ asset: c.asset, amount: c.amount, usdValue: c.usdValue, sub: undefined as string | undefined, sharePct: v.totalUsd > 0 ? (c.usdValue / v.totalUsd) * 100 : 0 })),
+        ];
+        return (
+          <div key={v.venue} style={{ borderTop: "1px solid var(--border)" }}>
+            <div onClick={() => setOpen(opened ? null : v.venue)}
+              style={{ display: "grid", gridTemplateColumns: "minmax(64px,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.3fr) 14px", gap: 8, alignItems: "center", padding: "7px 0", cursor: "pointer" }}>
+              <span style={{ fontWeight: 700, fontSize: 12.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {label}{v.venue === "wallet" && <span style={{ fontSize: 9.5, color: "var(--text-mute)", marginLeft: 4 }}>전송 중</span>}
+              </span>
+              <span className="tnum" style={{ textAlign: "right", fontSize: 12, color: "var(--text-dim)" }}>{v.cashUsd > 0 ? usd(v.cashUsd) : "—"}</span>
+              <span className="tnum" style={{ textAlign: "right", fontSize: 12, color: "var(--text-dim)" }}>{coinsUsd > 0 ? usd(coinsUsd) : "—"}</span>
+              <span style={{ textAlign: "right" }}>
+                <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{usd(v.totalUsd)}</span>
+                <span className="tnum" style={{ fontSize: 9.5, color: "var(--text-mute)", marginLeft: 5 }}>{totalUsd > 0 ? `${((v.totalUsd / totalUsd) * 100).toFixed(0)}%` : ""}</span>
+              </span>
+              <span style={{ fontSize: 9, color: "var(--text-mute)", textAlign: "right" }}>{opened ? "▲" : "▼"}</span>
+            </div>
+            {opened && (
+              <div style={{ padding: "2px 0 8px" }}>
+                {rows.length ? <AssetTable rows={rows} /> : <div style={{ color: "var(--text-mute)", fontSize: 12 }}>보유 없음</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {missing.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--border)", padding: "7px 0 2px", fontSize: 11, color: "var(--text-mute)" }}>
+          미연결: {missing.join(" · ")} — 헤더 ⚙ 설정에 키를 넣으면 실잔고 표시
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 지갑 도구 — 브릿지·온체인 히스토리. 매일 보는 화면이 아니라 접어 둔다 ─────
+function ToolsSection({ isMobile }: { isMobile?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "10px 14px" : "12px 18px" }}>
+      <div onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>지갑 도구</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>크로스체인 브릿지 · 온체인 히스토리</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{open ? "▲ 접기" : "▼ 펼치기"}</span>
+      </div>
+      {open && (
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
+          <BridgeCard />
+          <WalletHistoryCard />
+        </div>
+      )}
     </div>
   );
 }
@@ -274,36 +343,6 @@ function WalletHistoryCard() {
 }
 
 // One venue's detail card: cash row + every coin row with amount/price/value/share.
-function VenueCard({ v, isMobile, totalUsd }: { v: VenueBalance; isMobile?: boolean; totalUsd: number }) {
-  const label = VLABEL[v.venue] ?? v.venue;
-  if (!v.connected) {
-    return (
-      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontWeight: 700, fontSize: 13.5 }}>{label}</span>
-        <span style={{ fontSize: 11.5, color: "var(--text-mute)" }}>키 필요 — .env.local에 API 키를 넣으면 실잔고가 표시됩니다</span>
-      </div>
-    );
-  }
-  const rows = [
-    ...(v.cashUsd > 0 ? [{ asset: v.cashLabel, amount: v.cashRaw, usdValue: v.cashUsd, sub: "현금", sharePct: v.totalUsd > 0 ? (v.cashUsd / v.totalUsd) * 100 : 0 }] : []),
-    ...v.coins.map((c) => ({ asset: c.asset, amount: c.amount, usdValue: c.usdValue, sub: undefined as string | undefined, sharePct: v.totalUsd > 0 ? (c.usdValue / v.totalUsd) * 100 : 0 })),
-  ];
-  return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: isMobile ? "12px 14px" : "14px 18px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
-        <span style={{ fontWeight: 700, fontSize: 13.5, whiteSpace: "nowrap" }}>{label}</span>
-        {v.venue === "wallet" && <span style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>자체보관 · 전송 중</span>}
-        <span style={{ flex: 1 }} />
-        <span className="tnum" style={{ fontSize: 14, fontWeight: 700 }}>{usd(v.totalUsd)}</span>
-        <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-mute)" }}>
-          {totalUsd > 0 ? `전체의 ${((v.totalUsd / totalUsd) * 100).toFixed(0)}%` : ""}
-        </span>
-      </div>
-      {rows.length ? <AssetTable rows={rows} /> : <div style={{ color: "var(--text-mute)", fontSize: 12 }}>보유 없음</div>}
-    </div>
-  );
-}
-
 // Shared asset table: 자산 | 수량(+단가) | 평가액(+비중 bar)
 function AssetTable({ rows, header }: {
   rows: { asset: string; amount: number; usdValue: number; sub?: string; sharePct: number }[];
