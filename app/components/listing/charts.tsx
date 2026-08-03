@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { vlabel } from "../cockpit-ui";
-import { CAP, BTN_GHOST, fmtPx, type CexRow, type DexRow } from "./shared";
+import { CAP, BTN_GHOST, type CexRow, type DexRow } from "./shared";
 
 // ── 차트 — CEX는 TradingView, DEX는 DexScreener 임베드 ────────────────────────
 export const TV_SYMBOL: Record<string, (b: string) => string> = {
@@ -14,7 +14,7 @@ export const TV_SYMBOL: Record<string, (b: string) => string> = {
 };
 
 export function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: DexRow[] }) {
-  type Opt = { key: string; label: string; src?: string; candle?: { chain: string; contract: string } };
+  type Opt = { key: string; label: string; src: string };
   const opts: Opt[] = [
     ...cex.filter((r) => r.listed && TV_SYMBOL[r.venue]).map((r) => ({
       key: `cex:${r.venue}`,
@@ -28,14 +28,9 @@ export function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; 
       label: `DEX·${x.chain}`,
       src: `https://dexscreener.com/${x.chain}/${x.pairAddress}?embed=1&theme=dark&trades=0&info=0`,
     })),
-    // 네이티브 캔들 (OKX 시세) — iframe 실패/미상장 대비, 빠르고 가벼움.
-    // 거래 불가 체인은 제외 — 토큰이 3개 체인에 배포돼도 풀은 보통 하나뿐인데,
-    // 체인마다 탭을 만들면 죽은 체인이 거래 가능한 것처럼 보인다.
-    ...dex.filter((x) => x.verified && !x.untradeable).map((x) => ({
-      key: `candle:${x.chain}`,
-      label: `캔들·${x.chain === "ethereum" ? "eth" : x.chain}`,
-      candle: { chain: x.chain, contract: x.contract },
-    })),
+    // 네이티브 캔들 탭은 뺐다(운영자 결정 2026-08-03): TradingView·DexScreener와
+    // 정보가 겹치는데 탭만 늘려 혼란을 줬다("이건 왜 있는지 모르겠음"). OKX 캔들
+    // API(/api/dex-candles)는 남겨둔다 — 임베드가 다 막히는 환경이 생기면 재배선.
   ];
   const [sel, setSel] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
@@ -63,9 +58,7 @@ export function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; 
         <span style={{ flex: 1 }} />
         <button type="button" style={BTN_GHOST} onClick={() => setOpen(!open)}>{open ? "접기" : "펼치기"}</button>
       </div>
-      {open && active && (active.candle ? (
-        <CandleMini key={active.key} chain={active.candle.chain} contract={active.candle.contract} />
-      ) : (
+      {open && active && (
         <iframe
           key={active.key /* venue 전환 시 강제 재로드 */}
           src={active.src}
@@ -74,51 +67,8 @@ export function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; 
           allow="clipboard-write"
           loading="lazy"
         />
-      ))}
+      )}
     </div>
   );
 }
 
-// 네이티브 캔들 — OKX v6 시세 (5분봉 72개), SVG 직접 렌더.
-export function CandleMini({ chain, contract }: { chain: string; contract: string }) {
-  const [rows, setRows] = useState<{ ts: number; o: number; h: number; l: number; c: number }[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    let stop = false;
-    const load = () => fetch(`/api/dex-candles?chain=${chain}&address=${contract}&bar=5m`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => { if (!stop) { if (j.candles) { setRows(j.candles); setErr(null); } else setErr(j.error ?? "실패"); } })
-      .catch(() => { if (!stop) setErr("요청 실패"); });
-    load();
-    const id = setInterval(load, 30_000);
-    return () => { stop = true; clearInterval(id); };
-  }, [chain, contract]);
-  if (err) return <div style={{ padding: 14, fontSize: 11, color: "var(--text-mute)", border: "1px solid var(--border)", borderRadius: 9 }}>{err}</div>;
-  if (!rows || rows.length < 2) return <div style={{ padding: 14, fontSize: 11, color: "var(--text-mute)", border: "1px solid var(--border)", borderRadius: 9 }}>캔들 로딩…</div>;
-  const W = 720, H = 300;
-  const lo = Math.min(...rows.map((r) => r.l)), hi = Math.max(...rows.map((r) => r.h));
-  const pad = (hi - lo) * 0.06 || hi * 0.01;
-  const y = (v: number) => H - ((v - (lo - pad)) / (hi + pad - (lo - pad))) * H;
-  const bw = W / rows.length;
-  const last = rows[rows.length - 1];
-  return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", background: "var(--card)" }}>
-      <div className="tnum" style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-mute)", marginBottom: 4 }}>
-        <span>OKX 시세 · 5분봉 · {rows.length}개</span>
-        <span>종가 <b style={{ color: last.c >= last.o ? "var(--pos)" : "var(--neg)" }}>{fmtPx(last.c)}</b></span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 300, display: "block" }} preserveAspectRatio="none">
-        {rows.map((r, i) => {
-          const up = r.c >= r.o;
-          const cx = i * bw + bw / 2;
-          return (
-            <g key={i} stroke={up ? "var(--pos)" : "var(--neg)"} fill={up ? "var(--pos)" : "var(--neg)"}>
-              <line x1={cx} x2={cx} y1={y(r.h)} y2={y(r.l)} strokeWidth={1} />
-              <rect x={i * bw + bw * 0.2} width={bw * 0.6} y={Math.min(y(r.o), y(r.c))} height={Math.max(1, Math.abs(y(r.o) - y(r.c)))} />
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
