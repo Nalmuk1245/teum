@@ -226,19 +226,44 @@ type Episode = {
 
 function EpisodeCurve({ curve }: { curve: Episode["curve"] }) {
   if (curve.length < 2) return null;
-  const W = 560, H = 56;
+  const W = 560, H = 72;
   const t0 = curve[0][0], t1 = curve[curve.length - 1][0];
   const nets = curve.map((p) => p[1]);
   const lo = Math.min(...nets, 0), hi = Math.max(...nets, 0.01);
-  const pad = (hi - lo) * 0.1 + 0.01;
+  const pad = (hi - lo) * 0.12 + 0.01;
   const x = (t: number) => (t1 === t0 ? 0 : ((t - t0) / (t1 - t0)) * W);
   const y = (v: number) => H - ((v - (lo - pad)) / (hi + pad - (lo - pad))) * H;
   const pts = curve.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  // 피크 지점 — 숫자 없는 곡선은 모양일 뿐이다. 피크에 점 + 값을 박는다.
+  let pi = 0;
+  for (let i = 1; i < curve.length; i++) if (curve[i][1] > curve[pi][1]) pi = i;
+  const px = x(curve[pi][0]), py = y(curve[pi][1]);
+  const hhmm = (t: number) => new Date(t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  // 가격 변동 (전송 중 리스크의 실측) — 시작가 대비 끝가
+  const p0 = curve[0][3], p1 = curve[curve.length - 1][3];
+  const priceMovePct = p0 > 0 ? ((p1 - p0) / p0) * 100 : null;
+  // 피크 라벨이 캔버스 밖으로 안 나가게 좌우 여백 쪽으로 앵커 조정
+  const anchor = px < 60 ? "start" : px > W - 60 ? "end" : "middle";
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 56, display: "block" }} preserveAspectRatio="none">
-      <line x1="0" y1={y(0)} x2={W} y2={y(0)} stroke="var(--border-strong)" strokeDasharray="3 3" strokeWidth="1" />
-      <polyline points={pts} fill="none" stroke="var(--brand-2)" strokeWidth="1.5" />
-    </svg>
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 72, display: "block" }} preserveAspectRatio="none">
+        <line x1="0" y1={y(0)} x2={W} y2={y(0)} stroke="var(--border-strong)" strokeDasharray="3 3" strokeWidth="1" />
+        <polyline points={pts} fill="none" stroke="var(--brand-2)" strokeWidth="1.5" />
+        <circle cx={px} cy={py} r="3" fill="var(--pos)" />
+        <text x={px} y={Math.max(10, py - 6)} textAnchor={anchor} fontSize="10" fill="var(--pos)" fontWeight="700">
+          +{curve[pi][1].toFixed(2)}% {hhmm(curve[pi][0])}
+        </text>
+        {/* 우측 y축 눈금 — 최고/0/최저 */}
+        <text x={W - 2} y={Math.max(9, y(hi) + 9)} textAnchor="end" fontSize="8.5" fill="var(--text-mute)">{hi.toFixed(2)}%</text>
+        <text x={W - 2} y={y(0) - 2} textAnchor="end" fontSize="8.5" fill="var(--text-mute)">0%</text>
+        {lo < -0.01 && <text x={W - 2} y={Math.min(H - 1, y(lo) - 2)} textAnchor="end" fontSize="8.5" fill="var(--text-mute)">{lo.toFixed(2)}%</text>}
+      </svg>
+      <div className="tnum" style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: "var(--text-mute)", marginTop: 2 }}>
+        <span>{hhmm(t0)} 시작</span>
+        <span>순수익 % · {curve.length}샘플{priceMovePct != null ? ` · 구간 가격 ${priceMovePct >= 0 ? "+" : ""}${priceMovePct.toFixed(2)}%` : ""}</span>
+        <span>{hhmm(t1)} 종료</span>
+      </div>
+    </div>
   );
 }
 
