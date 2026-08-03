@@ -577,6 +577,8 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   });
   trimRuns();
   persistRuns();
+  // 복기 연결 — 이 기회의 활성 에피소드에 실행 표식.
+  void import("./episodes").then((m) => m.markEpisodeExecuted(cfg.opp.id, id, CONFIG.DRY_RUN)).catch(() => {});
   // 경로 프리워밍 — 컨트랙트 교차 검증(CoinGecko+온체인)은 콜드에서 ~2초인데,
   // 그걸 쓰는 recv/transfer는 buy·withdraw 뒤 몇 분 후에야 온다. 지금 시작해
   // 두면 그때는 항상 웜(0ms)이다. await 안 함 — 실행 시작을 1ms도 늦추지 않는다.

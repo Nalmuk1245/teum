@@ -26,6 +26,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         <KillCard killed={killed} />
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <PnlCard />
+        <EpisodeCard />
         <GatesCard />
         <ManualTokenCard />
       </div>
@@ -47,6 +48,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         <div style={col}>
           {runs.length === 0 && runsBlock}
           <PnlCard />
+          <EpisodeCard />
         </div>
         <div style={col}>
           <GatesCard />
@@ -203,6 +205,120 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
             </div>
             <div style={{ fontSize: 10, color: "var(--text-mute)", marginTop: 3 }}>손실 한도까지 {usd(Math.max(0, rs.maxDailyLossUsd - loss))} 남음</div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────
+// "어제 그 김프, 얼마나 지속됐고 왜 못 먹었나"의 답. 데이터는 스캔 루프가
+// data/episodes.jsonl에 적재한 것(lib/episodes.ts) — 여긴 읽기만 한다.
+type Episode = {
+  id: string; base: string; kind: string; buyVenue: string; sellVenue: string;
+  startTs: number; endTs: number; durationSec: number;
+  peakNetPct: number; peakTs: number; avgNetPct: number;
+  endReason: "decayed" | "vanished";
+  curve: [number, number, number, number][];
+  atPeak: { costPct: number; notionalCapUsd: number | null; executable: boolean; blockReason?: string; etaMin?: number; hedgeCostPct?: number };
+  executed?: { runId: string; dry: boolean; ts: number };
+};
+
+function EpisodeCurve({ curve }: { curve: Episode["curve"] }) {
+  if (curve.length < 2) return null;
+  const W = 560, H = 56;
+  const t0 = curve[0][0], t1 = curve[curve.length - 1][0];
+  const nets = curve.map((p) => p[1]);
+  const lo = Math.min(...nets, 0), hi = Math.max(...nets, 0.01);
+  const pad = (hi - lo) * 0.1 + 0.01;
+  const x = (t: number) => (t1 === t0 ? 0 : ((t - t0) / (t1 - t0)) * W);
+  const y = (v: number) => H - ((v - (lo - pad)) / (hi + pad - (lo - pad))) * H;
+  const pts = curve.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 56, display: "block" }} preserveAspectRatio="none">
+      <line x1="0" y1={y(0)} x2={W} y2={y(0)} stroke="var(--border-strong)" strokeDasharray="3 3" strokeWidth="1" />
+      <polyline points={pts} fill="none" stroke="var(--brand-2)" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function EpisodeCard() {
+  const [eps, setEps] = useState<Episode[]>([]);
+  const [activeN, setActiveN] = useState(0);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    const load = () => fetch(`/api/episodes${q.trim() ? `?base=${encodeURIComponent(q.trim().toUpperCase())}` : ""}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => { setEps(j.episodes ?? []); setActiveN((j.active ?? []).length); })
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
+  }, [q]);
+  const dur = (sec: number) => sec >= 3600 ? `${Math.round(sec / 360) / 10}시간` : sec >= 90 ? `${Math.round(sec / 60)}분` : `${sec}초`;
+  const when = (ts: number) => {
+    const m = Math.round((Date.now() - ts) / 60_000);
+    return m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : new Date(ts).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+  };
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>기회 복기</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>임계 넘었던 구간의 기록{activeN > 0 ? ` · 진행 중 ${activeN}` : ""}</span>
+      </div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="코인 필터 (예: XRP)"
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12.5, outline: "none", marginBottom: 6 }} />
+      {eps.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: "var(--text-mute)", padding: "8px 0" }}>
+          아직 기록 없음 — 순수익이 임계(기본 0%)를 넘는 기회가 생기면 자동으로 쌓입니다
+        </div>
+      ) : (
+        <div style={{ maxHeight: 300, overflowY: "auto" }}>
+          {eps.slice(0, 30).map((e) => {
+            const key = `${e.id}:${e.startTs}`;
+            const opened = open === key;
+            return (
+              <div key={key} style={{ borderTop: "1px solid var(--border)" }}>
+                <div onClick={() => setOpen(opened ? null : key)}
+                  style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 8, alignItems: "center", padding: "6px 0", fontSize: 11.5, cursor: "pointer" }}>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <b>{e.base}</b>
+                      <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-2)" }}>{e.kind === "kimchi" ? "김프" : e.kind === "cross-cex" ? "크로스" : e.kind}</span>
+                      {e.executed && <span style={{ fontSize: 9.5, fontWeight: 700, color: e.executed.dry ? "var(--sky)" : "var(--pos)", border: `1px solid ${e.executed.dry ? "var(--sky)" : "var(--pos)"}`, borderRadius: 8, padding: "0 4px" }}>{e.executed.dry ? "모의실행" : "실행함"}</span>}
+                      {!e.atPeak.executable && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>막힘</span>}
+                    </span>
+                    <span style={{ display: "block", fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
+                      {vlabel(e.buyVenue) ?? e.buyVenue} → {vlabel(e.sellVenue) ?? e.sellVenue} · {dur(e.durationSec)} 지속 · {when(e.endTs)}
+                    </span>
+                  </span>
+                  <span className="tnum" style={{ fontWeight: 700, color: "var(--pos)" }}>피크 +{e.peakNetPct.toFixed(2)}%</span>
+                  <span style={{ fontSize: 9, color: "var(--text-mute)" }}>{opened ? "▲" : "▼"}</span>
+                </div>
+                {opened && (
+                  <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9 }}>
+                    <EpisodeCurve curve={e.curve} />
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 10.5, color: "var(--text-dim)", marginTop: 6 }} className="tnum">
+                      <span>평균 +{e.avgNetPct.toFixed(2)}%</span>
+                      <span>비용 {e.atPeak.costPct.toFixed(2)}%</span>
+                      {e.atPeak.notionalCapUsd != null && <span>호가 한도 ${Math.round(e.atPeak.notionalCapUsd).toLocaleString()}</span>}
+                      {e.atPeak.etaMin != null && <span>ETA {e.atPeak.etaMin}분</span>}
+                      <span>{e.endReason === "vanished" ? "소멸로 종료" : "감쇠로 종료"}</span>
+                    </div>
+                    {/* 복기의 핵심 줄 — 그때 먹을 수 있었나 */}
+                    <div style={{ marginTop: 5, fontSize: 11, fontWeight: 600, color: e.executed ? (e.executed.dry ? "var(--sky)" : "var(--pos)") : e.atPeak.executable ? "var(--amber)" : "var(--neg)" }}>
+                      {e.executed
+                        ? (e.executed.dry ? "모의 실행함 — 운영 탭 거래 기록 참조" : "실행함 — 거래 기록 참조")
+                        : e.atPeak.executable
+                          ? "실행 가능했지만 안 함 (놓친 기회)"
+                          : `막혀 있었음: ${e.atPeak.blockReason ?? "사유 미상"}`}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

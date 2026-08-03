@@ -104,6 +104,8 @@ async function refresh(): Promise<void> {
         if (telegramConfigured()) void alertOnScan(next);
         recordHourlyHeat(next);
         C.opps = next;
+        // 기회 에피소드 기록 (복기용) — 임계 위 구간을 열고 닫는다. throw 안 함.
+        import("./episodes").then((m) => m.recordEpisodes(next)).catch(() => {});
         C.ts = Date.now();
       }
     },
