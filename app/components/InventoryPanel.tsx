@@ -6,6 +6,12 @@ import { usd } from "@/lib/format";
 
 const VLABEL: Record<string, string> = { binance: "Binance", upbit: "Upbit", bithumb: "Bithumb", bybit: "Bybit", okx: "OKX", wallet: "개인지갑" };
 const krw = (v: number) => `₩${Math.round(v).toLocaleString("en-US")}`;
+// 총액류 병기용 축약 원화 — ₩3,542만 / ₩1.2억. 풀 자릿수는 헤드라인만 쓴다.
+const krwShort = (v: number) => {
+  if (v >= 1e8) return `₩${(v / 1e8).toLocaleString("en-US", { maximumFractionDigits: 2 })}억`;
+  if (v >= 1e4) return `₩${Math.round(v / 1e4).toLocaleString("en-US")}만`;
+  return `₩${Math.round(v).toLocaleString("en-US")}`;
+};
 
 function usePortfolio(): Portfolio | null {
   const [pf, setPf] = useState<Portfolio | null>(null);
@@ -63,6 +69,7 @@ export function AssetSummary({ isMobile, onOpen }: { isMobile?: boolean; onOpen?
     >
       <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>자산</span>
       <span className="tnum" style={{ fontSize: 14, fontWeight: 700 }}>{usd(pf.totalUsd)}</span>
+      <span className="tnum" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>{krwShort(pf.totalUsd * pf.usdKrw)}</span>
       <span className="tnum" style={{ fontSize: 11, color: "var(--brand-2)" }}>가용 {availPct.toFixed(0)}%</span>
       {!isMobile && (
         <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>
@@ -123,14 +130,17 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
             가용 {availPct.toFixed(0)}%
           </span>
         </div>
-        <div className="tnum" style={{ fontSize: 26, fontWeight: 800, marginTop: 4 }}>{usd(pf.totalUsd)}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+          <span className="tnum" style={{ fontSize: 26, fontWeight: 800 }}>{usd(pf.totalUsd)}</span>
+          <span className="tnum" style={{ fontSize: 15, fontWeight: 700, color: "var(--text-dim)" }}>{krw(pf.totalUsd * pf.usdKrw)}</span>
+        </div>
         <div className="tnum" style={{ fontSize: 11, color: "var(--text-mute)", marginTop: 2 }}>
           환율 ₩{Math.round(pf.usdKrw).toLocaleString("en-US")}/USDT 기준
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, margin: "14px 0 5px" }}>
-          <span style={{ color: "var(--brand-2)" }}>글로벌 · USDT {usd(pf.globalUsd)}</span>
-          <span style={{ color: "var(--sky)" }}>KR · 원화 {usd(pf.krUsd)}</span>
+          <span className="tnum" style={{ color: "var(--brand-2)" }}>글로벌 · USDT {usd(pf.globalUsd)} <span style={{ color: "var(--text-mute)" }}>({krwShort(pf.globalUsd * pf.usdKrw)})</span></span>
+          <span className="tnum" style={{ color: "var(--sky)" }}>KR · 원화 {usd(pf.krUsd)} <span style={{ color: "var(--text-mute)" }}>({krwShort(pf.krUsd * pf.usdKrw)})</span></span>
         </div>
         <div style={{ display: "flex", height: 10, borderRadius: 9, overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)" }}>
           <div style={{ width: `${g}%`, background: "var(--brand)" }} />
@@ -169,7 +179,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
       {/* ── 거래소별 — 한 줄 요약 표, 클릭 시 코인 목록 펼침 ──
           (예전: 거래소마다 풀 카드 6개 세로 스택 — 자산별 합산과 같은 코인을
            두 번 보여주며 스크롤만 늘렸다. 상세는 원할 때만 편다.) */}
-      <VenueSummary venues={allVenues} totalUsd={pf.totalUsd} isMobile={isMobile} />
+      <VenueSummary venues={allVenues} totalUsd={pf.totalUsd} usdKrw={pf.usdKrw} isMobile={isMobile} />
 
       {/* ── 지갑 도구 — 잔고와 성격이 다르므로 접이식으로 분리 ── */}
       <ToolsSection isMobile={isMobile} />
@@ -178,7 +188,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
 }
 
 // ── 거래소별 요약 — venue당 한 줄 (현금·코인·합계·비중), 클릭 펼침 ────────────
-function VenueSummary({ venues, totalUsd, isMobile }: { venues: VenueBalance[]; totalUsd: number; isMobile?: boolean }) {
+function VenueSummary({ venues, totalUsd, usdKrw, isMobile }: { venues: VenueBalance[]; totalUsd: number; usdKrw: number; isMobile?: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
   const connected = venues.filter((v) => v.connected);
   const missing = venues.filter((v) => !v.connected).map((v) => VLABEL[v.venue] ?? v.venue);
@@ -208,6 +218,7 @@ function VenueSummary({ venues, totalUsd, isMobile }: { venues: VenueBalance[]; 
               <span style={{ textAlign: "right" }}>
                 <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{usd(v.totalUsd)}</span>
                 <span className="tnum" style={{ fontSize: 9.5, color: "var(--text-mute)", marginLeft: 5 }}>{totalUsd > 0 ? `${((v.totalUsd / totalUsd) * 100).toFixed(0)}%` : ""}</span>
+                <span className="tnum" style={{ display: "block", fontSize: 9.5, color: "var(--text-mute)" }}>{krwShort(v.totalUsd * usdKrw)}</span>
               </span>
               <span style={{ fontSize: 9, color: "var(--text-mute)", textAlign: "right" }}>{opened ? "▲" : "▼"}</span>
             </div>
