@@ -23,13 +23,15 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
       <div style={{ ...col, paddingBottom: 40 }}>
         <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
         {runsBlock}
+        <SectionLabel>안전장치</SectionLabel>
         <KillCard killed={killed} />
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
+        <SectionLabel>실행 현황</SectionLabel>
         <PnlCard />
+        <SectionLabel>실행 도구</SectionLabel>
         <SellTriggerCard />
-        <EpisodeCard />
         <GatesCard />
-        <ManualTokenCard />
+        <HoldingsCard />
       </div>
     );
   }
@@ -41,20 +43,25 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
       <StatusCard runs={runs} killed={killed} inFlight={inFlight} autoArmed={autoEntry?.armed} />
       {/* 진행 중 실행 = 최우선 — 풀폭 히어로로 크게 */}
       {runs.length > 0 && <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} hero />}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr 1fr", gap: 12, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr 1.1fr", gap: 12, alignItems: "start" }}>
+        {/* ① 안전장치 */}
         <div style={col}>
+          <SectionLabel>안전장치</SectionLabel>
           <KillCard killed={killed} />
           {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         </div>
+        {/* ② 실행 현황·기록 */}
         <div style={col}>
+          <SectionLabel>실행 현황</SectionLabel>
           {runs.length === 0 && runsBlock}
           <PnlCard />
-          <SellTriggerCard />
-          <EpisodeCard />
         </div>
+        {/* ③ 실행 도구 — 자동매도·입출금 게이트·핫월렛 */}
         <div style={col}>
+          <SectionLabel>실행 도구</SectionLabel>
+          <SellTriggerCard />
           <GatesCard />
-          <ManualTokenCard />
+          <HoldingsCard />
         </div>
       </div>
     </div>
@@ -62,6 +69,15 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
 }
 
 // ── 운영 현황 스트립 — 지금 시스템이 뭘 하고 있는지 한 줄 요약 ────────────────
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+      <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-mute)", fontWeight: 700 }}>{children}</span>
+      <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
+    </div>
+  );
+}
+
 function StatusCard({ runs, killed, inFlight, autoArmed }: { runs: RunView[]; killed: boolean; inFlight: number; autoArmed?: boolean }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [watch, setWatch] = useState<{ plays: number; annBlocked: boolean; annOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
@@ -219,7 +235,7 @@ type SellTrig = {
   targetPrice?: number; floorPrice?: number; expectQty?: number; repeat: boolean;
   status: string; soldQty: number; proceeds: number; attempts: number; lastMsg?: string; dry: boolean;
 };
-function SellTriggerCard() {
+export function SellTriggerCard() {
   const [list, setList] = useState<SellTrig[]>([]);
   const [dry, setDry] = useState(true);
   const [f, setF] = useState({ venue: "upbit", base: "", mode: "market", fire: "hybrid", targetPrice: "", floorPrice: "", expectQty: "", repeat: false });
@@ -359,7 +375,7 @@ function EpisodeCurve({ curve }: { curve: Episode["curve"] }) {
   );
 }
 
-function EpisodeCard() {
+export function EpisodeCard() {
   const [eps, setEps] = useState<Episode[]>([]);
   const [activeN, setActiveN] = useState(0);
   const [q, setQ] = useState("");
@@ -447,7 +463,7 @@ function EpisodeCard() {
 // 확인하고, 심볼이 다르면 강제 체크 없이는 저장하지 않는다.
 const MANUAL_CHAINS = ["ethereum", "bsc", "base", "arbitrum", "optimism", "polygon", "avalanche"];
 
-function ManualTokenCard() {
+export function ManualTokenCard() {
   type Row = { base: string; chain: string; entry: { address: string; decimals: number; symbol: string | null; verified: boolean; addedAt: number } };
   const [rows, setRows] = useState<Row[]>([]);
   const [form, setForm] = useState({ base: "", chain: "ethereum", address: "" });

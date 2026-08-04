@@ -6,7 +6,7 @@
 
 import React from "react";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { RiskCard } from "./ControlPanel";
+import { RiskCard, ManualTokenCard, TelegramCard } from "./ControlPanel";
 import { inFlightUsd } from "@/lib/runStore";
 
 type Field = {
@@ -215,6 +215,24 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
             </div>
             <RiskCard inFlight={inFlightUsd()} />
+          </div>
+
+          {/* 텔레그램 알림 */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700 }}>텔레그램 알림</span>
+              <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
+            </div>
+            <TelegramCard />
+          </div>
+
+          {/* 수동 컨트랙트 — 극신생 코인 전송 경로 뚫기 (드물게) */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700 }}>수동 컨트랙트 등록</span>
+              <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
+            </div>
+            <ManualTokenCard />
           </div>
 
           <div style={{ fontSize: 10.5, color: "var(--text-mute)", lineHeight: 1.6 }}>

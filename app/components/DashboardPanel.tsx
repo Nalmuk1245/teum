@@ -12,6 +12,7 @@ import type { LiveGap } from "@/lib/useLivePrices";
 import { vlabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
 import type { RiskState } from "./ControlPanel";
+import { EpisodeCard } from "./ControlPanel";
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)"  }
@@ -322,6 +323,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
           {streamCard}
           {fundsCard(true)}
+          <EpisodeCard />
         </div>
       )}
       {/* 상단 그리드: 감시 상태 | KPI 2×2 | 리스크 현황 */}
@@ -430,6 +432,10 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
           {streamCard}
         </div>
       )}
+
+      {/* 기회 복기 — 지난 기회 구간(임계 위)을 다시 본다. 실행이 아니라 분석이라
+          운영 탭이 아니라 여기(보는 화면)에 둔다. */}
+      {!mobile && <EpisodeCard />}
 
       {/* 하단 2행: 상장 감시 | 최근 거래 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
