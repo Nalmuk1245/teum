@@ -25,6 +25,7 @@ import {
   upbitCancelOrder, binanceCancelOrder,
 } from "./orders";
 import { EXCHANGES } from "./exchanges";
+import { acquireSell, releaseSell } from "./sellLock";
 
 export type SellMode = "market" | "bid" | "limit";
 export type FireMode = "hybrid" | "hammer";
@@ -44,6 +45,8 @@ export type SellTrigger = {
   /** 팔고 나서 또 입금 오면 다시 무장할지 (기본 일회성). */
   repeat: boolean;
   status: "arming" | "waiting" | "working" | "done" | "cancelled" | "error";
+  /** 연속 비체결(거절/미도착) 횟수 — 백오프 판단. 체결·등록 성공 시 0. */
+  nonFill: number;
   createdAt: number;
   dry: boolean;
   soldQty: number;
@@ -145,13 +148,19 @@ async function tick(t: SellTrigger): Promise<void> {
   t.attempts++;
   if (t.dry && t.attempts > MAX_ATTEMPTS_DRY) { t.status = "done"; t.lastMsg = "모의 — 시뮬 종료"; persist(); return; }
 
+  // ── 매도 락 — 실행 엔진·다른 트리거·수동 라우트와 같은 (거래소,코인) 뮤텍스.
+  //    주문 직전에 잡는다(감사 #1의 TOCTOU 닫음). 못 잡으면 다른 매도자가
+  //    이미 처리 중 → 이번 주기 양보.
+  const owner = `trigger:${t.id}`;
+  if (!acquireSell(t.venue, t.base, owner)) { t.lastMsg = "다른 매도자 처리 중 — 양보"; return; }
+  try {
   // ── 모드별 주문 ──
   if (t.mode === "limit") {
     if (!t.targetPrice) { t.status = "error"; t.lastMsg = "지정가 목표가 없음"; persist(); return; }
     if (price != null && price < t.targetPrice) { t.status = "waiting"; t.lastMsg = `현재가 ${price} < 목표 ${t.targetPrice} — 대기`; return; }
     const r = await limitSell(t, qty!, t.targetPrice);
-    if (r?.ok && r.id) { t.openOrderId = r.id; t.status = "working"; t.lastMsg = `지정가 등록 @${t.targetPrice}`; persist(); }
-    else t.lastMsg = r?.message ?? "지정가 등록 실패/미도착";
+    if (r?.ok && r.id) { t.openOrderId = r.id; t.status = "working"; t.nonFill = 0; t.lastMsg = `지정가 등록 @${t.targetPrice}`; persist(); }
+    else { t.nonFill++; t.lastMsg = r?.message ?? "지정가 등록 실패/미도착"; }
     return;
   }
 
@@ -160,29 +169,36 @@ async function tick(t: SellTrigger): Promise<void> {
     if (px == null) { t.lastMsg = "호가 조회 실패 — 재시도"; return; }
     const r = await limitSell(t, qty!, px);
     if (r == null) { return marketFire(t, qty!); } // bithumb 지정가 미배선 → market
-    if (r.ok && r.id) { t.openOrderId = r.id; t.status = "working"; t.lastMsg = `호가 지정가 등록 @${px}`; persist(); }
-    else t.lastMsg = r.message ?? "호가 등록 실패/미도착";
+    if (r.ok && r.id) { t.openOrderId = r.id; t.status = "working"; t.nonFill = 0; t.lastMsg = `호가 지정가 등록 @${px}`; persist(); }
+    else { t.nonFill++; t.lastMsg = r.message ?? "호가 등록 실패/미도착"; }
     return;
   }
 
   // market
-  return marketFire(t, qty!);
+  return await marketFire(t, qty!);
+  } finally {
+    releaseSell(t.venue, t.base, owner);
+  }
 }
 
 async function marketFire(t: SellTrigger, qty: number): Promise<void> {
   const r = await marketSell(t, qty);
   if (r.ok) {
-    t.soldQty += r.filledQty ?? qty;
+    const filled = r.filledQty ?? qty;
+    t.soldQty += filled;
     t.proceeds += r.quoteFilled ?? 0;
     t.status = "working";
+    t.nonFill = 0;
     t.lastMsg = `시장가 매도 · ${r.message}`;
-    // 부분체결 여지 — 다음 주기에 잔고 남았으면 또 판다. hybrid는 자연 처리,
-    // hammer도 다음 tick에서 잔고 read 없이 재던짐(도착분 다 팔릴 때까지).
+    // hammer: 판 만큼 예상 수량에서 뺀다 — 안 그러면 다음 tick이 원래 예상
+    // 수량 전량을 다시 던져 이미 판 걸 또 팔려 한다(감사 #4).
+    if (t.fire === "hammer" && t.expectQty) t.expectQty = Math.max(0, t.expectQty - filled / 0.995);
     await finalizeIfDone(t);
     persist();
   } else {
     // "잔고 없음" = 아직 도착 안 함 (hammer의 정상 상태). 그 외 실패는 기록.
     t.status = "waiting";
+    t.nonFill++;
     t.lastMsg = r.message ?? "매도 실패/미도착";
   }
 }
@@ -214,15 +230,25 @@ async function trackOpenOrder(t: SellTrigger): Promise<void> {
 }
 
 async function finalizeIfDone(t: SellTrigger): Promise<void> {
+  // hammer + 예상 수량이 있으면 그걸 먼저 믿는다 — 시장가 체결 직후 거래소 잔고
+  // 반영은 순간 지연되는데(감사 #4), 그 창에 잔고 read를 믿으면 "아직 남음"으로
+  // 오판해 다음 tick이 또 던진다. 판 누적이 예상의 99% 넘으면 완료로 본다.
+  if (t.fire === "hammer" && t.expectQty != null && (t.expectQty <= 0 || t.soldQty >= t.expectQty * 0.995 * 0.99)) {
+    return finish(t);
+  }
   // 남은 잔고 확인 — 없으면 완료.
   const bal = await coinBalance(t.venue, t.base);
   const price = await bestBid(t.venue, t.base);
   const leftNotional = bal != null && price != null ? bal * price : null;
   if (bal != null && (leftNotional == null || leftNotional < MIN_NOTIONAL)) {
-    if (t.repeat) { t.status = "waiting"; t.lastMsg = `1회 매도 완료 (누적 ${t.soldQty}) — 재무장`; }
-    else { t.status = "done"; t.lastMsg = `매도 완료 · 총 ${t.soldQty} · 대금 ${Math.round(t.proceeds)}`; stopLoop(t.id); }
-    if (!t.dry) void notifyNow(`✅ <b>${t.base}</b> 자동매도 ${t.repeat ? "1회" : "완료"} · ${t.venue} · ${t.soldQty}`);
+    return finish(t);
   }
+}
+
+function finish(t: SellTrigger): void {
+  if (t.repeat) { t.status = "waiting"; t.nonFill = 0; t.expectQty = undefined; t.lastMsg = `1회 매도 완료 (누적 ${t.soldQty}) — 재무장`; }
+  else { t.status = "done"; t.lastMsg = `매도 완료 · 총 ${t.soldQty} · 대금 ${Math.round(t.proceeds)}`; stopLoop(t.id); }
+  if (!t.dry) void notifyNow(`✅ <b>${t.base}</b> 자동매도 ${t.repeat ? "1회" : "완료"} · ${t.venue} · ${t.soldQty}`);
 }
 
 // ── 자기 재스케줄 루프 (트리거당) ─────────────────────────────────────────────
@@ -233,8 +259,11 @@ function scheduleLoop(id: string): void {
     void tick(t).catch((e) => { t.lastMsg = e instanceof Error ? e.message : "tick 오류"; }).finally(() => {
       const cur = store().get(id);
       if (cur && cur.status !== "done" && cur.status !== "cancelled" && cur.status !== "error") {
-        // 거절 폭증 백오프: attempts가 급증하는데 status가 계속 waiting이면 abuse 위험.
-        const delay = cur.status === "working" ? POLL_MS : POLL_MS;
+        // 백오프 배선(감사 #2): 연속 비체결이 쌓이면 — 거래소가 거절을 abuse로
+        // 세기 시작하는 구간 — 폴 간격을 점진적으로 늘린다. 체결/등록되면 0으로.
+        // nonFill 8회(≈2초)부터 개입, 32회면 BACKOFF_MS 상한.
+        const nf = cur.nonFill;
+        const delay = nf < 8 ? POLL_MS : Math.min(BACKOFF_MS, POLL_MS * Math.pow(2, Math.floor((nf - 8) / 8) + 1));
         g.__arbSellLoops!.set(id, setTimeout(run, delay));
       }
     });
@@ -247,11 +276,25 @@ function stopLoop(id: string): void {
 }
 
 // ── 공개 API ──────────────────────────────────────────────────────────────────
-export function createTrigger(cfg: Omit<SellTrigger, "id" | "status" | "createdAt" | "dry" | "soldQty" | "proceeds" | "attempts">): SellTrigger {
+export function createTrigger(cfg: Omit<SellTrigger, "id" | "status" | "createdAt" | "dry" | "soldQty" | "proceeds" | "attempts" | "nonFill">): SellTrigger | { error: string } {
+  // 같은 거래소·코인에 이미 살아있는 트리거가 있으면 거부 — 둘이 같은 잔고를
+  // 노려 이중 주문·거절·알림 중복을 낸다 (감사 #3).
+  const dup = [...store().values()].find((x) => x.venue === cfg.venue && x.base === cfg.base && (x.status === "waiting" || x.status === "working" || x.status === "arming"));
+  if (dup) return { error: `${cfg.base} ${cfg.venue}에 이미 활성 트리거가 있습니다 (먼저 취소)` };
+  // 실행 런이 같은 코인·거래소를 매도 관리 중이면 거부 — 둘이 공존하면 지정가
+  // 미체결이 잔고를 잠가 런의 매도를 굶긴다(감사 #1의 지정가 변형).
+  try {
+    const s2 = (globalThis as unknown as { __arbRunEngine?: { runs: Record<string, { base: string; phase: string; remaining: number; opp: { legs: { side: string; venue: string }[] } }> } }).__arbRunEngine;
+    if (s2) for (const r of Object.values(s2.runs)) {
+      if (r.base === cfg.base && !(r.phase === "done" && r.remaining <= 0) && r.opp.legs.find((l) => l.side === "sell")?.venue === cfg.venue) {
+        return { error: `${cfg.base} ${cfg.venue}를 실행 런이 매도 관리 중 — 완료·정리 후 등록` };
+      }
+    }
+  } catch { /* 경계 실패 — 통과 (락이 마지막 방어) */ }
   const id = `st_${Date.now().toString(36)}_${cfg.base}`;
   const t: SellTrigger = {
     ...cfg, id, status: "waiting", createdAt: Date.now(), dry: CONFIG.DRY_RUN,
-    soldQty: 0, proceeds: 0, attempts: 0,
+    soldQty: 0, proceeds: 0, attempts: 0, nonFill: 0,
   };
   store().set(id, t);
   persist();

@@ -31,6 +31,7 @@ export async function POST(req: Request) {
       venue: b.venue, base: b.base.toUpperCase(), mode: b.mode, fire: b.fire ?? "hybrid",
       targetPrice: b.targetPrice, floorPrice: b.floorPrice, expectQty: b.expectQty, repeat: !!b.repeat,
     });
+    if ("error" in t) return NextResponse.json({ error: t.error }, { status: 409 });
     return NextResponse.json({ ok: true, trigger: t });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "등록 실패" }, { status: 500 });

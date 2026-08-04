@@ -567,6 +567,19 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
         : `${cfg.opp.base} 미정리 포지션 있음 (${dup.remaining > 0 ? `잔량 ${dup.remaining.toFixed(6)}` : "헷지 열림"}) — 청산·정리 후 실행하세요`,
     };
   }
+  // 이 런의 매도 다리를 자동매도 트리거가 이미 노리고 있으면 거부 — 트리거의
+  // 미체결 지정가가 잔고를 잠가 런의 매도를 굶기거나, 둘이 동시에 시장가를 던져
+  // 하나가 거절돼 네이키드 숏을 남긴다(병렬 안전성 감사 #1). 순서 무관하게
+  // 공존 자체를 막는다: 트리거 쪽도 createTrigger에서 활성 런을 거부한다.
+  const sellVenue = cfg.opp.legs.find((l) => l.side === "sell")?.venue;
+  if (sellVenue) {
+    const tstore = (globalThis as unknown as { __arbSellTriggers?: Map<string, { venue: string; base: string; status: string }> }).__arbSellTriggers;
+    if (tstore) for (const t of tstore.values()) {
+      if (t.base === cfg.opp.base && t.venue === sellVenue && (t.status === "waiting" || t.status === "working" || t.status === "arming")) {
+        return { error: `${cfg.opp.base} ${sellVenue}에 자동매도 트리거가 활성 — 트리거 취소 후 실행 (동시 매도 방지)` };
+      }
+    }
+  }
   const cap = getLimits().maxInFlightUsd;
   if (Number.isFinite(cap) && cap > 0 && inFlightUsd() + cfg.sizeUsd > cap) {
     return { error: `총 노출 한도 초과 (진행 중 $${inFlightUsd().toFixed(0)} + $${cfg.sizeUsd.toFixed(0)} > $${cap.toFixed(0)})` };

@@ -112,8 +112,10 @@ async function writeDirty(): Promise<void> {
       try {
         // Async so the 30s snapshot doesn't block the scan loop; atomic so a
         // crash mid-write can't truncate the live file.
-        await writeFile(`${file}.tmp`, text, "utf8");
-        await rename(`${file}.tmp`, file);
+        // 고유 tmp — 동기 flushSection과 같은 경로를 안 쓰게(감사 #7의 ENOENT 경합)
+        const tmp = `${file}.${process.pid}.${Math.round(performance.now())}.tmp`;
+        await writeFile(tmp, text, "utf8");
+        await rename(tmp, file);
       } catch { /* persistence must never break the app */ }
     }
   } finally {
@@ -151,8 +153,9 @@ export function flushSection(key: string, value: unknown): void {
   try {
     ensureDir();
     const file = fileFor(key);
-    writeFileSync(`${file}.tmp`, text, "utf8");
-    renameSync(`${file}.tmp`, file);
+    const tmp = `${file}.${process.pid}.sync.tmp`;
+    writeFileSync(tmp, text, "utf8");
+    renameSync(tmp, file);
   } catch { /* persistence must never break the app */ }
 }
 

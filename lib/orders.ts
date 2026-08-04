@@ -4,6 +4,7 @@
 
 import crypto from "crypto";
 import { CONFIG } from "./config";
+import { acquireOrderSlot } from "./rateLimiter";
 
 export type OrderResult = {
   ok: boolean; dryRun: boolean; id: string | null; message: string;
@@ -84,6 +85,7 @@ async function binanceSigned(host: string, path: string, params: Record<string, 
 export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { quoteUsd?: number; qty?: number }): Promise<OrderResult> {
   const { key } = bnKeys();
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} ${side} 현물`, !!key);
+  if (!(await acquireOrderSlot("binance"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const p: Record<string, string | number> = { symbol: `${base}USDT`, side, type: "MARKET" };
     if (side === "BUY" && opts.quoteUsd) p.quoteOrderQty = +opts.quoteUsd.toFixed(2);
@@ -142,6 +144,7 @@ export async function binanceFuturesFree(): Promise<number | null> {
 export async function binanceLimitSell(base: string, qty: number, price: number): Promise<OrderResult> {
   const { key } = bnKeys();
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 지정가 매도 ${qty}@${price}`, !!key);
+  if (!(await acquireOrderSlot("binance"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const j = await binanceSigned("api.binance.com", "/api/v3/order", {
       symbol: `${base}USDT`, side: "SELL", type: "LIMIT", timeInForce: "GTC",
@@ -190,6 +193,7 @@ export async function binanceCancelOrder(base: string, orderId: string): Promise
 export async function upbitLimitSell(base: string, volume: number, priceKrw: number): Promise<OrderResult> {
   const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} 지정가 매도 ${volume}@₩${priceKrw}`, !!(key && secret));
+  if (!(await acquireOrderSlot("upbit"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const query = new URLSearchParams({
       market: `KRW-${base}`, side: "ask", ord_type: "limit",
@@ -392,6 +396,7 @@ export async function coinBalance(venue: string, base: string): Promise<number |
 export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volume?: number; priceKrw?: number }): Promise<OrderResult> {
   const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} ${side === "ask" ? "매도" : "매수"}`, !!(key && secret));
+  if (!(await acquireOrderSlot("upbit"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     // market sell = ord_type "market" + volume; market buy = "price" + price.
     const params: Record<string, string> = { market: `KRW-${base}`, side };
@@ -460,6 +465,7 @@ export async function bithumbOrder(base: string, side: "bid" | "ask", units: num
   const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
   const label = side === "ask" ? "매도" : "매수";
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bithumb ${base} ${label}`, !!(key && secret));
+  if (!(await acquireOrderSlot("bithumb"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const endpoint = side === "ask" ? "/trade/market_sell" : "/trade/market_buy";
     const j = await bithumbSigned(endpoint, { order_currency: base, payment_currency: "KRW", units: String(units) });

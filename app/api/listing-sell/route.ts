@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { CONFIG } from "@/lib/config";
 import { isKilled } from "@/lib/killswitch";
 import { binanceSpot, bybitOrder, okxOrder, upbitOrder, bithumbOrder } from "@/lib/orders";
+import { acquireSell, releaseSell } from "@/lib/sellLock";
 import { getPlay, recordListingSell } from "@/lib/listings";
 import { CEXDEX_CHAINS, swapDex, dexConfigured } from "@/lib/dex";
 import { sendRawEvmTx, walletAddress } from "@/lib/wallet";
@@ -56,13 +57,22 @@ export async function POST(req: Request) {
         proceeds = Number(swap.toAmount) / 10 ** uni.quote.decimals || null;
       }
     } else {
-      const r =
-        where === "binance" ? await binanceSpot(base, "SELL", { qty })
-        : where === "bybit" ? await bybitOrder(base, "SELL", { qty })
-        : where === "okx" ? await okxOrder(base, "SELL", { qty })
-        : where === "upbit" ? await upbitOrder(base, "ask", { volume: qty })
-        : where === "bithumb" ? await bithumbOrder(base, "ask", qty)
-        : null;
+      // 매도 락 — 자동매도 트리거·실행 엔진과 같은 (거래소,코인) 뮤텍스. 수동
+      // 매도가 트리거/런과 동시에 같은 잔고를 팔지 않게(감사 #5).
+      const owner = `manual-sell:${Date.now()}`;
+      if (!acquireSell(where, base, owner)) {
+        return NextResponse.json({ ok: false, message: `${base} ${where} 매도 진행 중(트리거/실행) — 잠시 후 재시도` }, { status: 409 });
+      }
+      let r;
+      try {
+        r =
+          where === "binance" ? await binanceSpot(base, "SELL", { qty })
+          : where === "bybit" ? await bybitOrder(base, "SELL", { qty })
+          : where === "okx" ? await okxOrder(base, "SELL", { qty })
+          : where === "upbit" ? await upbitOrder(base, "ask", { volume: qty })
+          : where === "bithumb" ? await bithumbOrder(base, "ask", qty)
+          : null;
+      } finally { releaseSell(where, base, owner); }
       if (!r) return NextResponse.json({ ok: false, message: `지원 안 하는 매도처: ${where}` }, { status: 400 });
       ok = r.ok; dryRun = !!r.dryRun; message = r.message ?? "";
       proceeds = r.quoteFilled ?? null; // KR venues: KRW — recorded as-is with note
