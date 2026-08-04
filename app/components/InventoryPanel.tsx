@@ -267,7 +267,7 @@ function BridgeCard() {
   const [to, setTo] = useState("base");
   const [amt, setAmt] = useState("500");
   const [busy, setBusy] = useState(false);
-  const [q, setQ] = useState<{ bridge?: string; outUsd?: number; feeUsd?: number; etaMin?: number; error?: string } | null>(null);
+  const [q, setQ] = useState<{ bridge?: string; outUsd?: number; feeUsd?: number; etaMin?: number; error?: string; alts?: { bridge: string; outUsd: number; etaMin: number }[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const sel: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "6px 8px", fontSize: 12, outline: "none" };
   const getQuote = async () => {
@@ -303,6 +303,7 @@ function BridgeCard() {
         q.error ? <div style={{ marginTop: 8, fontSize: 11, color: "var(--amber)" }}>{q.error}</div> : (
           <div className="tnum" style={{ marginTop: 9, fontSize: 12, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
             <span>{q.bridge}</span>
+            {(q.alts?.length ?? 0) > 0 && <span style={{ color: "var(--text-mute)", fontSize: 10 }}>대안: {q.alts!.map((a) => `${a.bridge} $${a.outUsd.toFixed(2)}·${a.etaMin}분`).join(" / ")}</span>}
             <span>수취 <b>${q.outUsd?.toFixed(2)}</b></span>
             <span style={{ color: "var(--text-dim)" }}>수수료 ${q.feeUsd?.toFixed(2)}</span>
             <span style={{ color: "var(--text-dim)" }}>ETA {q.etaMin}분</span>

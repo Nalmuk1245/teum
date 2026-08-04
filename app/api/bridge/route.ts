@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { CONFIG } from "@/lib/config";
 import { isKilled } from "@/lib/killswitch";
 import { okxGet, OKX_CHAIN_ID, QUOTE_STABLES, dexConfigured } from "@/lib/dex";
+import { loadSecretsIntoEnv } from "@/lib/secrets";
+loadSecretsIntoEnv(); // 설정창 키 주입 — 부팅 후 첫 스캔 전에 이 라우트가 먼저 맞아도 "키 필요"가 안 뜨게
 import { sendRawEvmTx, walletAddress } from "@/lib/wallet";
 import { notifyNow } from "@/lib/telegram";
 
@@ -27,16 +29,25 @@ async function quote(from: string, to: string, amountUsd: number) {
     fromTokenAddress: fs.address, toTokenAddress: ts.address,
     amount, slippage: "0.01",
   });
-  const d = data[0] as { routerList?: { toTokenAmount?: string; estimateTime?: string; router?: { bridgeName?: string; crossChainFee?: string; crossChainFeeTokenAddress?: string } }[] } | undefined;
+  // v6: bridgeName은 routerList[*] 바로 아래다 (v5의 router.bridgeName 아님 —
+  // 옛 경로를 읽어서 UI에 "?"가 떴다). OKX는 어그리게이터라 라우트마다 브릿지가
+  // 다르다 — 실측 예: ETH→Base가 STARGATE V2 BUS MODE로 잡혔다.
+  const d = data[0] as { routerList?: { toTokenAmount?: string; estimateTime?: string; bridgeName?: string; otherNativeFee?: string }[] } | undefined;
   const r = d?.routerList?.[0];
   if (!r?.toTokenAmount) return { error: "라우트 없음" };
   const outUsd = Number(r.toTokenAmount) / 10 ** ts.decimals;
   return {
-    bridge: r.router?.bridgeName ?? "?",
+    bridge: r.bridgeName ?? "?",
     inUsd: amountUsd,
     outUsd,
     feeUsd: amountUsd - outUsd,
     etaMin: Math.ceil(Number(r.estimateTime ?? 0) / 60),
+    // 대안 라우트 — 어그리게이터가 뭘 비교했는지 보이게 (수수료 = in − out)
+    alts: (d?.routerList ?? []).slice(1, 3).map((x) => ({
+      bridge: x.bridgeName ?? "?",
+      outUsd: Number(x.toTokenAmount ?? 0) / 10 ** ts.decimals,
+      etaMin: Math.ceil(Number(x.estimateTime ?? 0) / 60),
+    })),
   };
 }
 
