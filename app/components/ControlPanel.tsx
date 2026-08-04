@@ -931,7 +931,7 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
 type HoldingsData = {
   symbol: string; name: string; priceUsd: number | null; volumeUsd: number | null;
   chains: string[]; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string;
-  venues: { venue: string; hot: number; cold: number; hotUsd: number | null; coldUsd: number | null; addresses: number; hotDeltaPerMin: number | null }[];
+  venues: { venue: string; hot: number; cold: number; hotUsd: number | null; coldUsd: number | null; addresses: number; hotDeltaPerMin: number | null; hotInPerMin: number | null; hotOutPerMin: number | null }[];
 };
 
 function fmtQty(n: number): string {
@@ -1020,7 +1020,7 @@ export function HoldingsCard() {
             <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase" }}>거래소</span>
             <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>핫월렛</span>
             <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>콜드</span>
-            <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>핫 Δ/분</span>
+            <span style={{ color: "var(--text-mute)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right" }}>유입/유출 ·분</span>
             {data.venues.filter((v) => v.hot + v.cold > 0 || v.addresses > 0).map((v) => (
               <Fragment key={v.venue}>
                 <span style={{ fontWeight: 600 }}>{vlabel(v.venue as never) ?? v.venue}<span style={{ color: "var(--text-mute)", fontWeight: 400 }}> ·{v.addresses}주소</span></span>
@@ -1028,8 +1028,20 @@ export function HoldingsCard() {
                   {fmtQty(v.hot)}{v.hotUsd != null && v.hotUsd > 0 ? <span style={{ color: "var(--text-mute)" }}> (${fmtQty(v.hotUsd)})</span> : null}
                 </span>
                 <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{fmtQty(v.cold)}</span>
-                <span className="tnum" style={{ textAlign: "right", color: v.hotDeltaPerMin == null || v.hotDeltaPerMin === 0 ? "var(--text-mute)" : v.hotDeltaPerMin > 0 ? "var(--pos)" : "var(--neg)" }}>
-                  {v.hotDeltaPerMin == null ? "—"
+                <span className="tnum" style={{ textAlign: "right" }}>
+                  {/* 유입·유출을 각각 — 순 Δ만 보면 +10k 입금과 −8k 출금이 "+2k"로
+                      뭉개져 덤핑 재고 유입 신호가 사라진다. */}
+                  {v.hotInPerMin != null && v.hotOutPerMin != null ? (
+                    <>
+                      <span style={{ color: v.hotInPerMin > 0 ? "var(--pos)" : "var(--text-mute)" }}>
+                        +{data.priceUsd != null ? `$${fmtQty(v.hotInPerMin * data.priceUsd)}` : fmtQty(v.hotInPerMin)}
+                      </span>
+                      <span style={{ color: "var(--text-mute)" }}> / </span>
+                      <span style={{ color: v.hotOutPerMin > 0 ? "var(--neg)" : "var(--text-mute)" }}>
+                        −{data.priceUsd != null ? `$${fmtQty(v.hotOutPerMin * data.priceUsd)}` : fmtQty(v.hotOutPerMin)}
+                      </span>
+                    </>
+                  ) : v.hotDeltaPerMin == null ? "—"
                     : v.hotDeltaPerMin === 0 ? "0"
                     : data.priceUsd != null
                       ? `${v.hotDeltaPerMin > 0 ? "+$" : "−$"}${fmtQty(Math.abs(v.hotDeltaPerMin * data.priceUsd))}`

@@ -24,7 +24,9 @@ export type VenueHolding = {
   hotUsd: number | null;
   coldUsd: number | null;
   addresses: number; // how many were queried (coverage indicator)
-  hotDeltaPerMin: number | null; // token units/min since last snapshot
+  hotDeltaPerMin: number | null; // token units/min since last snapshot (순)
+  hotInPerMin: number | null;    // 유입 (주소별 증가분 합) token units/min
+  hotOutPerMin: number | null;   // 유출 (주소별 감소분 합) token units/min
   breakdown?: WalletBreak[]; // 주소별 잔고 드릴다운 (0 초과만, USD순)
 };
 
@@ -54,7 +56,14 @@ export type HoldingsResult = {
 const KR_VENUES = new Set(["upbit", "bithumb"]);
 const QUERY_CHAINS = ["ethereum", "bsc", "base"] as const;
 
-type Snap = { ts: number; hotByVenue: Record<string, number> };
+type Snap = {
+  ts: number;
+  hotByVenue: Record<string, number>;
+  /** 거래소별 핫 주소 잔고 — 순 Δ가 아니라 유입/유출을 가르려면 주소 단위가
+   *  필요하다 (같은 분에 +10k 입금과 −8k 출금이 있으면 순은 +2k뿐이라
+   *  "덤핑 재고가 들어오는 중"이라는 신호가 뭉개진다). */
+  hotAddr: Record<string, Record<string, number>>;
+};
 const g = globalThis as unknown as {
   __arbHoldingsCache?: Map<string, { ts: number; v: HoldingsResult }>;
   __arbHoldingsPrev?: Map<string, Snap>;
@@ -183,9 +192,28 @@ export async function fetchHoldings(symbolRaw: string, opts?: { fresh?: boolean 
   const venues: VenueHolding[] = [...sums.entries()]
     .map(([venue, s]) => {
       const dtMin = prev ? (now - prev.ts) / 60_000 : 0;
-      const delta = prev && dtMin > 0.3 && dtMin < 30 && prev.hotByVenue[venue] != null
-        ? (s.hot - prev.hotByVenue[venue]) / dtMin
+      const windowOk = prev != null && dtMin > 0.3 && dtMin < 30;
+      const delta = windowOk && prev!.hotByVenue[venue] != null
+        ? (s.hot - prev!.hotByVenue[venue]) / dtMin
         : null;
+      // 유입/유출 분해 — 주소별 증감을 각각 합산. RPC 배치가 하나라도 실패한
+      // 스윕은 건너뛴다: 누락 주소의 잔고가 "전량 유출"로 둔갑한다.
+      let inflow: number | null = null, outflow: number | null = null;
+      const prevAddr = prev?.hotAddr?.[venue];
+      if (windowOk && prevAddr && failedBatches === 0) {
+        let inn = 0, out = 0;
+        const curAddr = new Map<string, number>();
+        for (const [addr, a] of byAddr) if (a.venue === venue && a.type === "hot") curAddr.set(addr, a.amount);
+        for (const [addr, cur] of curAddr) {
+          const p0 = prevAddr[addr] ?? 0; // 신규 주소 = 전액 유입
+          if (cur > p0) inn += cur - p0; else out += p0 - cur;
+        }
+        for (const [addr, p0] of Object.entries(prevAddr)) {
+          if (!curAddr.has(addr)) out += p0; // 이번 스윕에 없는(0이 된) 주소 = 유출
+        }
+        inflow = inn / dtMin;
+        outflow = out / dtMin;
+      }
       const breakdown: WalletBreak[] = [...byAddr.entries()]
         .filter(([, a]) => a.venue === venue && a.amount > 0)
         .map(([address, a]) => ({ address, tag: a.tag, type: a.type, amount: a.amount, usd: px != null ? a.amount * px : null }))
@@ -195,11 +223,16 @@ export async function fetchHoldings(symbolRaw: string, opts?: { fresh?: boolean 
         venue, hot: s.hot, cold: s.cold,
         hotUsd: px != null ? s.hot * px : null,
         coldUsd: px != null ? s.cold * px : null,
-        addresses: s.n, hotDeltaPerMin: delta, breakdown,
+        addresses: s.n, hotDeltaPerMin: delta, hotInPerMin: inflow, hotOutPerMin: outflow, breakdown,
       };
     })
     .sort((a, b) => (b.hot + b.cold) - (a.hot + a.cold));
-  PREV.set(symbol, { ts: now, hotByVenue: Object.fromEntries(venues.map((v) => [v.venue, v.hot])) });
+  const hotAddrSnap: Record<string, Record<string, number>> = {};
+  for (const [addr, a] of byAddr) {
+    if (a.type !== "hot" || a.amount <= 0) continue;
+    (hotAddrSnap[a.venue] ??= {})[addr] = a.amount;
+  }
+  PREV.set(symbol, { ts: now, hotByVenue: Object.fromEntries(venues.map((v) => [v.venue, v.hot])), hotAddr: hotAddrSnap });
 
   const globalHot = venues.filter((v) => !KR_VENUES.has(v.venue)).reduce((s, v) => s + v.hot, 0);
   const globalHotUsd = px != null ? globalHot * px : null;

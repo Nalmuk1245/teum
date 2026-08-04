@@ -563,10 +563,12 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
         const maxHotUsd = Math.max(...rows.map((v) => v.hotUsd ?? 0), 1);
         return (
           <div style={{ display: "grid", gridTemplateColumns: "96px minmax(90px,1.4fr) 1fr 1fr", gap: "5px 12px", fontSize: 11.5, alignItems: "center" }}>
-            {th("거래소")}{th("핫월렛", "right")}{th("콜드", "right")}{th("핫 유입 Δ/분", "right")}
+            {th("거래소")}{th("핫월렛", "right")}{th("콜드", "right")}{th("유입/유출 ·분", "right")}
             {rows.map((v) => {
               const barPct = v.hotUsd != null ? Math.max(3, (v.hotUsd / maxHotUsd) * 100) : 0;
-              const dumping = (v.hotDeltaPerMin ?? 0) > 0;
+              // 덤핑압력 = 유입 (분해가 있으면 유입 기준 — 순 Δ는 유출과 상쇄돼
+              // +10k 입금·−8k 출금이 "+2k"로 뭉개진다)
+              const dumping = (v.hotInPerMin ?? v.hotDeltaPerMin ?? 0) > 0;
               const canDrill = (v.breakdown?.length ?? 0) > 0;
               const opened = hotOpen === v.venue;
               return (
@@ -585,11 +587,21 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
                     </span>
                   </span>
                   <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{fmtQty(v.cold)}</span>
-                  <span className="tnum" style={{ textAlign: "right", fontWeight: dumping ? 700 : 400,
-                    color: v.hotDeltaPerMin == null || v.hotDeltaPerMin === 0 ? "var(--text-mute)" : v.hotDeltaPerMin > 0 ? "var(--amber)" : "var(--pos)" }}>
-                    {v.hotDeltaPerMin == null ? "—" : v.hotDeltaPerMin === 0 ? "0"
-                      : `${v.hotDeltaPerMin > 0 ? "▲ +" : "▼ −"}${holdings.priceUsd != null ? "$" + fmtQty(Math.abs(v.hotDeltaPerMin * holdings.priceUsd)) : fmtQty(Math.abs(v.hotDeltaPerMin))}`}
-                    {dumping ? "/분" : ""}
+                  <span className="tnum" style={{ textAlign: "right", fontWeight: dumping ? 700 : 400 }}>
+                    {v.hotInPerMin != null && v.hotOutPerMin != null ? (
+                      <>
+                        <span style={{ color: v.hotInPerMin > 0 ? "var(--amber)" : "var(--text-mute)" }}>
+                          ▲{holdings.priceUsd != null ? `$${fmtQty(v.hotInPerMin * holdings.priceUsd)}` : fmtQty(v.hotInPerMin)}
+                        </span>
+                        <span style={{ color: "var(--text-mute)" }}>/</span>
+                        <span style={{ color: v.hotOutPerMin > 0 ? "var(--pos)" : "var(--text-mute)" }}>
+                          ▼{holdings.priceUsd != null ? `$${fmtQty(v.hotOutPerMin * holdings.priceUsd)}` : fmtQty(v.hotOutPerMin)}
+                        </span>
+                      </>
+                    ) : v.hotDeltaPerMin == null ? "—" : v.hotDeltaPerMin === 0 ? "0"
+                      : <span style={{ color: v.hotDeltaPerMin > 0 ? "var(--amber)" : "var(--pos)" }}>
+                          {`${v.hotDeltaPerMin > 0 ? "▲ +" : "▼ −"}${holdings.priceUsd != null ? "$" + fmtQty(Math.abs(v.hotDeltaPerMin * holdings.priceUsd)) : fmtQty(Math.abs(v.hotDeltaPerMin))}`}
+                        </span>}
                   </span>
                   {opened && v.breakdown && (
                     <div style={{ gridColumn: "1 / -1", margin: "1px 0 6px", padding: "6px 10px 6px 20px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--border)" }}>

@@ -23,7 +23,7 @@ export type Watch = {
 };
 export type WalletBreak = { address: string; tag: string | null; type: "hot" | "cold"; amount: number; usd: number | null };
 export type Holdings = {
-  venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null; breakdown?: WalletBreak[] }[];
+  venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null; hotInPerMin: number | null; hotOutPerMin: number | null; breakdown?: WalletBreak[] }[];
   priceUsd: number | null; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string;
 };
 export type AutoCfg = { armed: boolean; sizeUsd: number };
