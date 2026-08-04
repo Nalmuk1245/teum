@@ -26,6 +26,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         <KillCard killed={killed} />
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <PnlCard />
+        <SellTriggerCard />
         <EpisodeCard />
         <GatesCard />
         <ManualTokenCard />
@@ -48,6 +49,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         <div style={col}>
           {runs.length === 0 && runsBlock}
           <PnlCard />
+          <SellTriggerCard />
           <EpisodeCard />
         </div>
         <div style={col}>
@@ -211,7 +213,97 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
   );
 }
 
-// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────
+// ── 자동 매도 트리거 — 입금 도착 시 즉시 매도 ────────────────────────────────
+type SellTrig = {
+  id: string; venue: string; base: string; mode: string; fire: string;
+  targetPrice?: number; floorPrice?: number; expectQty?: number; repeat: boolean;
+  status: string; soldQty: number; proceeds: number; attempts: number; lastMsg?: string; dry: boolean;
+};
+function SellTriggerCard() {
+  const [list, setList] = useState<SellTrig[]>([]);
+  const [dry, setDry] = useState(true);
+  const [f, setF] = useState({ venue: "upbit", base: "", mode: "market", fire: "hybrid", targetPrice: "", floorPrice: "", expectQty: "", repeat: false });
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => fetch("/api/sell-trigger", { cache: "no-store" }).then((r) => r.json())
+    .then((j) => { setList(j.triggers ?? []); setDry(!!j.dryRun); }).catch(() => {});
+  useEffect(() => { load(); const id = setInterval(load, 3000); return () => clearInterval(id); }, []);
+
+  const submit = async () => {
+    setMsg(null);
+    const body: Record<string, unknown> = { venue: f.venue, base: f.base, mode: f.mode, fire: f.fire, repeat: f.repeat };
+    if (f.mode === "limit") body.targetPrice = Number(f.targetPrice);
+    if ((f.mode === "market" || f.mode === "bid") && f.floorPrice) body.floorPrice = Number(f.floorPrice);
+    if (f.fire === "hammer" && f.expectQty) body.expectQty = Number(f.expectQty);
+    try {
+      const j = await (await fetch("/api/sell-trigger", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+      if (j.ok) { setF({ ...f, base: "", targetPrice: "", floorPrice: "", expectQty: "" }); load(); }
+      else setMsg(j.error ?? "등록 실패");
+    } catch { setMsg("요청 실패"); }
+  };
+  const cancel = (id: string) => fetch(`/api/sell-trigger?id=${id}`, { method: "DELETE" }).then(load).catch(() => {});
+  const modeKo: Record<string, string> = { market: "시장가", bid: "호가", limit: "지정가" };
+  const statusKo: Record<string, string> = { waiting: "대기(입금 감시)", working: "매도 중", done: "완료", cancelled: "취소", error: "오류", arming: "준비" };
+  const statusColor = (st: string) => st === "working" ? "var(--amber)" : st === "done" ? "var(--pos)" : st === "error" ? "var(--neg)" : "var(--text-dim)";
+
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>자동 매도 트리거</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>입금 도착 시 즉시 매도{dry ? " · 모의" : ""}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)", gap: 6, marginBottom: 6 }}>
+        <select value={f.venue} onChange={(e) => setF({ ...f, venue: e.target.value })} style={SEL}>
+          {["upbit", "bithumb", "binance"].map((v) => <option key={v} value={v}>{VENUE_LABEL[v] ?? v}</option>)}
+        </select>
+        <input value={f.base} onChange={(e) => setF({ ...f, base: e.target.value.toUpperCase() })} placeholder="코인" style={INP} />
+        <select value={f.mode} onChange={(e) => setF({ ...f, mode: e.target.value })} style={SEL}>
+          <option value="market">시장가</option><option value="bid">호가</option><option value="limit">지정가</option>
+        </select>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 6, marginBottom: 6 }}>
+        <select value={f.fire} onChange={(e) => setF({ ...f, fire: e.target.value })} style={SEL} title="hybrid: 잔고확인 후 주문(안전) · hammer: 계속 던짐(최속)">
+          <option value="hybrid">하이브리드 (안전)</option><option value="hammer">해머 (최속)</option>
+        </select>
+        {f.mode === "limit"
+          ? <input value={f.targetPrice} onChange={(e) => setF({ ...f, targetPrice: e.target.value })} placeholder="목표가" inputMode="decimal" style={INP} />
+          : <input value={f.floorPrice} onChange={(e) => setF({ ...f, floorPrice: e.target.value })} placeholder="바닥가 (선택)" inputMode="decimal" style={INP} />}
+      </div>
+      {f.fire === "hammer" && (
+        <input value={f.expectQty} onChange={(e) => setF({ ...f, expectQty: e.target.value })} placeholder="예상 수량 (해머는 잔고 안 읽음)" inputMode="decimal" style={{ ...INP, width: "100%", marginBottom: 6 }} />
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-dim)", cursor: "pointer" }}>
+          <input type="checkbox" checked={f.repeat} onChange={(e) => setF({ ...f, repeat: e.target.checked })} /> 반복 (팔고 또 입금오면 재무장)
+        </label>
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={() => void submit()} disabled={!f.base.trim()}
+          style={{ border: "none", borderRadius: 9, padding: "7px 14px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: f.base.trim() ? 1 : 0.5 }}>
+          트리거 등록
+        </button>
+      </div>
+      {msg && <div style={{ fontSize: 11, color: "var(--neg)", marginBottom: 6 }}>{msg}</div>}
+      {list.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 4 }}>
+          {list.map((t) => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 11.5, borderTop: "1px solid var(--border)" }}>
+              <b>{t.base}</b>
+              <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{VENUE_LABEL[t.venue] ?? t.venue} · {modeKo[t.mode]}{t.fire === "hammer" ? "·해머" : ""}{t.repeat ? "·반복" : ""}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-mute)" }}>{t.lastMsg}</span>
+              <span className="tnum" style={{ fontSize: 10.5, fontWeight: 700, color: statusColor(t.status) }}>{statusKo[t.status] ?? t.status}</span>
+              {(t.status === "waiting" || t.status === "working") && (
+                <button type="button" onClick={() => void cancel(t.id)} style={{ border: "none", background: "transparent", color: "var(--text-mute)", cursor: "pointer", fontSize: 12 }}>✕</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+const SEL: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12, minWidth: 0 };
+const INP: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 };
+
+// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────
 // "어제 그 김프, 얼마나 지속됐고 왜 못 먹었나"의 답. 데이터는 스캔 루프가
 // data/episodes.jsonl에 적재한 것(lib/episodes.ts) — 여긴 읽기만 한다.
 type Episode = {

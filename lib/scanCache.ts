@@ -173,6 +173,7 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   if (!C.loop) {
     C.loop = setInterval(() => void refresh(), REFRESH_MS);
     startListingWatch(); // 상장따리: notice/TG/market watchers
+    void import("./sellTriggers").then((m) => m.bootSellTriggers()).catch(() => {}); // 자동매도 재무장
     // 경로 DB 워머 — KR 유니버스의 공식 컨트랙트를 미리 검증·적재해 둔다.
     // 런타임 해석(recv/transfer)이 콜드 구축을 밟는 일이 없어진다.
     void import("./tokenRoutes").then(({ startRouteWarmer }) =>

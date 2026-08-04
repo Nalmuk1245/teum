@@ -542,6 +542,18 @@ async function loop(id: string) {
 // ── public actions (API 라우트가 호출) ────────────────────────────────────────
 export type StartResult = { id: string } | { error: string };
 
+/** 이 코인·거래소를 활성 런이 매도 관리 중인가 — 자동매도 트리거의 오버셀 방지용.
+ *  sell 다리가 이 거래소이고 아직 완료/청산 전인 런이 있으면 true. */
+export function activeSellForVenue(venue: string, base: string): boolean {
+  for (const r of Object.values(E.runs)) {
+    if (r.base !== base) continue;
+    if (r.phase === "done" && r.remaining <= 0) continue;
+    const sell = r.opp.legs.find((l) => l.side === "sell");
+    if (sell?.venue === venue) return true;
+  }
+  return false;
+}
+
 export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolean; autoLevel: AutoLevel }): StartResult {
   if (isKilled()) return { error: "킬 스위치 활성 — 신규 실행 차단" };
   if (cfg.opp.mock && !CONFIG.DRY_RUN) return { error: "목업 기회는 실행 불가" };

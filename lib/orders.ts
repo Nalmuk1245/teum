@@ -352,6 +352,43 @@ async function upbitOrderDetail(uuid: string): Promise<{ filledQty?: number; quo
   return { filledQty, quoteKrw };
 }
 
+// 단일 코인 잔고 (거래소별). 자동매도 트리거의 하이브리드 모드가 매 주기 이걸
+// 읽는다 — 주문 rate 버킷과 분리된(대체로 더 여유로운) 계정조회 API를 쓴다.
+// null = 조회 실패(키 없음/네트워크) — 호출부가 "아직 모름"으로 다뤄야 한다.
+export async function coinBalance(venue: string, base: string): Promise<number | null> {
+  try {
+    if (venue === "upbit") {
+      const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
+      if (!key || !secret) return null;
+      const res = await fetch("https://api.upbit.com/v1/accounts", {
+        headers: { Authorization: `Bearer ${upbitJwt(key, secret, "")}` }, cache: "no-store", signal: AbortSignal.timeout(6000),
+      });
+      const rows = (await res.json()) as Array<{ currency: string; balance: string; locked: string }>;
+      const a = Array.isArray(rows) ? rows.find((x) => x.currency === base) : null;
+      return a ? Number(a.balance) + Number(a.locked) : 0;
+    }
+    if (venue === "binance") {
+      const { key } = bnKeys();
+      if (!key) return null;
+      const j = await binanceSigned("api.binance.com", "/api/v3/account", {});
+      const b = (j.balances as Array<{ asset: string; free: string; locked: string }> | undefined)?.find((x) => x.asset === base);
+      return b ? Number(b.free) + Number(b.locked) : 0;
+    }
+    if (venue === "bithumb") {
+      const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
+      if (!key || !secret) return null;
+      const j = await bithumbSigned("/info/balance", { order_currency: base, payment_currency: "KRW" });
+      if (j.status !== "0000" || !j.data) return 0;
+      const avail = Number(j.data[`available_${base.toLowerCase()}`] ?? 0);
+      const inuse = Number(j.data[`in_use_${base.toLowerCase()}`] ?? 0);
+      return avail + inuse;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function upbitOrder(base: string, side: "bid" | "ask", opts: { volume?: number; priceKrw?: number }): Promise<OrderResult> {
   const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Upbit ${base} ${side === "ask" ? "매도" : "매수"}`, !!(key && secret));
