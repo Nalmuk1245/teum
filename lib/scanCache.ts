@@ -178,7 +178,9 @@ function recordSrcHeat(): void {
       ann: w.annBlocked ? false : w.annOkAgoSec != null && w.annOkAgoSec < 120,
       mkt: w.mktOkAgoSec != null && w.mktOkAgoSec < 60,
       tg: w.tgConfigured ? w.tgOkAgoSec != null && w.tgOkAgoSec < 600 : null, // 미설정은 표본 제외
-      proc: lag ? lag.worstMs < 400 : null,
+      // worstMs는 10분 창 최악값 — 그대로 쓰면 1회 멈춤이 이후 10분을 전부
+      // down으로 칠한다. 발생 후 1분 안쪽일 때만 down으로 계상.
+      proc: lag ? !(lag.worstMs >= 400 && lag.worstAgoSec != null && lag.worstAgoSec < 60) : null,
     };
     const heat = loadSection<SrcHeatMap>("srcHeat") ?? {};
     for (const [src, ok] of Object.entries(verdicts)) {
@@ -265,8 +267,11 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   return { opps: C.opps, ts: C.ts };
 }
 
-/** 감시 카드 "재시작" — 멈춘 latch를 강제 해제하고 즉시 한 틱 돈다. */
+/** 감시 카드 "재시작" — 멈춘 latch를 강제 해제하고 즉시 한 틱 돈다.
+ *  건강한 틱(10초 미만 진행 중)은 건드리지 않는다 — refresh()의 중첩 금지
+ *  원칙(이벤트 루프 기아)을 무인증 POST가 우회하면 안 된다. */
 export function kickScan(): void {
+  if (C.refreshing && Date.now() - C.refreshStartedAt < 10_000) return;
   C.refreshing = false;
   C.refreshStartedAt = 0;
   void refresh();

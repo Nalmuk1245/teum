@@ -34,7 +34,8 @@ const VENUE_SECTIONS: { key: string; title: string; match: (f: Field) => boolean
   { key: "upbit", title: "Upbit", match: (f) => f.name.startsWith("UPBIT_") },
   { key: "bithumb", title: "Bithumb", match: (f) => f.name.startsWith("BITHUMB_") },
   { key: "bybit", title: "Bybit", match: (f) => f.name.startsWith("BYBIT_") },
-  { key: "okx", title: "OKX", match: (f) => f.name.startsWith("OKX_") && !f.name.startsWith("OKX_WEB3_") },
+  // OKX_WEB3_*는 "DEX (OKX Web3)" 그룹이라 "거래소" 그룹엔 애초에 없다 — prefix만으로 충분.
+  { key: "okx", title: "OKX", match: (f) => f.name.startsWith("OKX_") },
 ];
 
 export function SettingsModal({ onClose, initialTab }: { onClose: () => void; initialTab?: SettingsTab }) {
@@ -274,10 +275,17 @@ export function SettingsModal({ onClose, initialTab }: { onClose: () => void; in
           )}
 
           {/* ── 키 탭: 거래소별 아코디언 + DEX + 개인지갑 ── */}
-          {tab === "keys" && !loading && (
+          {tab === "keys" && !loading && fields.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-mute)", display: "flex", alignItems: "center", gap: 8 }}>
+              설정을 불러오지 못했습니다.
+              <button type="button" style={BTN_GHOST} onClick={() => void load()}>다시 시도</button>
+            </div>
+          )}
+          {tab === "keys" && !loading && fields.length > 0 && (
             <>
               {VENUE_SECTIONS.map((v) => section(v.key, v.title, exchange.filter(v.match)))}
               {section("dex", "DEX (OKX Web3)", byGroup.get("DEX (OKX Web3)") ?? [])}
+              {section("security", "보안", byGroup.get("보안") ?? [])}
               {section("wallet", "개인지갑", byGroup.get("개인지갑") ?? [], (
                 <div style={{ marginBottom: 8, fontSize: 10.5, color: "var(--neg)", lineHeight: 1.5 }}>
                   이 키는 자금을 옮길 수 있습니다. 주력 지갑 말고 <b>이 앱 전용 새 지갑</b>의 키만 넣으세요.

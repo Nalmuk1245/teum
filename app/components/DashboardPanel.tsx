@@ -229,14 +229,22 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   const heatCells = (src: string) => {
     const ring = health?.srcHeat?.[src];
     if (!ring) return null;
-    const nowH = Math.floor(Date.now() / 3600_000);
+    const now = Date.now();
+    const nowH = Math.floor(now / 3600_000);
     const byH = new Map(ring.map((c) => [c.h, c]));
     return Array.from({ length: 24 }, (_, i) => {
       const h = nowH - 23 + i;
       const c = byH.get(h);
       const hourLabel = `${new Date(h * 3600_000).getHours()}시`;
       if (!c || !c.n) return { color: "var(--card-3)", title: `${hourLabel} — 기록 없음` };
-      const r = c.ok / c.n;
+      // scan은 틱 존재 자체가 신호(표본은 항상 ok=1) — ok비율이 아니라
+      // "그 시간에 틱이 얼마나 돌았나"(3초 주기 기준 커버리지)로 판정해야
+      // 30분 죽었던 시간이 초록으로 안 보인다.
+      let r = c.ok / c.n;
+      if (src === "scan") {
+        const hourMs = h === nowH ? now - h * 3600_000 : 3600_000;
+        r = Math.min(1, c.n / Math.max(1, hourMs / 3000));
+      }
       return {
         color: r >= 0.98 ? "var(--pos)" : r >= 0.8 ? "var(--amber)" : "var(--neg)",
         title: `${hourLabel} — 가동 ${(r * 100).toFixed(0)}%`,

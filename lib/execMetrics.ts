@@ -31,7 +31,7 @@ export function recordExec(m: Omit<ExecMetric, "ts">): void {
     if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true });
     try {
       if (existsSync(FILE) && statSync(FILE).size >= ROTATE_BYTES) {
-        renameSync(FILE, `${FILE}.${new Date().toISOString().slice(0, 10)}`);
+        renameSync(FILE, `${FILE}.${new Date().toISOString().slice(0, 16).replace(/:/g, "")}`);
       }
     } catch { /* best-effort */ }
     void fs.appendFile(FILE, JSON.stringify({ ts: Date.now(), ...m }) + "\n", "utf8").catch(() => {});

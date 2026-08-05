@@ -68,6 +68,10 @@ type Active = {
   belowCount: number;
   sumNet: number;
   samples: number;
+  /** 마지막으로 임계 이상이었던 시각 — 게이트용 지속시간은 이 기준.
+   *  종료 유예(CLOSE_TICKS 30초)가 durationSec에 섞이면 "30초+" 게이트가
+   *  유예만으로 항상 통과해 사실상 무력화된다 (리뷰에서 잡힌 실버그). */
+  lastAboveTs: number;
 };
 
 /** 닫혔지만 아직 파일에 안 쓴 에피소드 — 병합 대기실.
@@ -85,9 +89,13 @@ type Parked = { a: Active; closedAt: number; reason: Episode["endReason"] };
 const g = globalThis as unknown as {
   __arbEpisodes?: Map<string, Active>;
   __arbEpisodesParked?: Map<string, Parked>;
+  __arbEpBlockedSeen?: Set<string>;
 };
 g.__arbEpisodes ??= new Map();
 g.__arbEpisodesParked ??= new Map();
+// 차단 상태 기회의 코인×날짜 dedup 키 (프로세스 메모리 — 재시작하면 리셋).
+g.__arbEpBlockedSeen ??= new Set();
+const BLOCKED_SEEN = g.__arbEpBlockedSeen;
 const ACTIVE = g.__arbEpisodes;
 const PARKED = g.__arbEpisodesParked;
 
@@ -135,7 +143,8 @@ async function rotateIfLarge(): Promise<void> {
   try {
     if (!existsSync(FILE)) return;
     if (statSync(FILE).size < ROTATE_BYTES) return;
-    renameSync(FILE, `${FILE}.${new Date().toISOString().slice(0, 10)}`);
+    // 같은 날 2번째 로테이션이 첫 파일을 덮지 않게 분 단위까지 붙인다.
+    renameSync(FILE, `${FILE}.${new Date().toISOString().slice(0, 16).replace(/:/g, "")}`);
   } catch { /* best-effort */ }
 }
 
@@ -171,7 +180,21 @@ function finalize(a: Active, endReason: Episode["endReason"]): void {
   // 노이즈 컷: 하한 못 넘긴 기회는 버린다 (실행됐으면 무조건 남긴다).
   // 피크 우회 없음 — 아무리 높은 피크도 5분을 못 버티면 전송형 전략에선
   // 어차피 못 먹는 기회다.
-  if (!ep.executed && ep.durationSec < MIN_DURATION_SEC) return;
+  if (!ep.executed) {
+    // 하한 판정은 "임계 이상이었던 구간"만 — durationSec엔 종료 유예(CLOSE_TICKS)가
+    // 섞여 있어 그대로 쓰면 1틱 스파이크도 유예만으로 하한을 넘는다.
+    const aboveSec = Math.round((a.lastAboveTs - ep.startTs) / 1000);
+    if (aboveSec < MIN_DURATION_SEC) return;
+    // 입출금 중단처럼 상시 막혀 있는 코인은 같은 얘기가 하루 수백 건 쌓인다 —
+    // 차단 상태 기회는 코인당 하루 1건만 (KST 기준, hourlyHeat와 동일).
+    if (!ep.atPeak.executable) {
+      const day = new Date(ep.endTs + 9 * 3600_000).toISOString().slice(0, 10);
+      const key = `${ep.base}:${day}`;
+      if (BLOCKED_SEEN.has(key)) return;
+      for (const k of BLOCKED_SEEN) if (!k.endsWith(day)) BLOCKED_SEEN.delete(k);
+      BLOCKED_SEEN.add(key);
+    }
+  }
   void append(ep);
 }
 
@@ -231,7 +254,7 @@ export function recordEpisodes(opps: Opportunity[]): void {
         const buy = o.legs.find((l) => l.side === "buy");
         const sell = o.legs.find((l) => l.side === "sell");
         ACTIVE.set(o.id, {
-          belowCount: 0, sumNet: o.netPct, samples: 1,
+          belowCount: 0, sumNet: o.netPct, samples: 1, lastAboveTs: now,
           ep: {
             id: o.id, base: o.base, kind: o.kind,
             buyVenue: buy?.venue ?? "?", sellVenue: sell?.venue ?? "?",
@@ -254,7 +277,7 @@ export function recordEpisodes(opps: Opportunity[]): void {
         active.ep.peakTs = now;
         active.ep.atPeak = snapshotPeak(o); // 피크가 갱신될 때의 맥락이 진짜 맥락
       }
-      if (above) active.belowCount = 0;
+      if (above) { active.belowCount = 0; active.lastAboveTs = now; }
       else if (++active.belowCount >= CLOSE_TICKS) {
         ACTIVE.delete(o.id);
         park(o.id, active, "decayed");

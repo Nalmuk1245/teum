@@ -288,6 +288,7 @@ export async function runStep(
           quoteAmount: buy.quote === "KRW" ? qty * (buy.price || 0) : sizeUsd,
         });
         if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+          rec(null); // 주문 직전 중단 — okPct가 100%로 고정되지 않게 실패로 남긴다
           return guard(`매수 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
         }
       }
@@ -311,7 +312,7 @@ export async function runStep(
           // vwap은 거래소 표기 통화(KR이면 KRW) — 수량은 통화 무관, 지출은 그
           // 통화 그대로 fill에 실어 settle의 기존 환산 경로(toUsd)를 태운다.
           const simQty = (quoteAmt / est.vwap) * (1 - fee);
-          rec(r, simQty, quoteAmt);
+          rec(r, quoteAmt / est.vwap, quoteAmt); // 수수료 미포함 — 라이브 정의와 일치
           return {
             ...r, message: `${r.message} · 모의체결 VWAP ${est.vwap.toPrecision(6)} ${buy.quote} (슬립 ${est.slipPct.toFixed(3)}%)`,
             filledQty: simQty, fill: { qty: simQty, quote: quoteAmt, ccy: buy.quote },
@@ -582,6 +583,7 @@ export async function runStep(
       if (!dry) {
         const est = await estimateLegSlippage(sell.venue, sell.symbol, "sell", { baseQty: qty });
         if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+          rec(null); // 주문 직전 중단 — okPct가 100%로 고정되지 않게 실패로 남긴다
           return guard(`매도 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
         }
       }
@@ -619,7 +621,7 @@ export async function runStep(
         if (est?.filled && est.vwap && est.vwap > 0) {
           const fee = (FEES.takerPct[sell.venue] ?? 0.1) / 100;
           const proceeds = qty * est.vwap * (1 - fee);
-          rec(r, qty, proceeds);
+          rec(r, qty, qty * est.vwap); // 수수료 미포함 — 라이브 정의와 일치
           return {
             ...r, message: `${r.message} · 모의체결 VWAP ${est.vwap.toPrecision(6)} ${sell.quote} (슬립 ${est.slipPct.toFixed(3)}%)`,
             filledQty: qty, fill: { qty, quote: proceeds, ccy: sell.quote },

@@ -46,6 +46,5 @@ export async function GET() {
     total: rows.length,
     dryN: rows.filter((r) => r.dry).length,
     ack, slip,
-    recent: rows.slice(0, 12),
   });
 }
