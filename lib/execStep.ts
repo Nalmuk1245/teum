@@ -19,6 +19,7 @@ import { notifyNow } from "./telegram";
 import { recordTrade, type TimelineEntry } from "./trades";
 import { estimateLegSlippage } from "./quote";
 import { SIM, simLatency, simEtaMs, simInjectFail } from "./simEnv";
+import { recordExec } from "./execMetrics";
 import { withdrawFeeCoin, withdrawMinCoin } from "./networks";
 import { fetchUsdKrw } from "./exchanges";
 import type { StepId } from "./execPlan";
@@ -259,6 +260,16 @@ export async function runStep(
   switch (stepId) {
     case "buy": {
       if (!buy) return guard("매수 다리 없음");
+      // 실행 품질 계측 — ack 시간·슬립을 주문마다 남긴다 (실패해도 실행은 계속).
+      const t0 = Date.now();
+      const rec = (r2: { ok: boolean } | null, fillQty?: number, fillQuote?: number) => {
+        try {
+          const fillPx = fillQty && fillQuote ? fillQuote / fillQty : undefined;
+          const refPx = buy.price || undefined;
+          const slipPct = refPx && fillPx ? Math.round(((fillPx - refPx) / refPx) * 100 * 1000) / 1000 : undefined;
+          recordExec({ op: "buy", venue: buy.venue, base: opp.base, kind: opp.kind, dry, ok: !!r2?.ok, ackMs: Date.now() - t0, refPx, fillPx, slipPct });
+        } catch { /* */ }
+      };
       // (킬 스위치·스냅샷 신선도·리스크 한도는 위 프리플라이트에서 처리)
       // 최소 출금 수량 사전 게이트 — 부분체결로 수량이 min 미달이면 출금
       // 단계에서 터지고 롤백 덤프로 이어진다. 진입 전에 막는다.
@@ -300,6 +311,7 @@ export async function runStep(
           // vwap은 거래소 표기 통화(KR이면 KRW) — 수량은 통화 무관, 지출은 그
           // 통화 그대로 fill에 실어 settle의 기존 환산 경로(toUsd)를 태운다.
           const simQty = (quoteAmt / est.vwap) * (1 - fee);
+          rec(r, simQty, quoteAmt);
           return {
             ...r, message: `${r.message} · 모의체결 VWAP ${est.vwap.toPrecision(6)} ${buy.quote} (슬립 ${est.slipPct.toFixed(3)}%)`,
             filledQty: simQty, fill: { qty: simQty, quote: quoteAmt, ccy: buy.quote },
@@ -317,6 +329,7 @@ export async function runStep(
           ambiguous: true, // 주문은 실제로 났다 → 롤백·자동재시도 금지
         };
       }
+      rec(r, r.filledQty, r.quoteFilled);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: buy.quote } };
     }
     case "approve": {
@@ -385,7 +398,9 @@ export async function runStep(
           return guard(`선물 가용 마진 부족 ($${free.toFixed(0)} < 필요 $${(notional * 0.6).toFixed(0)}) — 청산 위험, 헷지 차단`);
         }
       }
+      const tH = Date.now();
       const r = await binancePerp(opp.base, "SHORT", hedgeQty);
+      recordExec({ op: "hedge", venue: "binance", base: opp.base, kind: opp.kind, dry, ok: r.ok, ackMs: Date.now() - tH });
       // A hedge that "succeeded" with no fill is the worst case: statuses.hedge
       // becomes "done" (so the run reports an open hedge that doesn't exist and
       // permanently inflates the exposure cap), eng.hedgeQty stays unset so
@@ -467,7 +482,9 @@ export async function runStep(
         : buy?.venue === "bithumb" ? bithumbWithdraw(opp.base, dest, qty, tag ?? undefined)
         : null;
       if (!call) return unwired(`${buy?.venue} 출금`);
+      const tW = Date.now();
       const r = await call;
+      recordExec({ op: "withdraw", venue: buy?.venue ?? "?", base: opp.base, kind: opp.kind, dry, ok: r.ok, ackMs: Date.now() - tW });
       // Attach the withdrawal's on-chain tx: DRY → a simulated hash chip so the
       // step shows a tx like transfer/deposit; LIVE → the exchange withdrawal
       // broadcasts on-chain after acceptance, so briefly poll history for the
@@ -552,6 +569,16 @@ export async function runStep(
     }
     case "sell": {
       if (!sell) return guard("매도 다리 없음");
+      const t0 = Date.now();
+      const rec = (r2: { ok: boolean } | null, fillQty?: number, fillQuote?: number) => {
+        try {
+          const fillPx = fillQty && fillQuote ? fillQuote / fillQty : undefined;
+          const refPx = sell.price || undefined;
+          // 매도는 체결가가 스냅샷보다 낮으면 불리 → 부호 반전
+          const slipPct = refPx && fillPx ? Math.round(((refPx - fillPx) / refPx) * 100 * 1000) / 1000 : undefined;
+          recordExec({ op: "sell", venue: sell.venue, base: opp.base, kind: opp.kind, dry, ok: !!r2?.ok, ackMs: Date.now() - t0, refPx, fillPx, slipPct });
+        } catch { /* */ }
+      };
       if (!dry) {
         const est = await estimateLegSlippage(sell.venue, sell.symbol, "sell", { baseQty: qty });
         if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
@@ -592,12 +619,14 @@ export async function runStep(
         if (est?.filled && est.vwap && est.vwap > 0) {
           const fee = (FEES.takerPct[sell.venue] ?? 0.1) / 100;
           const proceeds = qty * est.vwap * (1 - fee);
+          rec(r, qty, proceeds);
           return {
             ...r, message: `${r.message} · 모의체결 VWAP ${est.vwap.toPrecision(6)} ${sell.quote} (슬립 ${est.slipPct.toFixed(3)}%)`,
             filledQty: qty, fill: { qty, quote: proceeds, ccy: sell.quote },
           };
         }
       }
+      rec(r, r.filledQty, r.quoteFilled);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: sell.quote } };
     }
     case "close": {
@@ -605,7 +634,9 @@ export async function runStep(
       // deposit-credited amount) can exceed the position → reduceOnly rejects →
       // the short stays open after the spot leg is already sold = naked short.
       const closeQty = opts.hedgeQty && opts.hedgeQty > 0 ? opts.hedgeQty : qty;
+      const tC = Date.now();
       const r = await binancePerp(opp.base, "CLOSE", closeQty);
+      recordExec({ op: "close", venue: "binance", base: opp.base, kind: opp.kind, dry, ok: r.ok, ackMs: Date.now() - tC });
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: "USDT" } };
     }
     case "settle": {

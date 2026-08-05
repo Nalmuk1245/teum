@@ -31,6 +31,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <SectionLabel>실행 현황</SectionLabel>
         <PnlCard />
+        <ExecQualityCard />
         <SectionLabel>실행 도구</SectionLabel>
         <SellTriggerCard />
         <GatesCard />
@@ -61,6 +62,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
           <SectionLabel>실행 현황</SectionLabel>
           {runs.length === 0 && runsBlock}
           <PnlCard />
+          <ExecQualityCard />
         </div>
         {/* ③ 실행 도구 — 자동매도·입출금 게이트·핫월렛 */}
         <div style={col}>
@@ -810,15 +812,17 @@ function PnlViz({ trades }: { trades: TradeRec[] }) {
     return real.map((t) => (acc += t.realizedPnlUsd!));
   }, [trades]);
 
-  // 전략별 분해 — 실거래 합계 (없으면 모의 포함 표기).
+  // 전략별 분해 — 실거래 합계 + 탐지→실현 누수 (없으면 모의 포함 표기).
   const byKind = useMemo(() => {
-    const m = new Map<string, { pnl: number; n: number; real: boolean }>();
+    const m = new Map<string, { pnl: number; n: number; real: boolean; leakSum: number; leakN: number }>();
     for (const t of trades) {
       const real = !t.dryRun && t.realizedPnlUsd != null;
       const k = t.kind === "kimchi" ? kindLabel(t.kind, t.route?.split(" → ")[0]) : t.kind === "cross-cex" ? "크로스" : t.kind === "listing" ? "상장" : t.kind;
-      const e = m.get(k) ?? { pnl: 0, n: 0, real: false };
+      const e = m.get(k) ?? { pnl: 0, n: 0, real: false, leakSum: 0, leakN: 0 };
       e.n++;
       if (real) { e.pnl += t.realizedPnlUsd!; e.real = true; }
+      // 누수 = 실현 − 탐지 (모의 포함 — 페이퍼도 같은 정의라 실전 전환 후 비교 가능)
+      if (t.realizedNetPct != null && t.detectedNetPct != null) { e.leakSum += t.realizedNetPct - t.detectedNetPct; e.leakN++; }
       m.set(k, e);
     }
     return [...m.entries()];
@@ -859,7 +863,7 @@ function PnlViz({ trades }: { trades: TradeRec[] }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           {byKind.map(([k, v]) => (
             <span key={k} className="tnum" style={{ fontSize: 10.5, border: "1px solid var(--border)", borderRadius: 9, padding: "3px 9px", color: "var(--text-dim)" }}>
-              {k} {v.n}건{v.real ? <b style={{ marginLeft: 5, color: v.pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl).toFixed(2)}</b> : <span style={{ marginLeft: 5, color: "var(--text-mute)" }}>모의</span>}
+              {k} {v.n}건{v.real ? <b style={{ marginLeft: 5, color: v.pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl).toFixed(2)}</b> : <span style={{ marginLeft: 5, color: "var(--text-mute)" }}>모의</span>}{v.leakN > 0 && <span title="실현 − 탐지 순수익 평균 (음수 = 탐지보다 실현이 나쁨)" style={{ marginLeft: 5, color: v.leakSum / v.leakN < -0.1 ? "var(--amber)" : "var(--text-mute)" }}>누수 {(v.leakSum / v.leakN).toFixed(2)}%p</span>}
             </span>
           ))}
         </div>
@@ -1030,6 +1034,66 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
         </div>
         );
       })}
+    </div>
+  );
+}
+
+
+// ── 실행 품질 — 거래소별 Order-to-Ack · 슬리피지 (DRY 포함: 페이퍼 트레이딩 데이터) ──
+// 페이퍼와 실전이 같은 스키마로 쌓여, 실전 전환 후 "모의가 얼마나 정확했나"를
+// 같은 표에서 비교한다. 데이터는 execStep이 주문마다 남긴다 (exec-metrics.jsonl).
+export function ExecQualityCard() {
+  type Ack = { venue: string; op: string; n: number; dryN: number; okPct: number; p50Ms: number | null; p95Ms: number | null };
+  type Slip = { venue: string; n: number; meanPct: number; p90Pct: number; worstPct: number };
+  const [data, setData] = useState<{ total: number; dryN: number; ack: Ack[]; slip: Slip[] } | null>(null);
+  useEffect(() => {
+    const load = () => fetch("/api/exec-metrics", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
+    void load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const ms = (v: number | null) => (v == null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`);
+  const OP_KO: Record<string, string> = { buy: "매수", sell: "매도", hedge: "헷지", close: "청산", withdraw: "출금" };
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>실행 품질</span>
+        {data && data.total > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{data.total}주문{data.dryN > 0 ? ` · 모의 ${data.dryN}` : ""}</span>}
+      </div>
+      {!data || data.total === 0 ? (
+        <div style={{ color: "var(--text-mute)", fontSize: 12 }}>기록 없음 — 주문(모의 포함)이 나가면 Order-to-Ack·슬리피지가 여기 쌓입니다</div>
+      ) : (
+        <>
+          <div style={{ ...({ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" } as React.CSSProperties), marginBottom: 4 }}>Order-to-Ack (거래소 × 단계)</div>
+          <div style={{ marginBottom: 10 }}>
+            {data.ack.slice(0, 8).map((a) => (
+              <div key={`${a.venue}:${a.op}`} className="tnum" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11.5 }}>
+                <span style={{ color: "var(--text-dim)", minWidth: 0 }}>{vlabel(a.venue)} {OP_KO[a.op] ?? a.op}</span>
+                {a.okPct < 100 && <span style={{ color: "var(--amber)", fontSize: 10 }}>성공 {a.okPct}%</span>}
+                <span style={{ flex: 1 }} />
+                <span style={{ color: "var(--text-mute)", fontSize: 10.5 }}>{a.n}건</span>
+                <span>p50 <b>{ms(a.p50Ms)}</b></span>
+                <span style={{ color: "var(--text-dim)" }}>p95 {ms(a.p95Ms)}</span>
+              </div>
+            ))}
+          </div>
+          {data.slip.length > 0 && (
+            <>
+              <div style={{ ...({ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" } as React.CSSProperties), marginBottom: 4 }}>슬리피지 (스냅샷가 대비 · +가 불리)</div>
+              {data.slip.map((sl) => (
+                <div key={sl.venue} className="tnum" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11.5 }}>
+                  <span style={{ color: "var(--text-dim)" }}>{vlabel(sl.venue)}</span>
+                  <span style={{ flex: 1 }} />
+                  <span style={{ color: "var(--text-mute)", fontSize: 10.5 }}>{sl.n}건</span>
+                  <span>평균 <b style={{ color: Math.abs(sl.meanPct) > 0.3 ? "var(--amber)" : "var(--text)" }}>{sl.meanPct >= 0 ? "+" : ""}{sl.meanPct.toFixed(2)}%</b></span>
+                  <span style={{ color: "var(--text-dim)" }}>p90 {sl.p90Pct >= 0 ? "+" : ""}{sl.p90Pct.toFixed(2)}%</span>
+                  <span style={{ color: Math.abs(sl.worstPct) > 1 ? "var(--neg)" : "var(--text-mute)" }}>최악 {sl.worstPct >= 0 ? "+" : ""}{sl.worstPct.toFixed(2)}%</span>
+                </div>
+              ))}
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
