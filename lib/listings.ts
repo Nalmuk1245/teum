@@ -419,6 +419,7 @@ async function pollAnnouncements() {
     // Log the DETECTION immediately — before any downstream work — so the
     // timestamp is the moment we knew, not the moment we finished reacting.
     logDetect([...tickers].join(","), detect, `notice=${it.id} "${it.title.slice(0, 40)}"`);
+    if (detect.publishLagMs != null) recordAnnLag(detect.publishLagMs);
     for (const t of tickers) void registerPlay(t, "upbit", it.title, true, { opensAt: titleOpensAt, detect });
     if (titleOpensAt == null) {
       const noticeId = it.id;
@@ -754,12 +755,26 @@ export function recordListingSell(base: string, sell: ListingBuy): void {
   saveSection("listingPlays", [...L.plays.entries()]);
 }
 
+// 공지 감지 지연 실측 (발행 → 우리가 본 시각, ms) — 최근 50건 롤링.
+// 이 앱의 모트가 "빨리 잡는 것"인데, 그 지연이 숫자로 보이는 곳이 없었다.
+function recordAnnLag(ms: number): void {
+  try {
+    const a = loadSection<number[]>("annLagMs") ?? [];
+    a.push(Math.round(ms));
+    while (a.length > 50) a.shift();
+    saveSection("annLagMs", a);
+  } catch { /* stats must never break the watch */ }
+}
+
 /** Watcher-source health for the listing dashboard. */
 export function watchStatus() {
   const ago = (t: number) => (t ? Math.round((Date.now() - t) / 1000) : null);
+  const lags = loadSection<number[]>("annLagMs") ?? [];
+  const annLagP50Ms = lags.length ? [...lags].sort((a, b) => a - b)[Math.floor(lags.length / 2)] : null;
   return {
     annOkAgoSec: ago(L.srcOk.ann),
     annBlocked: L.srcOk.annBlocked,
+    annLagP50Ms,
     mktOkAgoSec: ago(L.srcOk.mkt),
     tgConfigured: !!process.env.LISTING_TG_CHANNEL,
     tgChannel: process.env.LISTING_TG_CHANNEL ?? null,

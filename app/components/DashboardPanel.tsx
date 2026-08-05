@@ -90,8 +90,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   const [trades, setTrades] = useState<{ base: string; kind: string; route: string; realizedPnlUsd: number | null; dryRun: boolean; ts: number }[]>([]);
   const [listWatch, setListWatch] = useState<{ plays: { base: string; venue: string; opensAt?: number; opened: boolean }[]; watching: boolean } | null>(null);
   // 감시 상태 카드 데이터 — 전부 기존 API에서 읽는다.
-  const [health, setHealth] = useState<{ ok: boolean; scanAgeSec: number | null; killed: boolean; dryRun: boolean; loopLagMs?: { worstMs: number; worstAgoSec: number | null } } | null>(null);
-  const [watch, setWatch] = useState<{ annOkAgoSec: number | null; annBlocked: boolean; mktOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
+  const [health, setHealth] = useState<{ ok: boolean; scanAgeSec: number | null; killed: boolean; dryRun: boolean; loopLagMs?: { worstMs: number; worstAgoSec: number | null }; srcHeat?: Record<string, { h: number; ok: number; n: number }[]> } | null>(null);
+  const [watch, setWatch] = useState<{ annOkAgoSec: number | null; annBlocked: boolean; annLagP50Ms?: number | null; mktOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
   const [gatesBlocked, setGatesBlocked] = useState<number | null>(null);
   /** 키가 없어 일부 거래소 상태를 못 본 상태 — "중단 없음"이라고 단정할 수 없다. */
   const [gatesPartial, setGatesPartial] = useState(false);
@@ -185,7 +185,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // 그 침묵을 깨는 카드다. 상태는 3단계: ok(정상) / warn(고장·조치 필요) / off(미설정·대기).
   type SrcState = "ok" | "warn" | "off";
   type SrcSec = "감지 소스" | "시스템";
-  type SrcRow = { label: string; sec: SrcSec; state: SrcState; text: string; action?: { label: string; onClick: () => void }; title?: string };
+  type SrcRow = { label: string; sec: SrcSec; state: SrcState; text: string; action?: { label: string; onClick: () => void }; title?: string; heatKey?: string };
   // 스캔 재시작 — 멈춘 루프의 latch를 서버에서 강제 해제. 결과는 다음 health 폴링이 보여준다.
   const [kicking, setKicking] = useState(false);
   const kickScan = async () => {
@@ -197,33 +197,52 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
     const rows: SrcRow[] = [];
     const agoTxt = (s: number | null) => (s == null ? "수신 없음" : s < 90 ? `${s}초 전` : `${Math.round(s / 60)}분 전`);
     rows.push(!health
-      ? { label: "스캔", sec: "시스템", state: "off", text: "확인 중" }
+      ? { heatKey: "scan", label: "스캔", sec: "시스템", state: "off", text: "확인 중" }
       : health.scanAgeSec == null
         // 방금 기동해 첫 스캔이 아직 안 온 상태 — 고장이 아니다.
-        ? { label: "스캔", sec: "시스템", state: "off", text: "첫 스캔 대기" }
+        ? { heatKey: "scan", label: "스캔", sec: "시스템", state: "off", text: "첫 스캔 대기" }
         : health.scanAgeSec < 60
-          ? { label: "스캔", sec: "시스템", state: "ok", text: `${health.scanAgeSec}초 전` }
-          : { label: "스캔", sec: "시스템", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)}`, action: { label: kicking ? "재시작 중…" : "재시작", onClick: () => void kickScan() } });
-    rows.push(!watch ? { label: "업비트 공지", sec: "감지 소스", state: "off", text: "확인 중" }
-      : watch.annBlocked ? { label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)", title: "업비트 공지 API는 KR IP에서만 응답합니다 — KR 박스 이전 시 해소" }
-      : watch.annOkAgoSec != null ? { label: "업비트 공지", sec: "감지 소스", state: "ok", text: agoTxt(watch.annOkAgoSec) }
-      : { label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" });
-    rows.push(!watch ? { label: "마켓 diff", sec: "감지 소스", state: "off", text: "확인 중" }
-      : watch.mktOkAgoSec != null && watch.mktOkAgoSec < 60 ? { label: "마켓 diff", sec: "감지 소스", state: "ok", text: agoTxt(watch.mktOkAgoSec) }
-      : watch.mktOkAgoSec != null ? { label: "마켓 diff", sec: "감지 소스", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
-      : { label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" });
-    rows.push(!watch ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "확인 중" }
-      : !watch.tgConfigured ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정", action: onOpenSettings ? { label: "설정", onClick: () => onOpenSettings("alerts") } : undefined }
-      : watch.tgOkAgoSec != null ? { label: "텔레그램 감지", sec: "감지 소스", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
-      : { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" });
+          ? { heatKey: "scan", label: "스캔", sec: "시스템", state: "ok", text: `${health.scanAgeSec}초 전` }
+          : { heatKey: "scan", label: "스캔", sec: "시스템", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)}`, action: { label: kicking ? "재시작 중…" : "재시작", onClick: () => void kickScan() } });
+    rows.push(!watch ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "확인 중" }
+      : watch.annBlocked ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)", title: "업비트 공지 API는 KR IP에서만 응답합니다 — KR 박스 이전 시 해소" }
+      : watch.annOkAgoSec != null ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "ok", text: `${agoTxt(watch.annOkAgoSec)}${watch.annLagP50Ms != null ? ` · 감지 p50 ${(watch.annLagP50Ms / 1000).toFixed(1)}s` : ""}` }
+      : { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" });
+    rows.push(!watch ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "확인 중" }
+      : watch.mktOkAgoSec != null && watch.mktOkAgoSec < 60 ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "ok", text: agoTxt(watch.mktOkAgoSec) }
+      : watch.mktOkAgoSec != null ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
+      : { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" });
+    rows.push(!watch ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "확인 중" }
+      : !watch.tgConfigured ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정", action: onOpenSettings ? { label: "설정", onClick: () => onOpenSettings("alerts") } : undefined }
+      : watch.tgOkAgoSec != null ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
+      : { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" });
     const lag = health?.loopLagMs;
-    rows.push(!lag ? { label: "프로세스", sec: "시스템", state: "off", text: "확인 중" }
+    rows.push(!lag ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: "off", text: "확인 중" }
       : lag.worstMs >= 400
-        ? { label: "프로세스", sec: "시스템", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
-        : { label: "프로세스", sec: "시스템", state: "ok", text: "정상 (10분 내 멈춤 없음)" });
+        ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
+        : { heatKey: "proc", label: "프로세스", sec: "시스템", state: "ok", text: "정상 (10분 내 멈춤 없음)" });
     // 입출금 중단은 "우리 감시가 고장났나"가 아니라 시장 상태라 리스크 카드로 옮겼다.
     return rows;
   })();
+  // 24h 업타임 스트립 셀 — 시간당 ok비율을 색으로, 표본 없는 시간은 빈 칸
+  // (스캔이 죽어 있던 시간도 빈 칸으로 남는다 — 그것도 정보다).
+  const heatCells = (src: string) => {
+    const ring = health?.srcHeat?.[src];
+    if (!ring) return null;
+    const nowH = Math.floor(Date.now() / 3600_000);
+    const byH = new Map(ring.map((c) => [c.h, c]));
+    return Array.from({ length: 24 }, (_, i) => {
+      const h = nowH - 23 + i;
+      const c = byH.get(h);
+      const hourLabel = `${new Date(h * 3600_000).getHours()}시`;
+      if (!c || !c.n) return { color: "var(--card-3)", title: `${hourLabel} — 기록 없음` };
+      const r = c.ok / c.n;
+      return {
+        color: r >= 0.98 ? "var(--pos)" : r >= 0.8 ? "var(--amber)" : "var(--neg)",
+        title: `${hourLabel} — 가동 ${(r * 100).toFixed(0)}%`,
+      };
+    });
+  };
   const warnCount = srcRows.filter((r) => r.state === "warn").length;
   const unknownCount = srcRows.filter((r) => r.state === "off").length;
 
@@ -394,28 +413,41 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
             {(["감지 소스", "시스템"] as const).map((sec) => (
               <div key={sec}>
                 <div style={{ ...CAP, padding: "8px 0 2px" }}>{sec}</div>
-                {srcRows.filter((r) => r.sec === sec).map((r) => (
-                  <div key={r.label} title={r.title} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
-                    <span style={{
-                      width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
-                      background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
-                    }} />
-                    <span style={{ color: "var(--text-dim)" }}>{r.label}</span>
-                    <span style={{ flex: 1 }} />
-                    <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)", textAlign: "right" }}>
-                      {r.text}
-                    </span>
-                    {r.action && (
-                      <button
-                        type="button"
-                        onClick={r.action.onClick}
-                        style={{ border: "1px solid var(--border-strong)", borderRadius: 999, padding: "2px 9px", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 700, cursor: "pointer", flex: "0 0 auto" }}
-                      >
-                        {r.action.label}
-                      </button>
-                    )}
-                  </div>
-                ))}
+                {srcRows.filter((r) => r.sec === sec).map((r) => {
+                  const cells = r.heatKey ? heatCells(r.heatKey) : null;
+                  return (
+                    <div key={r.label} title={r.title} style={{ padding: "7px 0 6px", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
+                          background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
+                        }} />
+                        <span style={{ color: "var(--text-dim)" }}>{r.label}</span>
+                        <span style={{ flex: 1 }} />
+                        <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)", textAlign: "right" }}>
+                          {r.text}
+                        </span>
+                        {r.action && (
+                          <button
+                            type="button"
+                            onClick={r.action.onClick}
+                            style={{ border: "1px solid var(--border-strong)", borderRadius: 999, padding: "2px 9px", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 700, cursor: "pointer", flex: "0 0 auto" }}
+                          >
+                            {r.action.label}
+                          </button>
+                        )}
+                      </div>
+                      {/* 24h 업타임 스트립 — "지금 초록"이 아니라 "오늘 얼마나 초록이었나" */}
+                      {cells && (
+                        <div style={{ display: "flex", gap: 1.5, marginTop: 5, marginLeft: 18 }}>
+                          {cells.map((c, i) => (
+                            <span key={i} title={c.title} style={{ flex: 1, height: 4, borderRadius: 2, background: c.color }} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>

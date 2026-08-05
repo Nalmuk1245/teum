@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getScan } from "@/lib/scanCache";
+import { getScan, srcHeat } from "@/lib/scanCache";
 import { isKilled } from "@/lib/killswitch";
 import { CONFIG } from "@/lib/config";
 import { routeDbStats } from "@/lib/tokenRoutes";
@@ -34,6 +34,7 @@ export async function GET() {
         // 이벤트 루프 지연. worstMs는 최근 10분 안의 최악 멈춤이라 감시창(5초)
         // 리셋과 무관하게 남는다 — 이게 "API가 느리다"와 "서버가 멈췄다"를 가른다.
         loopLagMs: loopLag(),
+        srcHeat: srcHeat(),
       },
       { status: healthy ? 200 : 503 },
     );

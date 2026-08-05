@@ -47,9 +47,9 @@ if (!gp.__arbCrashHook) {
 }
 import type { Opportunity } from "./types";
 import { notify, notifyNow, telegramConfigured } from "./telegram";
-import { startListingWatch } from "./listings";
+import { startListingWatch, watchStatus } from "./listings";
 import { startWatchdog } from "./watchdog";
-import "./loopLag"; // 프로세스 멈춤 상시 감시 (import만으로 시작)
+import { loopLag } from "./loopLag"; // 프로세스 멈춤 상시 감시 (import만으로 시작)
 import { loadSection, saveSection } from "./persist";
 
 // 3s: a sweep costs ~0.8-1.2s once every venue fetch is timeout-bounded and the
@@ -119,6 +119,7 @@ async function refresh(): Promise<void> {
       if (startedAt >= C.ts) {
         if (telegramConfigured()) void alertOnScan(next);
         recordHourlyHeat(next);
+        recordSrcHeat();
         C.opps = next;
         // 기회 에피소드 기록 (복기용) — 임계 위 구간을 열고 닫는다. throw 안 함.
         import("./episodes").then((m) => m.recordEpisodes(next)).catch(() => {});
@@ -159,6 +160,41 @@ function recordHourlyHeat(opps: Opportunity[]) {
 }
 export function hourlyHeat(): HourHeat[] {
   return loadSection<HourHeat[]>("hourlyHeat") ?? Array.from({ length: 24 }, () => ({ scans: 0, open: 0 }));
+}
+
+// ── 감시 소스별 시간당 가동률 (24h 링) — 감시 카드의 미니 업타임 스트립 ────────
+// "지금 초록"만 보이면 오늘 10번 끊긴 소스도 멀쩡해 보인다. 틱마다 소스 상태를
+// 카드와 같은 기준으로 판정해 시간당 [ok, 표본수]로 누적한다. 루프 자체가 죽어
+// 있던 시간은 표본이 없어 빈 칸으로 남는다 — 그것도 정보다.
+export type SrcHeatCell = { h: number; ok: number; n: number }; // h = epoch-hour
+export type SrcHeatMap = Record<string, SrcHeatCell[]>;
+function recordSrcHeat(): void {
+  try {
+    const w = watchStatus();
+    const lag = loopLag();
+    const h = Math.floor(Date.now() / 3600_000);
+    const verdicts: Record<string, boolean | null> = {
+      scan: true, // 성공한 틱에서만 불린다 — 표본 없음 = 스캔이 죽어 있었음
+      ann: w.annBlocked ? false : w.annOkAgoSec != null && w.annOkAgoSec < 120,
+      mkt: w.mktOkAgoSec != null && w.mktOkAgoSec < 60,
+      tg: w.tgConfigured ? w.tgOkAgoSec != null && w.tgOkAgoSec < 600 : null, // 미설정은 표본 제외
+      proc: lag ? lag.worstMs < 400 : null,
+    };
+    const heat = loadSection<SrcHeatMap>("srcHeat") ?? {};
+    for (const [src, ok] of Object.entries(verdicts)) {
+      if (ok == null) continue;
+      const arr = (heat[src] ??= []);
+      let cell = arr[arr.length - 1];
+      if (!cell || cell.h !== h) { cell = { h, ok: 0, n: 0 }; arr.push(cell); }
+      cell.n++;
+      if (ok) cell.ok++;
+      while (arr.length > 24) arr.shift();
+    }
+    saveSection("srcHeat", heat); // 30s 디바운스 저장 (hourlyHeat와 동일 경로)
+  } catch { /* stats must never break the scan */ }
+}
+export function srcHeat(): SrcHeatMap {
+  return loadSection<SrcHeatMap>("srcHeat") ?? {};
 }
 
 // Phone alerts from the server loop — fires whether or not the site is open.
