@@ -3,7 +3,7 @@
 import React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
-import { pct, usd, price } from "@/lib/format";
+import { pct, usd, price, dur } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
@@ -272,7 +272,7 @@ export function PersistChip({ p }: { p?: Opportunity["persistence"] }) {
   if (!p || p.samples < 2) return null;
   const held = p.heldSec;
   const sustained = held >= 24;
-  const label = held >= 60 ? `${Math.floor(held / 60)}m${held % 60 ? ` ${held % 60}s` : ""}` : `${held}s`;
+  const label = dur(held);
   const tone = held <= 0 ? "var(--text-mute)" : sustained ? "var(--pos)" : "var(--amber)";
   return (
     <span

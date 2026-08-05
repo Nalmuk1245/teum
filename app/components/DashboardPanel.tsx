@@ -7,7 +7,7 @@
 import React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Portfolio } from "@/lib/types";
-import { pct, usd } from "@/lib/format";
+import { pct, usd, dur } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
 import { vlabel, Spark, oppKindLabel, kindLabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
@@ -325,7 +325,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
                 {/* 지속 열은 모바일에서 접는다 — 3열 템플릿에 자식이 4개면
                     마지막이 다음 줄로 밀려 레이아웃이 어긋난다. */}
                 {!mobile && (
-                  <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? `${Math.floor(held / 60)}m ${held % 60}s` : "신규"}</span>
+                  <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? dur(held) : "신규"}</span>
                 )}
                 <span
                   onClick={() => o.executable && onExecute(o)}
@@ -410,7 +410,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
         <Kpi
           label="최고 순수익"
           value={bestNet != null ? pct(bestNet) : "—"}
-          sub={best ? `${best.base} · ${best.kind === "kimchi" ? oppKindLabel(best) : best.kind}${best.persistence?.heldSec ? ` · 지속 ${Math.round(best.persistence.heldSec / 60)}분` : ""}` : "스캔 중"}
+          sub={best ? `${best.base} · ${best.kind === "kimchi" ? oppKindLabel(best) : best.kind}${best.persistence?.heldSec ? ` · 지속 ${dur(best.persistence.heldSec)}` : ""}` : "스캔 중"}
           series={hist.current.best}
           compact={mobile}
           tone={bestNet != null && bestNet > 0 ? "var(--pos)" : "var(--neg)"}

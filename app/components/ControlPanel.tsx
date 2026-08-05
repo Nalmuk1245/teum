@@ -3,7 +3,7 @@
 import React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Opportunity, Quote, StrategyKind } from "@/lib/types";
-import { pct, usd, price } from "@/lib/format";
+import { pct, usd, price, dur } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, authHeaders, type RunView } from "@/lib/runStore";
@@ -378,7 +378,7 @@ export function EpisodeCard() {
     const id = setInterval(load, 30_000);
     return () => clearInterval(id);
   }, [q]);
-  const dur = (sec: number) => sec >= 3600 ? `${Math.round(sec / 360) / 10}시간` : sec >= 90 ? `${Math.round(sec / 60)}분` : `${sec}초`;
+
   const when = (ts: number) => {
     const m = Math.round((Date.now() - ts) / 60_000);
     return m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : new Date(ts).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
@@ -931,7 +931,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
                 {t.status && t.status !== "done" && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>{t.status}</span>}
               </span>
               <span style={{ display: "block", fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
-                {t.route} · {usd(t.sizeUsd)}{totalSec > 0 ? ` · ${totalSec >= 90 ? `${Math.round(totalSec / 60)}분` : `${totalSec}초`} 소요` : ""} · {agoMin < 60 ? `${agoMin}분 전` : agoMin < 1440 ? `${Math.round(agoMin / 60)}시간 전` : `${Math.round(agoMin / 1440)}일 전`}
+                {t.route} · {usd(t.sizeUsd)}{totalSec > 0 ? ` · ${dur(totalSec)} 소요` : ""} · {agoMin < 60 ? `${agoMin}분 전` : agoMin < 1440 ? `${Math.round(agoMin / 60)}시간 전` : `${Math.round(agoMin / 1440)}일 전`}
               </span>
             </span>
             <span style={{ textAlign: "right" }}>
@@ -988,9 +988,9 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
                           {e.kind === "rollback" && <span style={{ color: "var(--amber)", marginLeft: 4 }}>롤백</span>}
                           {e.message && <span style={{ color: "var(--text-mute)", marginLeft: 5 }}>{e.message}</span>}
                           {/* 단계 사이의 빈 시간 — 승인 대기나 폴링 간격이 여기 드러난다 */}
-                          {gapSec >= 5 && <span style={{ color: "var(--text-mute)", marginLeft: 5 }}>(+{gapSec >= 90 ? `${Math.round(gapSec / 60)}분` : `${gapSec}초`} 유휴)</span>}
+                          {gapSec >= 5 && <span style={{ color: "var(--text-mute)", marginLeft: 5 }}>(+{dur(gapSec)} 유휴)</span>}
                         </span>
-                        <span className="tnum" style={{ color: "var(--text-mute)" }}>{e.sec >= 90 ? `${Math.round(e.sec / 60)}분` : `${e.sec}초`}</span>
+                        <span className="tnum" style={{ color: "var(--text-mute)" }}>{dur(e.sec)}</span>
                       </div>
                     );
                   })}
