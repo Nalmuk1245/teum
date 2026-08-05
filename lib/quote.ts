@@ -33,10 +33,11 @@ async function cachedBook(
   venue: Venue,
   symbol: string,
   fresh: boolean,
+  maxAgeMs = QUOTE_TTL_MS,
 ): Promise<Book> {
   const key = `${venue}:${symbol}`;
   const hit = QC.books.get(key);
-  if (!fresh && hit && Date.now() - hit.ts < QUOTE_TTL_MS) return hit.v;
+  if (!fresh && hit && Date.now() - hit.ts < maxAgeMs) return hit.v;
   const v = await fetcher(symbol);
   if (v.bids.length || v.asks.length) QC.books.set(key, { ts: Date.now(), v });
   return v;
@@ -48,6 +49,42 @@ async function cachedFx(venue: Venue, fresh: boolean): Promise<number | null> {
   const v = await fetchUsdKrw(venue);
   if (v != null) QC.fx.set(venue, { ts: Date.now(), v });
   return v;
+}
+
+// ── Book prewarm — 클릭→견적을 캐시 히트로 만든다 ────────────────────────────
+// 스캔 상위 기회의 양쪽 오더북(+KR FX)을 TTL보다 짧은 주기로 미리 채워, 실행
+// 모달의 첫 견적이 REST 왕복(다리당 수백 ms) 없이 뜨게 한다. 상장 순간엔 이
+// 지연이 곧 손실이다. maxAge를 주기보다 살짝 짧게 줘서 틱마다 실제로 갱신된다
+// (상위 5기회 ≤10심볼 / 2초 — 어느 거래소 공개 한도에도 한참 못 미친다).
+export const PREWARM_MS = 2000;
+const PREWARM_TOP = 5;
+
+export async function prewarmBooks(opps: Opportunity[]): Promise<void> {
+  try {
+    const top = opps
+      .filter((o) => !o.mock && o.kind !== "funding-basis" && o.netPct > 0)
+      .sort((a, b) => b.netPct - a.netPct)
+      .slice(0, PREWARM_TOP);
+    const jobs: Promise<unknown>[] = [];
+    const seen = new Set<string>();
+    for (const o of top) {
+      for (const leg of o.legs) {
+        if (leg.venue === "dex") continue;
+        const ad = getAdapter(leg.venue);
+        if (!ad?.fetchOrderBook) continue;
+        const key = `${leg.venue}:${leg.symbol}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          jobs.push(cachedBook(ad.fetchOrderBook.bind(ad), leg.venue, leg.symbol, false, PREWARM_MS - 500).catch(() => undefined));
+        }
+        if (leg.quote === "KRW" && !seen.has(`fx:${leg.venue}`)) {
+          seen.add(`fx:${leg.venue}`);
+          jobs.push(cachedFx(leg.venue, false).catch(() => undefined));
+        }
+      }
+    }
+    await Promise.all(jobs);
+  } catch { /* 프리웜 실패가 다른 것을 깨면 안 된다 — 다음 틱이 다시 채운다 */ }
 }
 
 const toUsd = (price: number, quote: string, usdKrw: number) =>

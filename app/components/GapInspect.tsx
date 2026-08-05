@@ -146,6 +146,17 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
   onClose: () => void;
 }) {
   const km = KIND_META[opp.kind];
+  // 견적 프리페치 — 검사창을 열었다는 건 곧 실행 모달을 열 확률이 높다는 뜻.
+  // 지금 서버 오더북 캐시를 데워 두면 모달의 첫 견적이 캐시 히트로 즉시 뜬다.
+  // 결과는 버린다(모달이 다시 요청) — 목적은 서버 캐시 워밍뿐.
+  useEffect(() => {
+    if (opp.mock) return;
+    fetch("/api/quote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ opportunity: opp, sizeUsd: 1000 }),
+    }).catch(() => {});
+  }, [opp.id]); // eslint-disable-line react-hooks/exhaustive-deps -- id 변경 시에만
   const net = live?.netPct ?? opp.netPct;
   const gross = live?.grossPct ?? opp.grossPct;
   const [buy, sell] = opp.legs;

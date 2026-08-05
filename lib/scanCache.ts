@@ -75,6 +75,7 @@ type Cache = {
   refreshing: boolean;
   refreshStartedAt: number; // 0 = idle; used to detect a lost tick
   loop: ReturnType<typeof setInterval> | null;
+  prewarm?: ReturnType<typeof setInterval> | null;
 };
 const g = globalThis as unknown as { __arbScanCache?: Cache };
 g.__arbScanCache ??= { opps: [], ts: 0, refreshing: false, refreshStartedAt: 0, loop: null };
@@ -83,6 +84,7 @@ C.refreshStartedAt ??= 0; // 이전 버전 상태에서 핫리로드된 경우
 // On (re)load, drop any prior interval so a hot-reload picks up new code — the
 // old setInterval would otherwise keep calling a stale scanAll closure forever.
 if (C.loop) { clearInterval(C.loop); C.loop = null; }
+if (C.prewarm) { clearInterval(C.prewarm); C.prewarm = null; }
 // A hot-reload (or a previously stuck tick) must not leave the latch set: the
 // new module instance would never be able to scan.
 C.refreshing = false;
@@ -186,6 +188,11 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   // snapshot warm even between visits (personal local box, cost is fine).
   if (!C.loop) {
     C.loop = setInterval(() => void refresh(), REFRESH_MS);
+    // 오더북 프리웜 — 상위 기회의 실호가를 항상 캐시에 데워 둔다 (클릭→견적 즉시).
+    void import("./quote").then(({ prewarmBooks, PREWARM_MS }) => {
+      if (C.prewarm) return;
+      C.prewarm = setInterval(() => { void prewarmBooks(C.opps); }, PREWARM_MS);
+    }).catch(() => {});
     startListingWatch(); // 상장따리: notice/TG/market watchers
     void import("./sellTriggers").then((m) => m.bootSellTriggers()).catch(() => {}); // 자동매도 재무장
     // 경로 DB 워머 — KR 유니버스의 공식 컨트랙트를 미리 검증·적재해 둔다.
