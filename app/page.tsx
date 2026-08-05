@@ -66,6 +66,16 @@ export default function Cockpit() {
   // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
   // trades, control = ops (runs dashboard + risk + kill), assets = balances.
   const [mode, setMode] = useState<"home" | "monitor" | "funding" | "listing" | "control" | "assets">("home");
+  // 새로고침해도 보던 탭 유지 — 상시 띄워 두는 화면이라 리셋되면 매번 다시 찾아간다.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("ac.mode");
+      if (v && ["home", "monitor", "funding", "listing", "control", "assets"].includes(v)) setMode(v as typeof mode);
+    } catch { /* private mode */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem("ac.mode", mode); } catch { /* private mode */ }
+  }, [mode]);
   // PC: 보드 행 클릭 → 우측 상세(차트·히스토리·실행) 검사창.
   const [inspectId, setInspectId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -464,6 +474,7 @@ export default function Cockpit() {
             onGoTab={(t) => setMode(t)}
             onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
             onOpenSettings={() => setSettingsOpen(true)}
+            onInspect={(o) => { setMode("monitor"); if (!isMobile) setInspectId(o.id); }}
           />
         )}
 

@@ -72,7 +72,7 @@ function Kpi({ label, value, chip, sub, series, tone, compact }: {
   );
 }
 
-export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSettings, mobile }: {
+export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspect, onOpenSettings, mobile }: {
   opps: Opportunity[];
   mobile?: boolean;
   liveOverlay: Record<string, LiveGap>;
@@ -80,6 +80,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
   onExecute: (o: Opportunity) => void;
   /** 리스크 한도 편집은 ⚙ 설정 모달에 산다 — "한도 조정 →"이 바로 연다. */
   onOpenSettings?: () => void;
+  /** 행 클릭 → 갭 보드의 그 기회 검사창으로 점프 (PC), 모바일은 보드 탭 이동. */
+  onInspect?: (o: Opportunity) => void;
 }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -312,7 +314,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
             const held = o.persistence?.heldSec ?? 0;
             const [buy, sell] = o.legs;
             return (
-              <div key={o.id} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+              <div key={o.id} onClick={onInspect ? () => onInspect(o) : undefined}
+                style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, cursor: onInspect ? "pointer" : undefined }}>
                 <span style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700 }}>{o.base}</div>
                   <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -328,7 +331,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
                   <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>{held > 0 ? dur(held) : "신규"}</span>
                 )}
                 <span
-                  onClick={() => o.executable && onExecute(o)}
+                  onClick={(e) => { e.stopPropagation(); if (o.executable) onExecute(o); }}
                   style={{
                     fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "3px 11px", justifySelf: "end",
                     cursor: o.executable ? "pointer" : "default",
