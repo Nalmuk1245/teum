@@ -1,5 +1,5 @@
 {
-  "name": "arb-cockpit",
+  "name": "teum",
   "version": "0.1.0",
   "private": true,
   "description": "Personal semi-automated arbitrage cockpit — kimchi / cross-CEX / funding-basis / CEX-DEX, one-click execute.",

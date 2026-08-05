@@ -330,7 +330,7 @@ export default function Cockpit() {
       >
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
           <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
-            Arb Cockpit
+            Teum
           </span>
           {!isMobile && (
             <span style={{ color: "var(--text-mute)", fontSize: 11 }}>

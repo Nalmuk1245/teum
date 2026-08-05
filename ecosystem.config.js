@@ -7,7 +7,7 @@
 module.exports = {
   apps: [
     {
-      name: "arb",
+      name: "teum",
       script: "node_modules/next/dist/bin/next",
       // -H 127.0.0.1: 루프백에만 바인딩한다. Next의 기본값은 0.0.0.0/:: 라서
       // 플래그가 없으면 이 앱(인증 계층이 없는 단일 사용자 콘솔)이 LAN 전체에

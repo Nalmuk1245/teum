@@ -62,7 +62,7 @@ function check(probe: WatchdogProbe) {
   // 3. Daily heartbeat — proof of life.
   if (now - W.lastHeartbeat > HEARTBEAT_MS) {
     W.lastHeartbeat = now;
-    void notifyNow(`💓 Arb Cockpit 정상 작동 — 스캔 ${scanTs ? Math.round((now - scanTs) / 1000) + "s 전" : "대기"} · 라이브 기회 ${liveOpps}건`);
+    void notifyNow(`💓 Teum 정상 작동 — 스캔 ${scanTs ? Math.round((now - scanTs) / 1000) + "s 전" : "대기"} · 라이브 기회 ${liveOpps}건`);
   }
 }
 

@@ -162,7 +162,7 @@ export function useLivePrices(opps: Opportunity[], enabled: boolean) {
       upSubbed.clear();
       for (const c of codes) upSubbed.add(c);
       upWs.send(JSON.stringify([
-        { ticket: "arb-cockpit" },
+        { ticket: "teum" },
         { type: "ticker", codes: [...upSubbed] },
         { type: "orderbook", codes: [...upSubbed] }, // best bid/ask → executable overlay
       ]));

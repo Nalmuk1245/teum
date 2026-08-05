@@ -4,8 +4,8 @@ import "./globals.css";
 import { MobileProvider } from "./mobile";
 
 export const metadata: Metadata = {
-  title: "ARB · COCKPIT",
-  description: "Personal semi-automated arbitrage cockpit",
+  title: "TEUM · 틈",
+  description: "Personal semi-automated arbitrage desk",
 };
 
 // First-paint layout hint. The client cannot fix this on its own: hydration must
