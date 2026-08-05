@@ -14,7 +14,7 @@ import ControlPanel from "./components/ControlPanel";
 import { ListingPanel } from "./components/ListingPanel";
 import { GapInspect } from "./components/GapInspect";
 import { DashboardPanel } from "./components/DashboardPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 import { useIsMobile } from "./mobile";
 
@@ -79,6 +79,7 @@ export default function Cockpit() {
   // PC: 보드 행 클릭 → 우측 상세(차트·히스토리·실행) 검사창.
   const [inspectId, setInspectId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null); // 딥링크용 초기 탭
   // 테마 — 다크 기본(상시 감시 화면), 라이트는 수동 토글 (persisted).
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   useEffect(() => {
@@ -475,6 +476,7 @@ export default function Cockpit() {
             onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
             onOpenSettings={() => setSettingsOpen(true)}
             onInspect={(o) => { setMode("monitor"); if (!isMobile) setInspectId(o.id); }}
+            onOpenSettings={(t) => { setSettingsTab(t); setSettingsOpen(true); }}
           />
         )}
 
@@ -717,7 +719,7 @@ export default function Cockpit() {
         onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }}
         onMore={() => setMode("control")}
       />
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal onClose={() => { setSettingsOpen(false); setSettingsTab(null); }} initialTab={settingsTab ?? undefined} />}
     </main>
   );
 }

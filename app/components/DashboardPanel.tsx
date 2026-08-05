@@ -82,6 +82,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   onOpenSettings?: () => void;
   /** 행 클릭 → 갭 보드의 그 기회 검사창으로 점프 (PC), 모바일은 보드 탭 이동. */
   onInspect?: (o: Opportunity) => void;
+  /** 감시 카드 조치 버튼 → 설정 모달을 해당 탭으로 연다. */
+  onOpenSettings?: (tab: "keys" | "risk" | "alerts" | "tools") => void;
 }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -183,8 +185,16 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // 그 침묵을 깨는 카드다. 상태는 3단계: ok(정상) / warn(고장·조치 필요) / off(미설정·대기).
   type SrcState = "ok" | "warn" | "off";
   type SrcSec = "감지 소스" | "시스템";
-  const srcRows: { label: string; sec: SrcSec; state: SrcState; text: string }[] = (() => {
-    const rows: { label: string; sec: SrcSec; state: SrcState; text: string }[] = [];
+  type SrcRow = { label: string; sec: SrcSec; state: SrcState; text: string; action?: { label: string; onClick: () => void }; title?: string };
+  // 스캔 재시작 — 멈춘 루프의 latch를 서버에서 강제 해제. 결과는 다음 health 폴링이 보여준다.
+  const [kicking, setKicking] = useState(false);
+  const kickScan = async () => {
+    setKicking(true);
+    try { await fetch("/api/scan-kick", { method: "POST" }); } catch { /* 다음 폴링이 진실 */ }
+    setTimeout(() => setKicking(false), 3000);
+  };
+  const srcRows: SrcRow[] = (() => {
+    const rows: SrcRow[] = [];
     const agoTxt = (s: number | null) => (s == null ? "수신 없음" : s < 90 ? `${s}초 전` : `${Math.round(s / 60)}분 전`);
     rows.push(!health
       ? { label: "스캔", sec: "시스템", state: "off", text: "확인 중" }
@@ -193,9 +203,9 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         ? { label: "스캔", sec: "시스템", state: "off", text: "첫 스캔 대기" }
         : health.scanAgeSec < 60
           ? { label: "스캔", sec: "시스템", state: "ok", text: `${health.scanAgeSec}초 전` }
-          : { label: "스캔", sec: "시스템", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)} — 재시작 필요` });
+          : { label: "스캔", sec: "시스템", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)}`, action: { label: kicking ? "재시작 중…" : "재시작", onClick: () => void kickScan() } });
     rows.push(!watch ? { label: "업비트 공지", sec: "감지 소스", state: "off", text: "확인 중" }
-      : watch.annBlocked ? { label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)" }
+      : watch.annBlocked ? { label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)", title: "업비트 공지 API는 KR IP에서만 응답합니다 — KR 박스 이전 시 해소" }
       : watch.annOkAgoSec != null ? { label: "업비트 공지", sec: "감지 소스", state: "ok", text: agoTxt(watch.annOkAgoSec) }
       : { label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" });
     rows.push(!watch ? { label: "마켓 diff", sec: "감지 소스", state: "off", text: "확인 중" }
@@ -203,7 +213,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
       : watch.mktOkAgoSec != null ? { label: "마켓 diff", sec: "감지 소스", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
       : { label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" });
     rows.push(!watch ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "확인 중" }
-      : !watch.tgConfigured ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정" }
+      : !watch.tgConfigured ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정", action: onOpenSettings ? { label: "설정", onClick: () => onOpenSettings("alerts") } : undefined }
       : watch.tgOkAgoSec != null ? { label: "텔레그램 감지", sec: "감지 소스", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
       : { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" });
     const lag = health?.loopLagMs;
@@ -385,7 +395,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               <div key={sec}>
                 <div style={{ ...CAP, padding: "8px 0 2px" }}>{sec}</div>
                 {srcRows.filter((r) => r.sec === sec).map((r) => (
-                  <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                  <div key={r.label} title={r.title} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
                     <span style={{
                       width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
                       background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
@@ -395,6 +405,15 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
                     <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)", textAlign: "right" }}>
                       {r.text}
                     </span>
+                    {r.action && (
+                      <button
+                        type="button"
+                        onClick={r.action.onClick}
+                        style={{ border: "1px solid var(--border-strong)", borderRadius: 999, padding: "2px 9px", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 700, cursor: "pointer", flex: "0 0 auto" }}
+                      >
+                        {r.action.label}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

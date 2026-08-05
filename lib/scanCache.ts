@@ -228,3 +228,10 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
   }
   return { opps: C.opps, ts: C.ts };
 }
+
+/** 감시 카드 "재시작" — 멈춘 latch를 강제 해제하고 즉시 한 틱 돈다. */
+export function kickScan(): void {
+  C.refreshing = false;
+  C.refreshStartedAt = 0;
+  void refresh();
+}
