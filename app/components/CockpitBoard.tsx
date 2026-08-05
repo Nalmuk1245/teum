@@ -7,7 +7,7 @@ import { pct, usd, price } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
 
 export function Board({
   rows, loading, onExecute, mobile, showExecute, live, flash, emptyText, onInspect, inspectedId, lastColLabel,
@@ -96,7 +96,7 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
         <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
           <span style={{ fontWeight: 700, fontSize: 14.5, letterSpacing: "0.01em" }}>{o.base}</span>
           <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
-            {km.label}
+            {oppKindLabel(o)}
           </span>
           {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 9, padding: "0 3px" }}>mock</span>}
           {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
@@ -202,7 +202,7 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
           letterSpacing: "0.1em", textTransform: "uppercase",
         }}
       >
-        {km.label}
+        {oppKindLabel(o)}
       </span>
 
       {/* pair */}

@@ -525,7 +525,7 @@ export default function Cockpit() {
         >
           {(["all", ...GAP_KINDS] as const).map((k) => {
             const active = filter === k;
-            const label = k === "all" ? "전체" : KIND_META[k].label;
+            const label = k === "all" ? "전체" : k === "kimchi" ? "김프·역프" : KIND_META[k].label;
             const n = k === "all" ? pool.length : pool.filter((o) => o.kind === k).length;
             return (
               <button

@@ -9,7 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Opportunity, Portfolio } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
-import { vlabel, Spark } from "./cockpit-ui";
+import { vlabel, Spark, oppKindLabel, kindLabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
 import type { RiskState } from "./ControlPanel";
 import { EpisodeCard } from "./ControlPanel";
@@ -316,7 +316,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
                 <span style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700 }}>{o.base}</div>
                   <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {o.kind === "kimchi" ? "김프" : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"} · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
+                    {o.kind === "kimchi" ? oppKindLabel(o) : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"} · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
                   </div>
                 </span>
                 {/* 30분 추이 — 전폭 승격으로 생긴 자리 (모바일은 3열 유지) */}
@@ -410,7 +410,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSe
         <Kpi
           label="최고 순수익"
           value={bestNet != null ? pct(bestNet) : "—"}
-          sub={best ? `${best.base} · ${best.kind === "kimchi" ? "김프" : best.kind}${best.persistence?.heldSec ? ` · 지속 ${Math.round(best.persistence.heldSec / 60)}분` : ""}` : "스캔 중"}
+          sub={best ? `${best.base} · ${best.kind === "kimchi" ? oppKindLabel(best) : best.kind}${best.persistence?.heldSec ? ` · 지속 ${Math.round(best.persistence.heldSec / 60)}분` : ""}` : "스캔 중"}
           series={hist.current.best}
           compact={mobile}
           tone={bestNet != null && bestNet > 0 ? "var(--pos)" : "var(--neg)"}

@@ -16,6 +16,21 @@ export const KIND_META: Record<StrategyKind, { label: string; color: string }> =
 };
 
 export const KINDS = Object.keys(KIND_META) as StrategyKind[];
+
+// 김프/역프 방향 라벨 — kimchi 전략은 방향이 둘이다: 해외 매수 → KR(업비트·빗썸)
+// 매도 = 김프, KR 매수 → 해외 매도 = 역프. 다른 전략은 KIND_META 라벨 그대로.
+export const KR_VENUES = new Set(["upbit", "bithumb"]);
+export function kindLabel(kind: string, buyVenue?: string, sellVenue?: string): string {
+  if (kind === "kimchi") return buyVenue && KR_VENUES.has(buyVenue) ? "역프" : "김프";
+  return KIND_META[kind as StrategyKind]?.label ?? kind;
+}
+export function oppKindLabel(o: Opportunity): string {
+  return kindLabel(
+    o.kind,
+    o.legs.find((l) => l.side === "buy")?.venue,
+    o.legs.find((l) => l.side === "sell")?.venue,
+  );
+}
 // Funding has its own tab — the gap board/filter only covers one-shot strategies.
 
 export const GAP_KINDS = KINDS.filter((k) => k !== "funding-basis");

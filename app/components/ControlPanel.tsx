@@ -10,7 +10,7 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import { EpisodeChart } from "./EpisodeChart";
 import { PnlCalendar } from "./PnlCalendar";
 import { longestWindowSec, longestProfitableRunSec, mergeWindows, outlastsEta } from "@/lib/episodeStats";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
 
 export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number };
 
@@ -815,7 +815,7 @@ function PnlViz({ trades }: { trades: TradeRec[] }) {
     const m = new Map<string, { pnl: number; n: number; real: boolean }>();
     for (const t of trades) {
       const real = !t.dryRun && t.realizedPnlUsd != null;
-      const k = t.kind === "kimchi" ? "김프" : t.kind === "cross-cex" ? "크로스" : t.kind === "listing" ? "상장" : t.kind;
+      const k = t.kind === "kimchi" ? kindLabel(t.kind, t.route?.split(" → ")[0]) : t.kind === "cross-cex" ? "크로스" : t.kind === "listing" ? "상장" : t.kind;
       const e = m.get(k) ?? { pnl: 0, n: 0, real: false };
       e.n++;
       if (real) { e.pnl += t.realizedPnlUsd!; e.real = true; }
@@ -915,7 +915,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
       {trades.slice(0, 10).map((t, i) => {
         const totalSec = t.durationsSec ? Object.values(t.durationsSec).reduce((s, v) => s + v, 0) : 0;
         const agoMin = Math.round((Date.now() - t.ts) / 60_000);
-        const kindKo = t.kind === "kimchi" ? "김프" : t.kind === "cross-cex" ? "크로스" : t.kind === "cex-dex" ? "CEX-DEX" : t.kind;
+        const kindKo = t.kind === "kimchi" ? kindLabel(t.kind, t.route?.split(" → ")[0]) : t.kind === "cross-cex" ? "크로스" : t.kind === "cex-dex" ? "CEX-DEX" : t.kind;
         const rid = `${t.ts}:${t.base}`;
         return (
         <div key={rid} style={{ borderTop: "1px solid var(--border)" }}>
