@@ -182,40 +182,36 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // 이 앱의 가치는 상장 감지 지연(ms)인데, 감지 소스가 죽어도 화면은 조용하다 —
   // 그 침묵을 깨는 카드다. 상태는 3단계: ok(정상) / warn(고장·조치 필요) / off(미설정·대기).
   type SrcState = "ok" | "warn" | "off";
-  const srcRows: { label: string; state: SrcState; text: string }[] = (() => {
-    const rows: { label: string; state: SrcState; text: string }[] = [];
+  type SrcSec = "감지 소스" | "시스템";
+  const srcRows: { label: string; sec: SrcSec; state: SrcState; text: string }[] = (() => {
+    const rows: { label: string; sec: SrcSec; state: SrcState; text: string }[] = [];
     const agoTxt = (s: number | null) => (s == null ? "수신 없음" : s < 90 ? `${s}초 전` : `${Math.round(s / 60)}분 전`);
     rows.push(!health
-      ? { label: "스캔", state: "off", text: "…" }
+      ? { label: "스캔", sec: "시스템", state: "off", text: "확인 중" }
       : health.scanAgeSec == null
         // 방금 기동해 첫 스캔이 아직 안 온 상태 — 고장이 아니다.
-        ? { label: "스캔", state: "off", text: "첫 스캔 대기" }
+        ? { label: "스캔", sec: "시스템", state: "off", text: "첫 스캔 대기" }
         : health.scanAgeSec < 60
-          ? { label: "스캔", state: "ok", text: `${health.scanAgeSec}초 전` }
-          : { label: "스캔", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)} — 재시작 필요` });
-    rows.push(!watch ? { label: "업비트 공지", state: "off", text: "…" }
-      : watch.annBlocked ? { label: "업비트 공지", state: "warn", text: "차단 (비KR IP)" }
-      : watch.annOkAgoSec != null ? { label: "업비트 공지", state: "ok", text: agoTxt(watch.annOkAgoSec) }
-      : { label: "업비트 공지", state: "off", text: "수신 없음" });
-    rows.push(!watch ? { label: "마켓 diff", state: "off", text: "…" }
-      : watch.mktOkAgoSec != null && watch.mktOkAgoSec < 60 ? { label: "마켓 diff", state: "ok", text: agoTxt(watch.mktOkAgoSec) }
-      : watch.mktOkAgoSec != null ? { label: "마켓 diff", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
-      : { label: "마켓 diff", state: "off", text: "대기" });
-    rows.push(!watch ? { label: "텔레그램 감지", state: "off", text: "…" }
-      : !watch.tgConfigured ? { label: "텔레그램 감지", state: "off", text: "미설정" }
-      : watch.tgOkAgoSec != null ? { label: "텔레그램 감지", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
-      : { label: "텔레그램 감지", state: "off", text: "수신 대기" });
+          ? { label: "스캔", sec: "시스템", state: "ok", text: `${health.scanAgeSec}초 전` }
+          : { label: "스캔", sec: "시스템", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)} — 재시작 필요` });
+    rows.push(!watch ? { label: "업비트 공지", sec: "감지 소스", state: "off", text: "확인 중" }
+      : watch.annBlocked ? { label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)" }
+      : watch.annOkAgoSec != null ? { label: "업비트 공지", sec: "감지 소스", state: "ok", text: agoTxt(watch.annOkAgoSec) }
+      : { label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" });
+    rows.push(!watch ? { label: "마켓 diff", sec: "감지 소스", state: "off", text: "확인 중" }
+      : watch.mktOkAgoSec != null && watch.mktOkAgoSec < 60 ? { label: "마켓 diff", sec: "감지 소스", state: "ok", text: agoTxt(watch.mktOkAgoSec) }
+      : watch.mktOkAgoSec != null ? { label: "마켓 diff", sec: "감지 소스", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
+      : { label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" });
+    rows.push(!watch ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "확인 중" }
+      : !watch.tgConfigured ? { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정" }
+      : watch.tgOkAgoSec != null ? { label: "텔레그램 감지", sec: "감지 소스", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
+      : { label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" });
     const lag = health?.loopLagMs;
-    rows.push(!lag ? { label: "프로세스", state: "off", text: "…" }
+    rows.push(!lag ? { label: "프로세스", sec: "시스템", state: "off", text: "확인 중" }
       : lag.worstMs >= 400
-        ? { label: "프로세스", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
-        : { label: "프로세스", state: "ok", text: "정상 (10분 내 멈춤 없음)" });
-    // 키가 없는 거래소는 상태가 null로 와서 집계에서 빠진다. 그걸 "없음"이라고
-    // 초록으로 단정하면, 감시 카드가 모르는 것을 안다고 말하는 셈이 된다.
-    rows.push(gatesBlocked == null ? { label: "입출금 중단", state: "off", text: "…" }
-      : gatesBlocked > 0 ? { label: "입출금 중단", state: "warn", text: `${gatesBlocked}종` }
-      : gatesPartial ? { label: "입출금 중단", state: "off", text: "일부 거래소만 확인 (키 필요)" }
-      : { label: "입출금 중단", state: "ok", text: "없음" });
+        ? { label: "프로세스", sec: "시스템", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
+        : { label: "프로세스", sec: "시스템", state: "ok", text: "정상 (10분 내 멈춤 없음)" });
+    // 입출금 중단은 "우리 감시가 고장났나"가 아니라 시장 상태라 리스크 카드로 옮겼다.
     return rows;
   })();
   const warnCount = srcRows.filter((r) => r.state === "warn").length;
@@ -384,18 +380,23 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               : unknownCount > 0 ? `${unknownCount}개 항목 확인 불가 (미설정·대기)`
               : "감지 소스·프로세스 전부 정상"}
           </div>
-          <div style={{ marginTop: 12, display: "flex", flexDirection: "column" }}>
-            {srcRows.map((r) => (
-              <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
-                <span style={{
-                  width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
-                  background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
-                }} />
-                <span style={{ color: "var(--text-dim)" }}>{r.label}</span>
-                <span style={{ flex: 1 }} />
-                <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)" }}>
-                  {r.text}
-                </span>
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column" }}>
+            {(["감지 소스", "시스템"] as const).map((sec) => (
+              <div key={sec}>
+                <div style={{ ...CAP, padding: "8px 0 2px" }}>{sec}</div>
+                {srcRows.filter((r) => r.sec === sec).map((r) => (
+                  <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
+                      background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
+                    }} />
+                    <span style={{ color: "var(--text-dim)" }}>{r.label}</span>
+                    <span style={{ flex: 1 }} />
+                    <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)", textAlign: "right" }}>
+                      {r.text}
+                    </span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -445,6 +446,12 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               { l: "노출", v: risk ? `$${inFlight.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : "—", warn: expoUse > 60 },
               { l: "일일 손실", v: risk ? `−$${Math.max(0, -pnl).toFixed(0)} / $${risk.maxDailyLossUsd}` : "—", warn: lossUse > 60 },
               { l: "1회 한도", v: risk ? `$${risk.maxPerTradeUsd.toLocaleString()}` : "—", warn: false },
+              // 감시 카드에서 이사 — 시장 게이트 상태는 리스크의 일부다.
+              {
+                l: "입출금 중단",
+                v: gatesBlocked == null ? "확인 중" : gatesBlocked > 0 ? `${gatesBlocked}종` : gatesPartial ? "일부만 확인 (키 필요)" : "없음",
+                warn: (gatesBlocked ?? 0) > 0,
+              },
             ].map((r) => (
               <div key={r.l} style={{ display: "flex", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
                 <span style={{ color: "var(--text-dim)" }}>{r.l}</span>
