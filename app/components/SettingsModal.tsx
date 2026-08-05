@@ -1,11 +1,14 @@
 "use client";
 
-// 설정 모달 (헤더 톱니바퀴) — API 키·알림·상장 설정·리스크 한도를 한 곳에.
+// 설정 모달 (헤더 톱니바퀴) — 키 · 리스크 · 알림 · 도구 4탭.
+// 한 스크롤에 25개 빈 인풋이 늘어서던 것을: 성격별 탭 + 거래소별 아코디언
+// (설정 현황 뱃지, 전부 설정/전부 빈 그룹은 접힘)으로 정리.
 // 키 원문은 서버가 절대 돌려주지 않는다(설정 여부+끝 4자리만). 저장 즉시
-// process.env에 주입되어 재시작 없이 반영. 라이브 모드에선 EXEC_TOKEN 인증.
+// process.env에 주입되어 재시작 없이 반영. 라이브 모드에선 EXEC_TOKEN 인증
+// (상시 노출 대신 저장할 변경이 생겼을 때만 보인다).
 
 import React from "react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RiskCard, ManualTokenCard, TelegramCard } from "./ControlPanel";
 import { inFlightUsd } from "@/lib/runStore";
 
@@ -13,6 +16,8 @@ type Field = {
   name: string; label: string; group: string; secret: boolean; danger: boolean;
   placeholder?: string; set: boolean; hint: string | null;
 };
+
+export type SettingsTab = "keys" | "risk" | "alerts" | "tools";
 
 const INPUT: React.CSSProperties = {
   width: "100%", background: "var(--bg)", border: "1px solid var(--border)",
@@ -23,7 +28,17 @@ const BTN_GHOST: React.CSSProperties = {
   background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer",
 };
 
-export function SettingsModal({ onClose }: { onClose: () => void }) {
+// 거래소 그룹(11필드)을 벤더별 아코디언으로 쪼개기 위한 매핑.
+const VENUE_SECTIONS: { key: string; title: string; match: (f: Field) => boolean }[] = [
+  { key: "binance", title: "Binance", match: (f) => f.name.startsWith("BINANCE_") },
+  { key: "upbit", title: "Upbit", match: (f) => f.name.startsWith("UPBIT_") },
+  { key: "bithumb", title: "Bithumb", match: (f) => f.name.startsWith("BITHUMB_") },
+  { key: "bybit", title: "Bybit", match: (f) => f.name.startsWith("BYBIT_") },
+  { key: "okx", title: "OKX", match: (f) => f.name.startsWith("OKX_") && !f.name.startsWith("OKX_WEB3_") },
+];
+
+export function SettingsModal({ onClose, initialTab }: { onClose: () => void; initialTab?: SettingsTab }) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? "keys");
   const [fields, setFields] = useState<Field[]>([]);
   const [dryRun, setDryRun] = useState(true);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -39,6 +54,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [tgMsg, setTgMsg] = useState<string | null>(null);
+  // 아코디언 수동 토글 (열림 기본값은 아래 defaultOpen이 정한다)
+  const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
 
   const [loading, setLoading] = useState(true);
   const load = () => {
@@ -49,12 +66,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       .finally(() => setLoading(false));
   };
   useEffect(() => { void load(); }, []);
-
-  const groups = useMemo(() => {
-    const m = new Map<string, Field[]>();
-    for (const f of fields) { (m.get(f.group) ?? m.set(f.group, []).get(f.group)!).push(f); }
-    return [...m.entries()];
-  }, [fields]);
 
   const dirty = Object.keys(draft).length > 0;
   const save = async () => {
@@ -115,6 +126,71 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     </div>
   );
 
+  // ── 아코디언 섹션 — 뱃지(설정 n/m) + 접힘 기본값 ─────────────────────────────
+  // 기본 열림 = 일부만 설정된 그룹(마저 채우라는 뜻) 또는 지금 편집 중인 그룹.
+  // 전부 설정(끝난 그룹)·전부 빈 그룹(당장 안 쓰는 그룹)은 접어서 소음을 없앤다.
+  const section = (key: string, title: string, fs: Field[], warn?: React.ReactNode) => {
+    if (!fs.length) return null;
+    const setN = fs.filter((f) => f.set).length;
+    const editing = fs.some((f) => draft[f.name] !== undefined);
+    const defaultOpen = (setN > 0 && setN < fs.length) || editing;
+    const open = openSec[key] ?? defaultOpen;
+    const done = setN === fs.length;
+    return (
+      <div key={key} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginBottom: 8, overflow: "hidden" }}>
+        <button
+          type="button"
+          onClick={() => setOpenSec((s) => ({ ...s, [key]: !open }))}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 12px",
+            border: "none", background: open ? "var(--card-2)" : "transparent", cursor: "pointer", color: "var(--text)",
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 700 }}>{title}</span>
+          <span className="tnum" style={{
+            fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "1px 7px",
+            background: done ? "var(--pos-soft)" : "var(--card-3)",
+            color: done ? "var(--pos)" : setN > 0 ? "var(--amber)" : "var(--text-mute)",
+          }}>
+            {setN}/{fs.length}{done ? " ✓" : ""}
+          </span>
+          {editing && <span style={{ fontSize: 9.5, color: "var(--amber)", fontWeight: 700 }}>편집 중</span>}
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{open ? "▲" : "▼"}</span>
+        </button>
+        {open && (
+          <div style={{ padding: "10px 12px 4px", borderTop: "1px solid var(--border)" }}>
+            {warn}
+            <div style={{ display: "grid", gridTemplateColumns: fs.length > 2 ? "1fr 1fr" : "1fr", gap: "0 14px" }}>
+              {fs.map(fieldRow)}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const byGroup = useMemo(() => {
+    const m = new Map<string, Field[]>();
+    for (const f of fields) { (m.get(f.group) ?? m.set(f.group, []).get(f.group)!).push(f); }
+    return m;
+  }, [fields]);
+  const exchange = byGroup.get("거래소") ?? [];
+
+  const secHd = (title: string) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700 }}>{title}</span>
+      <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
+    </div>
+  );
+
+  const TABS: { key: SettingsTab; label: string }[] = [
+    { key: "keys", label: "키" },
+    { key: "risk", label: "리스크" },
+    { key: "alerts", label: "알림" },
+    { key: "tools", label: "도구" },
+  ];
+
   return (
     <div
       onClick={onClose}
@@ -134,28 +210,47 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           borderRadius: "var(--radius)", boxShadow: "var(--shadow-lg)",
         }}
       >
-        {/* 헤더 */}
-        <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)", background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)" }}>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>⚙ 설정</span>
-          <span style={{ fontSize: 11, color: dryRun ? "var(--amber)" : "var(--neg)", fontWeight: 600 }}>
-            {dryRun ? "모의 모드 (DRY_RUN)" : "라이브 모드"}
-          </span>
-          <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            disabled={!dirty || saving}
-            onClick={() => void save()}
-            style={{ border: "none", borderRadius: 9, padding: "7px 16px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}
-          >
-            {saving ? "저장 중…" : dirty ? `저장 (${Object.keys(draft).length})` : "저장"}
-          </button>
-          <button type="button" onClick={onClose} style={BTN_GHOST}>✕</button>
+        {/* 헤더 + 탭 */}
+        <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px 8px" }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>⚙ 설정</span>
+            <span style={{ fontSize: 11, color: dryRun ? "var(--amber)" : "var(--neg)", fontWeight: 600 }}>
+              {dryRun ? "모의 모드 (DRY_RUN)" : "라이브 모드"}
+            </span>
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              disabled={!dirty || saving}
+              onClick={() => void save()}
+              style={{ border: "none", borderRadius: 9, padding: "7px 16px", background: dirty ? "var(--brand)" : "var(--card-3)", color: dirty ? "var(--brand-ink)" : "var(--text-mute)", fontWeight: 700, fontSize: 12.5, cursor: dirty ? "pointer" : "default" }}
+            >
+              {saving ? "저장 중…" : dirty ? `저장 (${Object.keys(draft).length})` : "저장"}
+            </button>
+            <button type="button" onClick={onClose} style={BTN_GHOST}>✕</button>
+          </div>
+          <div style={{ display: "flex", gap: 4, padding: "0 14px 10px" }}>
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                style={{
+                  border: "none", borderRadius: 999, padding: "5px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  background: tab === t.key ? "var(--brand-soft)" : "transparent",
+                  color: tab === t.key ? "var(--brand-2)" : "var(--text-mute)",
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div style={{ padding: "14px 18px 18px" }}>
           {msg && <div style={{ marginBottom: 10, fontSize: 12, fontWeight: 600, color: msg.startsWith("✓") ? "var(--pos)" : "var(--neg)" }}>{msg}</div>}
 
-          {!dryRun && (
+          {/* 라이브 모드 인증 — 저장할 변경이 생겼을 때만 (상시 노출은 소음) */}
+          {!dryRun && dirty && (
             <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, background: "var(--neg-soft)", fontSize: 11.5, color: "var(--text-dim)" }}>
               라이브 모드 — 저장하려면 EXEC_TOKEN 입력:
               <input
@@ -172,73 +267,66 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           {loading && fields.length === 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {[0, 1, 2].map((g) => (
-                <div key={g}>
-                  <div style={{ width: 90, height: 13, borderRadius: 6, background: "var(--card-3)", marginBottom: 8, opacity: 0.6 }} />
-                  {[0, 1].map((r) => (
-                    <div key={r} style={{ height: 34, borderRadius: 8, background: "var(--card-2)", marginBottom: 6, opacity: 0.5 }} />
-                  ))}
-                </div>
+                <div key={g} style={{ height: 38, borderRadius: 8, background: "var(--card-2)", opacity: 0.5 }} />
               ))}
               <div style={{ fontSize: 11, color: "var(--text-mute)", textAlign: "center", marginTop: 4 }}>설정 불러오는 중…</div>
             </div>
           )}
 
-          {/* 키 그룹들 */}
-          {groups.map(([group, fs]) => (
-            <div key={group} style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
-                <span style={{ fontSize: 12.5, fontWeight: 700 }}>{group}</span>
-                {group === "알림" && (
-                  <>
-                    <button type="button" style={BTN_GHOST} onClick={() => void tgTest()}>테스트 발송</button>
-                    {tgMsg && <span style={{ fontSize: 10.5, color: tgMsg.startsWith("✓") ? "var(--pos)" : "var(--text-mute)" }}>{tgMsg}</span>}
-                  </>
-                )}
-                <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
-              </div>
-              {group === "개인지갑" && (
+          {/* ── 키 탭: 거래소별 아코디언 + DEX + 개인지갑 ── */}
+          {tab === "keys" && !loading && (
+            <>
+              {VENUE_SECTIONS.map((v) => section(v.key, v.title, exchange.filter(v.match)))}
+              {section("dex", "DEX (OKX Web3)", byGroup.get("DEX (OKX Web3)") ?? [])}
+              {section("wallet", "개인지갑", byGroup.get("개인지갑") ?? [], (
                 <div style={{ marginBottom: 8, fontSize: 10.5, color: "var(--neg)", lineHeight: 1.5 }}>
                   이 키는 자금을 옮길 수 있습니다. 주력 지갑 말고 <b>이 앱 전용 새 지갑</b>의 키만 넣으세요.
                   로컬 파일(data/secrets.json, 0600)에만 저장되고 절대 커밋되지 않습니다.
                 </div>
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: fs.length > 2 ? "1fr 1fr" : "1fr", gap: "0 14px" }}>
-                {fs.map(fieldRow)}
+              ))}
+              <div style={{ marginTop: 10, fontSize: 10.5, color: "var(--text-mute)", lineHeight: 1.6 }}>
+                · 키는 저장 즉시 반영됩니다 (재시작 불필요). 여기 저장된 값이 .env.local보다 우선.<br />
+                · 모의 ↔ 라이브 전환(DRY_RUN)은 안전상 .env.local 수정 + 재시작으로만 가능합니다.
               </div>
-            </div>
-          ))}
+            </>
+          )}
 
-          {/* 리스크 한도 */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
-              <span style={{ fontSize: 12.5, fontWeight: 700 }}>리스크 한도</span>
-              <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
-            </div>
-            <RiskCard inFlight={inFlightUsd()} />
-          </div>
+          {/* ── 리스크 탭 ── */}
+          {tab === "risk" && (
+            <>
+              {secHd("리스크 한도")}
+              <RiskCard inFlight={inFlightUsd()} />
+            </>
+          )}
 
-          {/* 텔레그램 알림 */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
-              <span style={{ fontSize: 12.5, fontWeight: 700 }}>텔레그램 알림</span>
-              <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
-            </div>
-            <TelegramCard />
-          </div>
+          {/* ── 알림 탭: TG 키 + 테스트 + 채널 상태를 한 곳에 ── */}
+          {tab === "alerts" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700 }}>텔레그램 연결</span>
+                <button type="button" style={BTN_GHOST} onClick={() => void tgTest()}>테스트 발송</button>
+                {tgMsg && <span style={{ fontSize: 10.5, color: tgMsg.startsWith("✓") ? "var(--pos)" : "var(--text-mute)" }}>{tgMsg}</span>}
+                <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px", marginBottom: 12 }}>
+                {(byGroup.get("알림") ?? []).map(fieldRow)}
+              </div>
+              {secHd("감지 채널")}
+              <TelegramCard />
+            </>
+          )}
 
-          {/* 수동 컨트랙트 — 극신생 코인 전송 경로 뚫기 (드물게) */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
-              <span style={{ fontSize: 12.5, fontWeight: 700 }}>수동 컨트랙트 등록</span>
-              <span style={{ flex: 1, borderBottom: "1px solid var(--border)" }} />
-            </div>
-            <ManualTokenCard />
-          </div>
-
-          <div style={{ fontSize: 10.5, color: "var(--text-mute)", lineHeight: 1.6 }}>
-            · 키는 저장 즉시 반영됩니다 (재시작 불필요). 여기 저장된 값이 .env.local보다 우선.<br />
-            · 모의 ↔ 라이브 전환(DRY_RUN)은 안전상 .env.local 수정 + 재시작으로만 가능합니다.
-          </div>
+          {/* ── 도구 탭: 상장따리 설정 + 수동 컨트랙트 ── */}
+          {tab === "tools" && (
+            <>
+              {secHd("상장따리")}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "0 14px", marginBottom: 12 }}>
+                {(byGroup.get("상장따리") ?? []).map(fieldRow)}
+              </div>
+              {secHd("수동 컨트랙트 등록")}
+              <ManualTokenCard />
+            </>
+          )}
         </div>
       </div>
     </div>
