@@ -5,7 +5,7 @@
 // 지속성/전송 리스크 + 실행 버튼. 데이터는 이미 보드가 든 opp + 히스토리 API.
 
 import React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Opportunity } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
@@ -135,6 +135,61 @@ function Sparkline({ oppId, costPct }: { oppId: string; costPct: number }) {
         <span>−{view.spanMin}분 → 지금</span>
         <span>지금 <b style={{ color: view.last > 0 ? "var(--pos)" : "var(--neg)" }}>{view.last >= 0 ? "+" : ""}{view.last.toFixed(2)}%</b></span>
       </div>
+    </div>
+  );
+}
+
+// ── 거래소 온체인 보유량 (핫/콜드) — 이 코인이 갭 양쪽 거래소에 실물로 얼마나
+// 있나. 핫월렛이 얇으면 매도쪽 입금 정체·출금 지연 리스크, 두꺼우면 덤핑 여력.
+// 데이터는 기존 /api/exchange-holdings (지갑 장부 기반 온체인 조회, ETH/BSC/Base).
+function VenueHoldings({ base, buyVenue, sellVenue }: { base: string; buyVenue?: string; sellVenue?: string }) {
+  type VH = { venue: string; hot: number; cold: number; hotUsd: number | null; coldUsd: number | null; addresses: number };
+  const [h, setH] = useState<{ venues: VH[]; globalHotUsd: number | null; updatedAt: number } | null>(null);
+  const [state, setState] = useState<"loading" | "error" | "ok">("loading");
+  const load = useCallback(async (fresh?: boolean) => {
+    setState("loading");
+    try {
+      // pending = 서버가 뒤에서 구축 중 — 3초 간격으로 최대 ~1분 재문의.
+      for (let i = 0; i < 20; i++) {
+        const j = await (await fetch(`/api/exchange-holdings?symbol=${encodeURIComponent(base)}${fresh ? "&fresh=1" : ""}`, { cache: "no-store" })).json();
+        if (j.pending) { await new Promise((r) => setTimeout(r, 3000)); continue; }
+        if (j.error || !j.holdings) { setH(null); setState("error"); } else { setH(j.holdings); setState("ok"); }
+        return;
+      }
+      setState("error");
+    } catch { setState("error"); }
+  }, [base]);
+  useEffect(() => { setH(null); void load(); }, [load]);
+  const amt = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : n.toFixed(n >= 1 ? 1 : 4));
+  const mine = new Set([buyVenue, sellVenue].filter(Boolean));
+  const rows = (h?.venues ?? []).filter((v) => v.addresses > 0 && (v.hot > 0 || v.cold > 0 || mine.has(v.venue)));
+  return (
+    <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{ fontSize: 12, color: "var(--text-mute)" }}>거래소 온체인 보유량</span>
+        {h?.globalHotUsd != null && <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-dim)" }}>글로벌 핫 {usd(h.globalHotUsd)}</span>}
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={() => void load(true)}
+          disabled={state === "loading"}
+          style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 600, cursor: "pointer", padding: 0 }}
+        >
+          {state === "loading" ? "조회 중…" : "새로고침"}
+        </button>
+      </div>
+      {state === "error" && <div style={{ fontSize: 11, color: "var(--text-mute)", padding: "6px 0" }}>조회 실패 — 지갑 장부 미등록 코인이거나 체인 미지원(ETH/BSC/Base 외)</div>}
+      {state === "ok" && rows.length === 0 && <div style={{ fontSize: 11, color: "var(--text-mute)", padding: "6px 0" }}>등록된 거래소 지갑에 이 코인 잔고 없음</div>}
+      {rows.map((v) => (
+        <div key={v.venue} className="tnum" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 11.5 }}>
+          <span style={{ color: mine.has(v.venue) ? "var(--text)" : "var(--text-mute)", fontWeight: mine.has(v.venue) ? 700 : 400 }}>
+            {vlabel(v.venue)}{mine.has(v.venue) ? " ●" : ""}
+          </span>
+          <span style={{ flex: 1 }} />
+          <span title={v.hotUsd != null ? usd(v.hotUsd) : undefined}>핫 <b>{amt(v.hot)}</b>{v.hotUsd != null ? ` (${usd(v.hotUsd)})` : ""}</span>
+          <span title={v.coldUsd != null ? usd(v.coldUsd) : undefined} style={{ color: "var(--text-dim)" }}>콜드 {amt(v.cold)}{v.coldUsd != null ? ` (${usd(v.coldUsd)})` : ""}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -278,6 +333,9 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
 
         {/* 입출금 게이트 / 전송 경로 */}
         <TransferPanel opp={opp} />
+
+        {/* 거래소 핫/콜드 온체인 보유량 — 스크롤 영역 안(실행 버튼은 고정 푸터) */}
+        <VenueHoldings base={opp.base} buyVenue={buy?.venue} sellVenue={sell?.venue} />
       </div>
 
       {/* 실행 — 스크롤 영역 밖 고정 푸터. 패널이 길어도 항상 보인다. */}
