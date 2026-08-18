@@ -8,6 +8,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { beep, VenueLink } from "./cockpit-ui";
+import { authHeaders } from "@/lib/runStore";
 import {
   CAP, CARD, BTN, BTN_GHOST, INPUT, DETAIL_ANCHOR,
   fmtPx, ago, Countdown,
@@ -51,6 +52,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   const [auto, setAuto] = useState<AutoCfg | null>(null);
   const [autoLive, setAutoLive] = useState(false);
   const [autoSize, setAutoSize] = useState("500");
+  const [autoErr, setAutoErr] = useState<string | null>(null);
   const [drilling, setDrilling] = useState(false);
   // 감지 알림 (비프 + 데스크톱) — persisted, 기본 on.
   const [detectAlert, setDetectAlert] = useState(true);
@@ -105,7 +107,12 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
 
   const saveAuto = async (p: Partial<AutoCfg>) => {
     try {
-      const j = await (await fetch("/api/listing-auto", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(p) })).json();
+      // authHeaders: 토큰이 있으면 실어 보낸다. 이 라우트 자체는 토큰을 요구하지
+      // 않고, 브라우저발 CSRF는 미들웨어(lib/originGuard)가 막는다.
+      const res = await fetch("/api/listing-auto", { method: "POST", headers: authHeaders(), body: JSON.stringify(p) });
+      const j = await res.json();
+      if (!res.ok) { setAutoErr(j.message ?? "자동매수 설정 실패"); return; }
+      setAutoErr(null);
       if (j.cfg) setAuto(j.cfg);
     } catch { /* ignore */ }
   };
@@ -178,6 +185,11 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
           {auto?.armed ? "끄기" : "켜기"}
         </button>
       </div>
+      {autoErr && (
+        <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border)", fontSize: 11, color: "var(--neg)" }}>
+          {autoErr}
+        </div>
+      )}
 
       {/* 플레이 리스트 */}
       {rows.length === 0 ? (
