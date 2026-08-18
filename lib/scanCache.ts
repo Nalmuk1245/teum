@@ -12,6 +12,14 @@ loadSecretsIntoEnv(); // 설정창에 저장된 키를 부팅 즉시 주입 (env
 
 // 크래시 통보 — 프로세스가 죽기 직전 텔레그램으로 마지막 비명. pm2가 살리더라도
 // "죽었었다"는 사실은 알아야 한다. (핸들러 중복 등록 방지 가드)
+/** 종료 시 복기 기록 확정 — 실패해도 종료를 막지 않는다. */
+function flushEpisodesOnExit(): void {
+  try {
+    // 정적 import를 피한다: 이 훅은 모듈 로드 순서와 무관하게 걸려야 한다.
+    (require("./episodes") as typeof import("./episodes")).flushAllEpisodes();
+  } catch { /* 종료 중 — 삼킨다 */ }
+}
+
 const gp = globalThis as unknown as { __arbCrashHook?: boolean };
 if (!gp.__arbCrashHook) {
   gp.__arbCrashHook = true;
@@ -28,8 +36,14 @@ if (!gp.__arbCrashHook) {
   // 프로세스 관리자(pm2)가 깨끗한 상태로 살리게 한다.
   process.on("uncaughtException", (e) => {
     scream("uncaughtException", e);
+    flushEpisodesOnExit();
     setTimeout(() => process.exit(1), 1500).unref(); // 텔레그램 전송 여유만 주고 종료
   });
+  // 정상 종료(pm2 restart·Ctrl+C)에서도 진행 중인 복기 기록을 확정한다 —
+  // 안 하면 재시작 때마다 "지금 가장 오래 살아 있는 기회"가 통째로 사라진다.
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => { flushEpisodesOnExit(); process.exit(0); });
+  }
 }
 import type { Opportunity } from "./types";
 import { notify, notifyNow, telegramConfigured } from "./telegram";
