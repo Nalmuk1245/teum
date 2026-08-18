@@ -16,6 +16,7 @@ import {
   upbitLimitSell, upbitOrderFills, upbitCancelOrder,
   binanceSpot, upbitOrder, binancePerp, roundQty,
 } from "./orders";
+import { acquireSellWait, releaseSell, renewSell } from "./sellLock";
 
 export type UnwindResult = {
   soldQty: number; // coins sold this call
@@ -49,7 +50,22 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function unwind(opp: Opportunity, remainingQty: number, fractionIn: number): Promise<UnwindResult> {
   const dry = CONFIG.DRY_RUN;
   const fraction = Math.min(1, Math.max(0, fractionIn)); // (0,1] — never over-sell or negative
-  if (!dry) return liveUnwind(opp, remainingQty, fraction);
+  if (!dry) {
+    // 매도 뮤텍스 — 청산도 매도다. 자동매도 트리거나 실행 엔진의 매도 다리와
+    // 같은 (거래소, 코인)을 동시에 던지면 하나가 거절되고, 이미 비례 숏청산이
+    // 진행된 뒤라면 델타가 깨진 채 남는다. 락은 라운드마다 renew하며 잡는다.
+    const sellVenue = opp.legs.find((l) => l.side === "sell")?.venue;
+    if (!sellVenue) throw new Error("매도 다리 없음");
+    const owner = `unwind:${opp.id}:${Math.round(fraction * 100)}`;
+    if (!(await acquireSellWait(sellVenue, opp.base, owner, 5000))) {
+      throw new Error(`${opp.base} ${sellVenue}를 다른 매도자가 처리 중 — 잠시 후 다시 시도`);
+    }
+    try {
+      return await liveUnwind(opp, remainingQty, fraction, owner);
+    } finally {
+      releaseSell(sellVenue, opp.base, owner);
+    }
+  }
 
   const price = opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
   const gross = opp.grossPct ?? 0; // target premium (live re-quotes)
@@ -87,7 +103,7 @@ export async function unwind(opp: Opportunity, remainingQty: number, fractionIn:
 // → poll fills, closing the short in proportion after each round → if still open
 // at round timeout, cancel and re-peg at the fresh best ask. After ROUNDS (or if
 // the live premium decays under the cost floor) the loop stops and advises holding hedged.
-async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: number): Promise<UnwindResult> {
+async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: number, lockOwner: string): Promise<UnwindResult> {
   const fraction = Math.min(1, Math.max(0, fractionIn));
   const sellLeg = opp.legs.find((l) => l.side === "sell");
   const usdtLeg = opp.legs.find((l) => l.quote === "USDT");
@@ -162,6 +178,9 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
 
   let left = targetQty;
   for (let round = 1; round <= ROUNDS && left > 0 && !bailout; round++) {
+    // 락 갱신 — 한 라운드가 ~12초라 갱신하지 않으면 STALE_MS(30s)를 넘겨,
+    // 아직 팔고 있는 중에 락이 다른 매도자에게 넘어간다.
+    renewSell(venue, opp.base, lockOwner);
     // Premium floor — stop chasing a decaying edge, dump at market instead.
     const prem = await livePremium();
     const floor = premiumFloor(opp.costPct ?? 0.5);

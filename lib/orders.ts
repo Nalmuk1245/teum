@@ -105,6 +105,9 @@ export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { qu
 export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: number): Promise<OrderResult> {
   const { key } = bnKeys();
   if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 선물 ${action}`, !!key);
+  // 헷지 다리도 같은 IP 한도를 먹는다 — 매수 직후 항상 발사되므로, 페이싱에서
+  // 빠지면 rate limiter가 막으려던 상황(연속 주문 폭주)이 그대로 생긴다.
+  if (!(await acquireOrderSlot("binance"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const p: Record<string, string | number> = {
       symbol: `${base}USDT`, type: "MARKET",
@@ -658,6 +661,7 @@ export async function bybitOrder(base: string, side: "BUY" | "SELL", opts: { quo
   const key = process.env.BYBIT_KEY, secret = process.env.BYBIT_SECRET;
   const label = side === "SELL" ? "매도" : "매수";
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bybit ${base} ${label}`, !!(key && secret));
+  if (!(await acquireOrderSlot("bybit"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     // Spot market: BUY uses marketUnit=quoteCoin (spend USDT), SELL uses base qty.
     const p: Record<string, string | number> = {
@@ -749,6 +753,7 @@ export async function okxOrder(base: string, side: "BUY" | "SELL", opts: { quote
   const key = process.env.OKX_KEY, secret = process.env.OKX_SECRET, pass = process.env.OKX_PASSPHRASE;
   const label = side === "SELL" ? "매도" : "매수";
   if (CONFIG.DRY_RUN || !key || !secret || !pass) return sim(`OKX ${base} ${label}`, !!(key && secret && pass));
+  if (!(await acquireOrderSlot("okx"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     // Spot market: BUY tgtCcy=quote_ccy (spend USDT), SELL sz = base qty.
     const body = {
