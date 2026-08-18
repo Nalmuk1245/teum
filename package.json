@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "check": "node scripts/check-hedge-cost.mjs",
     "dev:lan": "next dev -p 3100",
-    "start:lan": "next start -p 3100"
+    "start:lan": "next start -p 3100",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
@@ -26,6 +28,7 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
   }
 }

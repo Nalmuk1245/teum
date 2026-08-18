@@ -1,0 +1,24 @@
+# 타입체크 + 단위테스트. 이 레포에는 로그인이 없고 자금이 움직이는 코드가
+# 대부분이라, CI가 붙잡을 수 있는 건 순수 로직뿐이다 — 거래소 왕복은 RUNBOOK의
+# DRY-RUN 리허설이 계속 담당한다. 여기 있는 것들이라도 회귀를 막는다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # 비용 모델의 산식 점검 (기존 스크립트)
+      - run: npm run check
