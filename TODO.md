@@ -2,6 +2,15 @@
 
 > 현재 전부 **DRY-RUN**. 아래를 채우면 실전화. 키는 `.env.local`에만.
 
+## 🛡 보안·안전 감사 (2026-08-18) — 완료
+- [x] **루프백 전용 바인딩** — dev/start/pm2 전부 `-H 127.0.0.1`. Next 기본값(0.0.0.0/::)이라 로그인 없는 콘솔이 LAN에 열려 있었다. LAN 노출은 `*:lan` 스크립트로 명시적 옵트인
+- [x] **출처 확인 미들웨어** — 상태를 바꾸는 모든 `/api` 요청에 Origin 검사(`middleware.ts` + `lib/originGuard.ts`). 로컬 전용이라 LAN 위협은 낮지만, **루프백이 못 막는 호출자가 브라우저다** — 웹서핑 중 아무 페이지나 localhost로 POST를 쏠 수 있고 실측으로 1회 한도가 999,999로 바뀌었다. Origin 없는 요청(curl·크론·pm2)은 통과, Host가 공인 도메인이면 거부(DNS 리바인딩). 처음엔 이 문제를 `/api/risk`·`/api/listing-auto`의 EXEC_TOKEN으로 막으려 했는데, 토큰은 라이브에서만 걸려 DRY에서 그대로 뚫렸고 라우트마다 빠뜨릴 수 있어 미들웨어로 바꿨다
+- [x] **매도 뮤텍스 양방향** — 엔진 sell 단계와 unwind도 `acquireSell`을 잡는다. 트리거 쪽만 잡고 있어서, 락이 막으려던 시나리오(엔진 vs 트리거 → 네이키드 숏)가 정확히 안 막혔다. 여러 라운드 도는 청산은 `renewSell`로 갱신
+- [x] **rate limiter 누락 보강** — `binancePerp`(헷지)·`bybitOrder`·`okxOrder`. 버킷에 bybit/okx 항목 자체가 없었다
+- [x] **Windows 키 파일 권한** — chmod가 무동작이라 `data/secrets.json`이 상속 ACL 그대로였다. icacls로 소유자 전용, 실패 시 경고
+- [x] **서킷 브레이커 분류** — 한글 메시지 정규식 → `defensive` 플래그. 거래소 영어 원문·문구 변경에 오분류되던 것
+- [x] **테스트·CI 도입** — vitest 43개(락·한도·플랜·rate limiter·인증·산식) + GitHub Actions(typecheck/test/check). 테스트는 임시 cwd에서 돈다(영속 계층이 운영 data/를 덮어쓰지 않게)
+
 ## 🔴 P0 — 실전화 (실제 자금 이동, 키 필요)
 `app/api/exec-step/route.ts` + `lib/orders.ts` (전부 DRY-RUN 게이트, 휴면):
 - [x] **실주문** — 바낸 현물 매수/매도, USDT-M 숏/청산, 업비트 매수/매도 (서명 배선) — `lib/orders.ts`
@@ -69,7 +78,7 @@
 - [x] **전송창 리스크(④)** — history에 프리미엄 σ(분당) 추가 → ETA×√σ 랜덤워크로 전송 중 변동 ±X% 산정, 변동>net이면 헷지권장 배지(보드·모달), 스캔캐시 HMR 스테일 루프 수정
 
 ## 🔵 P4 — 운영·기록
-- [ ] **알림(텔레그램)** — 임계 순수익 돌파 / 입출금 중단 / 에러
+- [x] **알림(텔레그램)** — 임계 순수익 돌파 / 입출금 중단 / 에러 (scanCache.alertOnScan + watchdog)
 - [x] **P&L·거래 기록** — 정산 시 data/trades.jsonl 기록(탐지net vs 실현net·규모·경로·모의여부), /api/trades 집계(실현손익·히트율·평균누수), 관제 탭 거래·손익 카드(지표3+최근8건)
 - [ ] **갭 히스토리** — 프리미엄 시계열·지속시간·히트율, 코인별 스파크라인
 - [ ] **KRW 리패트리에이션** — 오프램프(은행 한도·환전) 추적
@@ -94,6 +103,12 @@
 - [ ] 공지 API 폴백(비KR): 텔레그램 채널/RSS 스크레이프
 
 ## 🔵 도메인 감사 반영 (2026-07)
+- [x] **보드 유동성 한도** — kimchi·cross-cex의 notionalCapUsd가 null이라 $100이든 $50,000이든 보드 net이 같아 보였다. 티커가 이미 싣고 오는 최우선호가 물량(bidSize/askSize)으로 보수적 하한을 계산해 표시(정확한 상한은 모달 뎁스 견적이 계속 담당)
+- [x] **cross-cex 출금비 출처 정정** — 출금 다리가 bybit/OKX여도 바이낸스 networkList 수수료를 쓰고 있었다. 바낸 다리일 때만 정액값, 그 외에는 코인별 티어로 폴백
+- [x] **최소 출금 게이트 전 거래소** — `buy.venue === "binance"`일 때만 돌아서, 다른 거래소 매수 경로는 방어 없이 출금 API 에러로 죽었다(그 시점엔 이미 헷지가 열려 있다). 롤백 가능 지점에서 막는 쪽이 싸다
+- [x] **정산 손익이 런에 실린다** — settle 실현 손익이 trades.jsonl에만 남고 run.pnlUsd는 청산 경로만 채워서, 운영 탭·모달의 "실현" 배지가 정산 완료 런에서 항상 0이었다
+- [x] **거래기록 hedged 정직화** — `opp.hasPerp`(퍼프 존재 여부)가 아니라 hedge 단계가 실제로 done인지로 기록
+- [x] **지갑 자산 체인 표기** — RPC 폴백 경로가 EVM 4체인 네이티브를 구분 없는 "ETH" 여러 줄로 보여줬다 (OKX 경로와 같은 `ETH·arbitrum` 규칙 적용)
 - [x] **P1 모델 정직화** — 게이트 fail-closed(null=차단, 역선택 방어), 전송비 정액출금비×가격/기준사이즈, 슬리피지 다리당×2, 헷지왕복비 net 차감, 리패트리에이션 0.2% 상시, 빗썸 0.25% 기본, 펀딩 감쇠(반감1.5일)+라운드트립 차감, 언와인드 플로어=cost+버퍼(하회시 청산중단·헷지유지)
 - [x] **P2 헷지 1급 시민화** — settle에 perp PnL 합산(일일손실한도 스팟+선물), 헷지=도착수량(출금비 차감), 마진 게이트(가용≥노티널×60%), 입금확인이 크레딧 실수량 스레딩
 - [x] **P3 리스크 정밀화** — transferRisk를 가격 log-return σ+점프항으로 재설계, USDT/KRW 변동 표기(헷지 미적용), 역프 ETA 60m+경고, 스큐 목표 동적화(정프장세 글로벌65% 목표, 50:50 아님)
@@ -107,6 +122,6 @@
 - [x] **스캔 서버 캐시 + 백그라운드 루프** — /api/scan이 warm 스냅샷 즉시 응답(~0.2s, 이전 3~10s+), 서버가 8초마다 백그라운드 갱신(첫 요청만 대기, stale-while-revalidate). 게이트 60s·펀딩 30s·perp 10분 TTL 분리, balances 10s·gates 60s SWR
 
 ## ⚪ 정리 (자잘)
-- [ ] `EXCLUDE`에 누락 스테이블 추가 (USDE/USD1 등) `lib/arbitrage.ts`·`config.ts`
+- [x] `EXCLUDE`에 누락 스테이블 추가 (USDE/USD1/USDS/PYUSD/RLUSD/USDG/USDY/EURC/USDF) `config.ts`
 - [x] 안 쓰는 `app/api/execute` + `lib/execution.ts` 제거
 - [ ] EVM 외 잔고 RPC 안정화(공개 RPC 레이트리밋 → env로 교체)
