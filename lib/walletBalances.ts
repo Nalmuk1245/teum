@@ -33,7 +33,12 @@ async function evmNative(chainKey: string, addr: string, px: Map<string, number>
     const wei = await provider.getBalance(addr);
     const amount = Number(formatEther(wei));
     if (amount <= 0) return null;
-    return { asset: c.native, amount, usdValue: amount * usdNative(c.native, px) };
+    // 체인 표기는 OKX 경로와 같은 규칙을 쓴다: 이더리움은 그냥 "ETH", 나머지는
+    // "ETH·arbitrum". 이게 없으면 EVM 4체인의 네이티브 ETH가 자산 탭에 구분
+    // 없는 "ETH" 세 줄로 나란히 떠서, 어느 줄이 어느 체인인지 알 수 없었다
+    // (같은 심볼·다른 체인은 전송 경로가 완전히 다른데도).
+    const asset = chainKey === "ethereum" ? c.native : `${c.native}·${chainKey}`;
+    return { asset, amount, usdValue: amount * usdNative(c.native, px) };
   } catch {
     return null;
   }

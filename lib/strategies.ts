@@ -33,6 +33,37 @@ function spreadPct(t: { bid?: number; ask?: number }): number {
   return ((t.ask - t.bid) / ((t.ask + t.bid) / 2)) * 100;
 }
 
+/** 보드용 유동성 한도 — 두 다리의 **최우선호가 물량**이 허용하는 USD 규모.
+ *
+ *  예전엔 `notionalCapUsd: null`이었다. 그래서 $100이든 $50,000이든 보드 net이
+ *  같아 보였고, 규모가 호가를 넘긴다는 사실은 실행 모달의 재견적에 가서야
+ *  드러났다 — 즉 "보이는 엣지"와 "잡을 수 있는 엣지"가 보드에서 구분되지 않았다.
+ *
+ *  전 종목 풀 오더북은 스캔 주기(3초)에 감당이 안 되지만, 티커가 이미 최우선
+ *  호가의 **가격과 물량**을 함께 실어 온다(bidSize/askSize — 바낸·업비트·
+ *  바이비트·OKX). 그 한 호가만으로 계산한 보수적 하한이 이 값이다:
+ *  실제 체결 가능 규모는 이보다 크지만(아래 호가가 더 있다), **이 값까지는
+ *  슬리피지 없이 확실히 들어간다**. 정확한 상한은 모달의 뎁스 견적(quote.ts)이
+ *  계속 담당한다.
+ *
+ *  둘 중 하나라도 물량을 모르면 null(= 미상)을 돌려준다 — 모르는 걸 큰 값으로
+ *  꾸미지 않는다. */
+function topOfBookCapUsd(
+  buy: { ask?: number; askSize?: number } | undefined,
+  sell: { bid?: number; bidSize?: number } | undefined,
+  buyFx = 1,  // 매수 다리 호가통화 → USD (KRW면 원/달러, USDT면 1)
+  sellFx = 1,
+): number | null {
+  if (!buy?.ask || !buy.askSize || !sell?.bid || !sell.bidSize) return null;
+  const buyUsd = (buy.ask * buy.askSize) / buyFx;
+  const sellUsd = (sell.bid * sell.bidSize) / sellFx;
+  const cap = Math.min(buyUsd, sellUsd);
+  return cap > 0 ? cap : null;
+}
+/** 테스트 전용 재수출 — 이 함수는 조용히 틀리는 종류(한도를 과대평가하면
+ *  보드가 못 잡을 규모를 잡을 수 있다고 말한다)라 단위테스트로 못을 박는다. */
+export const topOfBookCapUsdForTest = topOfBookCapUsd;
+
 // KR venues evaluated for kimchi, best-net wins per coin.
 const KR_VENUES: Venue[] = ["upbit", "bithumb"];
 
@@ -173,7 +204,17 @@ const kimchi: Strategy = {
         grossPct: execGross, // executable (spread-crossed), not mid-price
         costPct: calCost,
         netPct: calNet,
-        notionalCapUsd: null, // TODO: from order-book depth
+        // 최우선호가 기준 보수적 한도 (모달 뎁스 견적이 정확한 상한을 낸다).
+        // KR 다리는 원화 호가라 그 거래소의 USDT/KRW로 환산한다.
+        notionalCapUsd: (() => {
+          const krT = ctx.tickers[best.kv]?.get(base);
+          const gT = ctx.tickers[best.gv]?.get(base);
+          const krFx = ctx.tickers[best.kv]?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : 0);
+          if (!krFx) return null;
+          return buyGlobal
+            ? topOfBookCapUsd(gT, krT, 1, krFx)   // 글로벌 ask 매수 → KR bid 매도
+            : topOfBookCapUsd(krT, gT, krFx, 1);  // KR ask 매수 → 글로벌 bid 매도
+        })(),
         // Live: fail-closed (both gates must be CONFIRMED open). DRY keeps the
         // demo usable without keys — the gate panel still shows "키 필요".
         executable: calNet > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
@@ -207,7 +248,7 @@ const crossCex: Strategy = {
     if (maps.length < 2) return out;
 
     // Union of bases seen on at least two venues, with executable bid/ask.
-    const bases = new Map<string, { v: Venue; ask: number; bid: number }[]>();
+    const bases = new Map<string, { v: Venue; ask: number; bid: number; askSize?: number; bidSize?: number }[]>();
     for (const { v, m } of maps) {
       for (const [base, t] of m) {
         if (CONFIG.EXCLUDE.has(base)) continue;
@@ -215,7 +256,7 @@ const crossCex: Strategy = {
         if (!t.price) continue;
         if (spreadPct(t) > CONFIG.MAX_SPREAD_PCT) continue; // thin/stale book
         const arr = bases.get(base) ?? [];
-        arr.push({ v, ask: t.ask ?? t.price, bid: t.bid ?? t.price });
+        arr.push({ v, ask: t.ask ?? t.price, bid: t.bid ?? t.price, askSize: t.askSize, bidSize: t.bidSize });
         bases.set(base, arr);
       }
     }
@@ -236,7 +277,12 @@ const crossCex: Strategy = {
       // Flat withdrawal fee at the board reference size (percent tiers lie at
       // small size), slippage per LEG. A persistent cross gap usually means the
       // transfer route is down — unknown gate status must not read as tradeable.
-      const feeCoin = withdrawFeeCoin(base);
+      // 출금비는 **출금하는 거래소**의 것이어야 한다. withdrawFeeCoin은 바이낸스
+      // networkList(또는 그 기반 큐레이션 표)에서 오므로, 출금 다리가 바낸이
+      // 아니면 그 값은 남의 거래소 수수료다 — 거래소별로 몇 배씩 차이 나는
+      // 항목이라 net이 그대로 틀어진다. 바낸 다리일 때만 정확한 정액 수수료를
+      // 쓰고, 그 외에는 코인별 대략 티어(NETWORK_PCT)로 물러선다.
+      const feeCoin = lo.v === "binance" ? withdrawFeeCoin(base) : undefined;
       const transferPct = feeCoin != null && lo.ask > 0
         ? (feeCoin * lo.ask / CONFIG.BOARD_REF_USD) * 100
         : (NETWORK_PCT[base] ?? NETWORK_PCT_DEFAULT);
@@ -268,7 +314,8 @@ const crossCex: Strategy = {
         grossPct: gross,
         costPct: cost + cal,
         netPct: net - cal,
-        notionalCapUsd: null,
+        // 양쪽 다 USDT 호가라 환산 없이 최우선호가 물량이 곧 USD 한도다.
+        notionalCapUsd: topOfBookCapUsd(lo, hi),
         executable: net - cal > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
         transfer,
         ts: now(),

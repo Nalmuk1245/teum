@@ -8,8 +8,13 @@ export const CONFIG = {
   /** USD/KRW fallback when no live FX source is wired. */
   USD_KRW: Number(process.env.USD_KRW ?? 1390),
   /** Assets excluded from premium-based strategies (stables / wrapped). */
+  // 스테이블·래핑 자산 제외. 스테이블은 "프리미엄"이 프리미엄이 아니라 디페그나
+  // 환율 잡음이라, 안 걸러내면 김프 상위에 유령 엣지로 올라온다. 목록이 낡으면
+  // 그대로 구멍이 되므로 KR 상장 스테이블이 늘면 여기에 추가할 것.
   EXCLUDE: new Set([
     "USDT", "USDC", "DAI", "FDUSD", "BUSD", "TUSD", "USDP", "USDD",
+    // 신규 스테이블 (2025~) — USDE/USDS는 업비트·빗썸에도 상장돼 있다.
+    "USDE", "USD1", "USDS", "PYUSD", "RLUSD", "USDG", "USDY", "EURC", "USDF", "FDUSD",
     "WBTC", "WETH", "WBETH", "STETH", "CBETH", "BTCB",
   ]),
   /** Minimum global-leg 24h volume (USD) for a premium to be actionable. */
