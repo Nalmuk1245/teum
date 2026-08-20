@@ -82,6 +82,85 @@ export async function recordTrade(t: TradeRecord): Promise<void> {
   }
 }
 
+// ── 손익 캘린더 — 날짜(운영 시간대 기준)별 실현 손익 집계 ────────────────────
+// 일 경계는 risk의 일일 손실 한도와 같은 시간대를 쓴다(RISK_DAY_TZ, 기본 KST).
+// 캘린더의 "오늘"과 리스크 카드의 "오늘 실현"이 다른 날을 가리키면 안 된다.
+
+const DAY_TZ = process.env.RISK_DAY_TZ || "Asia/Seoul";
+const dayFmtCache = new Map<string, Intl.DateTimeFormat>();
+function dayFmt(tz: string): Intl.DateTimeFormat {
+  let f = dayFmtCache.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+    dayFmtCache.set(tz, f);
+  }
+  return f;
+}
+/** ms epoch → YYYY-MM-DD (운영 시간대). */
+export function tradeDayKey(ts: number, tz: string = DAY_TZ): string {
+  return dayFmt(tz).format(new Date(ts)); // en-CA → YYYY-MM-DD
+}
+
+export type DayPnl = {
+  date: string; // YYYY-MM-DD (운영 시간대)
+  pnlUsd: number; // 실거래 실현 손익 합
+  realCount: number; // 실현 손익이 잡힌 실거래 수
+  wins: number; // 그중 흑자 건수
+  count: number; // 전체 거래 수 (모의 포함)
+  dryCount: number;
+  dryPnlUsd: number; // 모의 정산 손익 합 (리허설 — 실손익과 절대 합치지 않는다)
+};
+
+/** 날짜별 집계 (오름차순). 순수 함수 — 테스트는 tz를 주입한다. */
+export function aggregateDaily(trades: TradeRecord[], tz: string = DAY_TZ): DayPnl[] {
+  const m = new Map<string, DayPnl>();
+  for (const t of trades) {
+    const date = tradeDayKey(t.ts, tz);
+    let d = m.get(date);
+    if (!d) { d = { date, pnlUsd: 0, realCount: 0, wins: 0, count: 0, dryCount: 0, dryPnlUsd: 0 }; m.set(date, d); }
+    d.count++;
+    if (t.dryRun) {
+      d.dryCount++;
+      if (t.realizedPnlUsd != null) d.dryPnlUsd += t.realizedPnlUsd;
+    } else if (t.realizedPnlUsd != null) {
+      d.pnlUsd += t.realizedPnlUsd;
+      d.realCount++;
+      if (t.realizedPnlUsd > 0) d.wins++;
+    }
+  }
+  return [...m.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/** 현재 + 로테이션된 파일 전부 (캘린더는 지난달도 봐야 한다). 오래된 것부터. */
+async function readAllTrades(): Promise<TradeRecord[]> {
+  const out: TradeRecord[] = [];
+  try {
+    if (!existsSync(DIR)) return out;
+    const files = (await fs.readdir(DIR)).filter((f) => f === "trades.jsonl" || f.startsWith("trades.jsonl."));
+    for (const f of files) {
+      try {
+        const raw = await fs.readFile(path.join(DIR, f), "utf8");
+        for (const l of raw.split("\n")) {
+          if (!l) continue;
+          try { out.push(JSON.parse(l)); } catch { /* skip bad line */ }
+        }
+      } catch { /* 파일 하나가 깨져도 나머지는 보여준다 */ }
+    }
+  } catch { /* empty */ }
+  out.sort((a, b) => a.ts - b.ts);
+  return out;
+}
+
+export async function readDailyPnl(): Promise<DayPnl[]> {
+  return aggregateDaily(await readAllTrades());
+}
+
+/** 특정 날짜의 거래 (신규순) — 캘린더 셀 클릭 상세. 상세 화면에 필요한 만큼만. */
+export async function readDayTrades(date: string): Promise<TradeRecord[]> {
+  const all = await readAllTrades();
+  return all.filter((t) => tradeDayKey(t.ts) === date).reverse();
+}
+
 export type TradeStats = {
   count: number;
   wins: number; // realized net > 0
