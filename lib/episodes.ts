@@ -23,9 +23,12 @@ const MIN_NET_PCT = Number(process.env.EPISODE_MIN_NET_PCT ?? 0);
 // 종료: 연속 이 횟수만큼 임계 미달이면 닫는다 (틱 3초 × 10 = 30초 유예 —
 // 스프레드가 한 틱 출렁인 걸 에피소드 끝으로 오인하지 않게).
 const CLOSE_TICKS = 10;
-// 기록 가치 하한: 한두 틱 반짝(호가 노이즈)은 버린다. 지속 9초+ 또는 피크 0.5%+.
-const MIN_DURATION_SEC = 9;
-const MIN_KEEP_PEAK_PCT = 0.5;
+// 기록 가치 하한: 5분 못 버틴 기회는 안 적는다 (운영자 결정 2026-08-21).
+// 이 전략의 전송 ETA가 60분인데 5분도 못 버틴 갭은 복기할 가치가 없다 —
+// 예전 하한(9초 또는 피크 0.5%+)은 호가 반짝까지 다 적어서 목록이 노이즈가
+// 됐다. 판정은 병합(12분 창) **후** 길이 기준이라 조각난 기회는 이어 붙인
+// 수명으로 평가된다. 실행된 에피소드는 길이 무관 무조건 남는다(finalize).
+const MIN_DURATION_SEC = Number(process.env.EPISODE_MIN_DURATION_SEC ?? 300);
 // 곡선 다운샘플 상한 — 넘으면 반으로 솎는다(첫/끝 보존). 해상도는 절반이 되지만
 // 모양은 남는다 — 복기가 원하는 건 모양이다.
 const MAX_POINTS = 120;
@@ -165,8 +168,10 @@ function finalize(a: Active, endReason: Episode["endReason"]): void {
   ep.durationSec = Math.round((ep.endTs - ep.startTs) / 1000);
   ep.avgNetPct = Math.round((a.sumNet / Math.max(1, a.samples)) * 1000) / 1000;
   ep.endReason = endReason;
-  // 노이즈 컷: 짧고 얕은 반짝은 기록 가치가 없다 (실행됐으면 무조건 남긴다).
-  if (!ep.executed && ep.durationSec < MIN_DURATION_SEC && ep.peakNetPct < MIN_KEEP_PEAK_PCT) return;
+  // 노이즈 컷: 하한 못 넘긴 기회는 버린다 (실행됐으면 무조건 남긴다).
+  // 피크 우회 없음 — 아무리 높은 피크도 5분을 못 버티면 전송형 전략에선
+  // 어차피 못 먹는 기회다.
+  if (!ep.executed && ep.durationSec < MIN_DURATION_SEC) return;
   void append(ep);
 }
 

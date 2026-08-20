@@ -28,6 +28,12 @@ vi.mock("fs", async (orig) => {
   };
 });
 
+// 이 파일은 병합 역학만 검증한다 — 픽스처가 1~3분짜리라 기록 하한(기본 5분)에
+// 걸리면 전부 조용히 사라진다. 하한 자체는 episodeCut.test.ts가 못 박는다.
+// resetModules: 같은 워커에서 episodeCut이 먼저 돌았으면 하한 300으로 캐시된
+// 모듈이 남아 있다 — env를 바꿔도 임포트가 그걸 돌려줘 순서 따라 깨진다.
+process.env.EPISODE_MIN_DURATION_SEC = "0";
+vi.resetModules();
 const { recordEpisodes, flushAllEpisodes } = await import("@/lib/episodes");
 
 const opp = (net: number): Opportunity => ({
