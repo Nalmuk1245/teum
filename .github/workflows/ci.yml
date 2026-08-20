@@ -12,10 +12,14 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          # 개발 머신(Node 24 / npm 11)과 맞춘다 — npm 11이 만든 lockfile의
+          # 중첩 ws@7 optional peer(utf-8-validate) 해석을 npm 10(Node 20)이
+          # 못 읽어 npm ci가 EUSAGE로 죽었다. 런타임 불일치가 원인이므로
+          # lockfile을 고치는 게 아니라 CI 노드를 맞춘다.
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
