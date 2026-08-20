@@ -123,6 +123,21 @@ export function getTrack(id: string): { ts: number; gross: number }[] {
   return (H.get(id)?.samples ?? []).map((s) => ({ ts: s.ts, gross: s.gross }));
 }
 
+/** Downsampled gross series for the board's row sparkline (oldest→newest).
+ *  값만 보낸다(타임스탬프 생략) — 보드는 모양이 필요하지 전체 해상도가 필요한 게
+ *  아니고, 이건 스캔 응답에 실려 3초마다 전 기회 수만큼 곱해지는 페이로드다.
+ *  마지막 샘플은 항상 포함한다(현재값이 잘리면 스파크 끝과 순수익 칸이 어긋난다). */
+export function sparkGross(id: string, points = 40): number[] {
+  const s = H.get(id)?.samples ?? [];
+  if (s.length < 2) return [];
+  const r3 = (n: number) => Math.round(n * 1e3) / 1e3;
+  if (s.length <= points) return s.map((x) => r3(x.gross));
+  const out: number[] = [];
+  const step = (s.length - 1) / (points - 1);
+  for (let i = 0; i < points; i++) out.push(r3(s[Math.round(i * step)].gross));
+  return out;
+}
+
 /** Drop tracks not seen this scan cycle (prevents unbounded growth). */
 export function pruneHistory(seen: Set<string>, ts: number) {
   const cutoff = ts - WINDOW_MS;

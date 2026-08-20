@@ -10,7 +10,7 @@ import { fetchTransferStatus } from "./transfers";
 import { fetchPerpBases } from "./perps";
 import { fetchFundingRates, fetchMarks } from "./funding";
 import { hedgeCost } from "./hedgeCost";
-import { recordGap, pruneHistory, confidence } from "./history";
+import { recordGap, pruneHistory, confidence, sparkGross } from "./history";
 import { listingInfo } from "./listings";
 import { computeCalibrationPct } from "./calibration";
 
@@ -102,6 +102,9 @@ export async function scanAll(): Promise<Opportunity[]> {
     if (listing) o.newListing = listing;
     const gPrice = o.legs.find((l) => l.quote === "USDT")?.price ?? 0;
     o.persistence = recordGap(o.id, o.netPct, o.grossPct, gPrice, ts);
+    // 보드 스파크라인 — APR 행은 제외 (연환산 스케일이라 갭%와 축이 안 맞고,
+    // 펀딩은 정산 카운트다운이 이미 그 칸의 정보를 담당한다).
+    if (o.rateBasis !== "apr") o.spark = sparkGross(o.id);
     // Transfer-window risk: proceeds are captured at SELL time, ETA minutes
     // later. The unhedged exposure is the coin's PRICE vol (σ×√ETA) plus a
     // one-sided jump tail; even hedged, the USDT/KRW drift is uncovered. Hedge

@@ -73,9 +73,34 @@ export function Tile({
 
 // ── Board ─────────────────────────────────────────────────────────────────────
 
-export const COLS = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 84px 84px 104px";
+export const COLS = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 64px 84px 84px 104px";
 
-export const COLS_MON = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 84px 84px"; // monitor: no execute column
+export const COLS_MON = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 64px 84px 84px"; // monitor: no execute column
+
+/** 행 스파크라인 — 30분 net% 추이 (gross 시계열 − 현재 비용 근사).
+ *  숫자 하나(순수익)는 "지금"만 말한다. 이 갭이 커지는 중인지 무너지는 중인지는
+ *  모양이 말해주고, 그게 실행/관망 판단의 절반이다. 0선을 함께 그려 흑자 구간이
+ *  한눈에 보이게 한다. */
+export function Spark({ data, costPct }: { data?: number[]; costPct: number }) {
+  if (!data || data.length < 2) return <span style={{ color: "var(--text-mute)", fontSize: 10, textAlign: "right", display: "block" }}>—</span>;
+  const W = 56, HGT = 18, PAD = 1.5;
+  const net = data.map((g) => g - costPct);
+  let min = Math.min(...net, 0), max = Math.max(...net, 0);
+  if (max - min < 0.1) { const mid = (max + min) / 2; min = mid - 0.05; max = mid + 0.05; } // 평평한 시계열도 선이 보이게
+  const y = (v: number) => PAD + (HGT - 2 * PAD) * (1 - (v - min) / (max - min));
+  const x = (i: number) => PAD + (W - 2 * PAD) * (i / (net.length - 1));
+  const pts = net.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const last = net[net.length - 1];
+  const tone = last > 0 ? "var(--pos)" : "var(--text-mute)";
+  return (
+    <svg width={W} height={HGT} viewBox={`0 0 ${W} ${HGT}`} style={{ display: "block", justifySelf: "end" }} aria-hidden>
+      {/* 0선 — 이 위가 흑자 */}
+      <line x1={0} x2={W} y1={y(0)} y2={y(0)} stroke="var(--border-strong)" strokeWidth={1} strokeDasharray="2 3" />
+      <polyline points={pts} fill="none" stroke={tone} strokeWidth={1.4} strokeLinejoin="round" strokeLinecap="round" opacity={0.9} />
+      <circle cx={x(net.length - 1)} cy={y(last)} r={1.8} fill={tone} />
+    </svg>
+  );
+}
 
 export function Empty({ text }: { text: string }) {
   return (

@@ -7,7 +7,7 @@ import { pct, usd, price } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn } from "./cockpit-ui";
 
 export function Board({
   rows, loading, onExecute, mobile, showExecute, live, flash, emptyText, onInspect, inspectedId, lastColLabel,
@@ -57,6 +57,7 @@ export function Board({
           <span>경로</span>
           <span style={{ textAlign: "right" }}>총차익</span>
           <span style={{ textAlign: "right" }}>비용</span>
+          <span style={{ textAlign: "right" }}>추이</span>
           <span style={{ textAlign: "right" }}>순수익</span>
           <span style={{ textAlign: "right" }}>{lastColLabel ?? "한도"}</span>
           {showExecute && <span />}
@@ -122,6 +123,9 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
           </span>
         ) : <span>—</span>}
         {!isApr && <PersistChip p={o.persistence} />}
+        {!isApr && o.spark && o.spark.length >= 2 && (
+          <span style={{ marginLeft: "auto", flex: "0 0 auto" }}><Spark data={o.spark} costPct={o.costPct} /></span>
+        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -237,6 +241,10 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
       <span className="tnum" style={{ textAlign: "right", color: "var(--text-mute)" }}>
         −{o.costPct.toFixed(2)}%
       </span>
+      {/* 30분 추이 — APR 행은 스파크 없음(서버가 안 붙임) → "—" */}
+      <span style={{ justifySelf: "end" }}>
+        <Spark data={o.spark} costPct={o.costPct} />
+      </span>
       <span
         className="tnum"
         style={{ justifySelf: "end", color: netTone, fontWeight: 700, fontSize: 14 }}
@@ -286,8 +294,15 @@ const sameGap = (a?: LiveGap, b?: LiveGap) =>
     Math.round(a.netPct * 100) === Math.round(b.netPct * 100) &&
     Math.round(a.grossPct * 100) === Math.round(b.grossPct * 100));
 
+// Spark arrays are fresh objects every scan — compare by shape (length + ends),
+// which is what the 56px polyline can actually show.
+const sameSpark = (a?: number[], b?: number[]) =>
+  (!a?.length && !b?.length) ||
+  (!!a && !!b && a.length === b.length && a[a.length - 1] === b[b.length - 1] && a[0] === b[0]);
+
 const sameOpp = (a: Opportunity, b: Opportunity) =>
   a.id === b.id && a.netPct === b.netPct && a.grossPct === b.grossPct &&
+  sameSpark(a.spark, b.spark) &&
   a.costPct === b.costPct && a.notionalCapUsd === b.notionalCapUsd &&
   a.executable === b.executable && a.hasPerp === b.hasPerp &&
   a.transfer?.blocked === b.transfer?.blocked &&
