@@ -213,8 +213,17 @@ button:not(:disabled):active {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .panel-in, .overlay-in, .spike-flash { animation: none; }
+  .panel-in, .overlay-in, .spike-flash, .dock-pulse { animation: none; }
   button { transition: none; }
+}
+
+/* 실행 독 — 확인 대기(사람 손을 기다리는) 칩만 숨쉬듯 강조 */
+@keyframes dock-pulse {
+  0%, 100% { box-shadow: var(--shadow-lg); }
+  50% { box-shadow: 0 0 0 4px var(--brand-soft), var(--shadow-lg); }
+}
+.dock-pulse {
+  animation: dock-pulse 2s ease-in-out infinite;
 }
 
 /* Spike alert — a row whose live net just crossed the threshold */
