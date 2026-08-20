@@ -38,6 +38,16 @@ export type WalletAsset =
   | { kind: "token"; known: true; address: string; decimals: number }
   | { kind: "unknown"; known: false };
 
+/** 큐레이션 맵 전체 나열 — 지갑 잔고 폴백 리더가 "어떤 컨트랙트를 읽어볼지"
+ *  목록으로 쓴다 (OKX 지갑 API 없이는 자동 발견이 안 되므로 아는 것만 읽는다). */
+export function listCuratedTokens(): { base: string; chain: string; address: string; decimals: number }[] {
+  const out: { base: string; chain: string; address: string; decimals: number }[] = [];
+  for (const [base, chains] of Object.entries(TOKENS))
+    for (const [chain, t] of Object.entries(chains))
+      if (t) out.push({ base, chain, address: t.address, decimals: t.decimals });
+  return out;
+}
+
 /** How to send `base` on `chainKey`: native, a known token, or unknown. */
 export function tokenFor(base: string, chainKey: string): WalletAsset {
   const chain = CHAINS[chainKey];
