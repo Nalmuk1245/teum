@@ -9,7 +9,11 @@ module.exports = {
     {
       name: "arb",
       script: "node_modules/next/dist/bin/next",
-      args: "start -p 3100",
+      // -H 127.0.0.1: 루프백에만 바인딩한다. Next의 기본값은 0.0.0.0/:: 라서
+      // 플래그가 없으면 이 앱(인증 계층이 없는 단일 사용자 콘솔)이 LAN 전체에
+      // 열린다. 폰에서 보려면 `npm run start:lan`으로 명시적으로 여는 대신,
+      // SSH 터널·리버스 프록시 뒤에 두는 쪽을 권한다.
+      args: "start -p 3100 -H 127.0.0.1",
       cwd: __dirname,
       env: { NODE_ENV: "production" },
       // 크래시 시 자동 재시작. uncaughtException 핸들러가 알림 후 exit(1) 하므로

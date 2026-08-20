@@ -30,6 +30,11 @@ function headers(): Record<string, string> {
   const t = execToken();
   return { "content-type": "application/json", ...(t ? { "x-exec-token": t } : {}) };
 }
+/** 같은 헤더를 런 API 밖에서도 쓴다 — 한도 변경(/api/risk)·자동매수 무장
+ *  (/api/listing-auto)도 라이브에서는 EXEC_TOKEN을 요구한다. */
+export function authHeaders(): Record<string, string> {
+  return headers();
+}
 
 function apply(j: unknown) {
   const d = j as { runs?: Record<string, RunView>; killed?: boolean; maxInFlightUsd?: number; inFlightUsd?: number };

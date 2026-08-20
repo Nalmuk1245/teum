@@ -34,6 +34,17 @@ export function acquireSell(venue: string, base: string, owner: string): boolean
   return true;
 }
 
+/** 소유권 갱신 — 락은 STALE_MS 뒤 강제 회수되므로, 여러 라운드에 걸치는 작업
+ *  (스마트 청산: 지정가 → 리페그 → 시장가)은 라운드마다 이걸 불러 살아있음을
+ *  알린다. 안 부르면 아직 팔고 있는 도중에 락이 남에게 넘어간다.
+ *  소유자가 아니면 false — 이미 회수당했다는 뜻이다. */
+export function renewSell(venue: string, base: string, owner: string): boolean {
+  const cur = L.get(key(venue, base));
+  if (!cur || cur.owner !== owner) return false;
+  cur.at = Date.now();
+  return true;
+}
+
 export function releaseSell(venue: string, base: string, owner: string): void {
   const k = key(venue, base);
   const cur = L.get(k);
@@ -48,6 +59,20 @@ export function sellLockOwner(venue: string, base: string): string | null {
   if (!cur) return null;
   if (Date.now() - cur.at >= STALE_MS) return null; // stale = 없는 것으로
   return cur.owner;
+}
+
+/** 락을 잠깐 기다렸다 잡는다 — 매도 주문 하나는 초 단위로 끝나므로, 경합이
+ *  있어도 몇 백 ms 양보하면 대개 풀린다. 실행 엔진의 매도 다리처럼 "여기서
+ *  물러나면 20초를 버리는" 호출부용. 못 잡으면 false. */
+export async function acquireSellWait(
+  venue: string, base: string, owner: string, waitMs = 3000,
+): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    if (acquireSell(venue, base, owner)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 250));
+  }
 }
 
 /** owner로 감싼 임계구역 — 주문 하나를 락 안에서 실행. 못 잡으면 null 반환. */

@@ -170,10 +170,15 @@ function recordExecFailure(base: string, stepLabel: string) {
  *  Defensive aborts (risk limit, slippage cap, stale snapshot, missing key, gate
  *  closed) are the guards WORKING — counting them tripped the breaker on healthy
  *  refusals. Deposit-still-confirming isn't a failure at all. */
-function isExecFailure(r: { message?: string; pending?: boolean }): boolean {
+function isExecFailure(r: { message?: string; pending?: boolean; defensive?: boolean }): boolean {
   if (r.pending) return false;
+  // 1차 근거는 플래그다 — execStep의 guard()/unwired()가 붙인다. 메시지 문구가
+  // 바뀌어도, 거래소가 영어 원문을 돌려줘도 분류가 흔들리지 않는다.
+  if (r.defensive) return false;
+  // 폴백 정규식 — 플래그를 달 수 없는 바깥 문자열(엔진 자체의 재검증 중단,
+  // orders.ts의 rate-한도 거절 등)만 여기서 걸러진다.
   const m = r.message ?? "";
-  return !/리스크 한도|슬리피지|스냅샷 2분 초과|키 없음|미배선|재검증|차단|중단됨|한도 초과|최소 출금|재고 부족/.test(m);
+  return !/리스크 한도|슬리피지|스냅샷 2분 초과|키 없음|미배선|재검증|차단|중단됨|한도 초과|최소 출금|재고 부족|rate 한도|순서 대기/.test(m);
 }
 
 // ── persist (서버 파일) ───────────────────────────────────────────────────────
@@ -287,6 +292,9 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     fills: stepId === "settle" ? eng.fills : undefined,
     durations: stepId === "settle" ? eng.durations : undefined,
     timeline: stepId === "settle" ? eng.timeline : undefined,
+    // 실제로 헷지가 열렸는가 — 켰다고 설정만 한 게 아니라 hedge 단계가 done인가.
+    // 거래 기록의 hedged가 이 값을 쓴다(예전엔 opp.hasPerp를 썼다).
+    hedged: stepId === "settle" ? run?.statuses?.hedge === "done" : undefined,
     txs: stepId === "settle"
       ? Object.entries(run?.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url }))
       : undefined,
@@ -299,6 +307,13 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     else eng.qty = r.filledQty;
   }
   if (typeof r.walletBefore === "number") eng.walletBefore = r.walletBefore;
+  // 정산이 실현한 손익을 런에 누적한다 — 청산(unwind) 경로만 채우던 값이라
+  // 정산으로 끝난 런은 "실현 $" 배지가 0으로 떠 있었다. 롤백 중에는 더하지
+  // 않는다(진입 취소는 정산이 아니다).
+  if (typeof r.pnlUsd === "number" && r.pnlUsd !== 0 && !opts?.rollback) {
+    const cur = E.runs[id];
+    if (cur) patch(id, { pnlUsd: cur.pnlUsd + r.pnlUsd });
+  }
   if (r.fill?.quote && !opts?.rollback) {
     if (stepId === "buy") { eng.fills.buyQuote = r.fill.quote; eng.fills.buyCcy = r.fill.ccy; eng.fills.buyQty = r.fill.qty; }
     if (stepId === "sell") { eng.fills.sellQuote = r.fill.quote; eng.fills.sellCcy = r.fill.ccy; eng.fills.sellQty = r.fill.qty; }
@@ -311,7 +326,9 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
   }
   const out = {
     ok: r.ok, message: r.message, tx: r.tx as TxRef | undefined,
-    ambiguous: r.ambiguous, pending: r.pending,
+    // defensive를 그대로 흘린다 — 서킷 브레이커가 "가드가 막은 것"과
+    // "집행이 깨진 것"을 메시지 문구가 아니라 이 플래그로 가른다.
+    ambiguous: r.ambiguous, pending: r.pending, defensive: r.defensive,
   };
   // Remember only real successes, and never for the polling arrival steps.
   if (r.ok && !opts?.rollback && stepId !== "deposit" && stepId !== "recv") eng.done.set(eng.i, out);
@@ -422,7 +439,7 @@ async function loop(id: string) {
     patch(id, { statuses: { ...run().statuses, [step.id]: "running" } });
     const stepT0 = Date.now();
     if (!eng.stepFirstAt.has(i)) eng.stepFirstAt.set(i, stepT0);
-    let r: { ok: boolean; message?: string; tx?: TxRef; ambiguous?: boolean; pending?: boolean; replayed?: boolean };
+    let r: { ok: boolean; message?: string; tx?: TxRef; ambiguous?: boolean; pending?: boolean; defensive?: boolean; replayed?: boolean };
     try { r = await callStep(id, eng, step.id); }
     catch (e) { r = { ok: false, message: e instanceof Error ? e.message : "실패" }; }
     eng.durations[step.id] = Math.round((Date.now() - stepT0) / 1000);

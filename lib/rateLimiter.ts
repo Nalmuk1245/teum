@@ -14,8 +14,11 @@ type Bucket = { tokens: number; last: number };
 // 거래소별 주문 한도 (초당). 문서값의 ~70%로 보수적 — 여러 계정·다른 트래픽과
 // 나눠 쓰는 걸 감안. 실측 후 조정.
 //   업비트: 주문 8req/s 문서 → 5 · 바이낸스: 10/s → 7 · 빗썸: 보수적으로 2
-const RATE_PER_SEC: Record<string, number> = { upbit: 5, binance: 7, bithumb: 2 };
-const BURST: Record<string, number> = { upbit: 5, binance: 7, bithumb: 2 }; // 버킷 최대치
+//   바이비트: 10/s → 7 · OKX: 60/2s(=30/s)지만 보수적으로 7
+// 선물(binancePerp)도 같은 "binance" 버킷을 쓴다 — 거래소 IP 한도는 현물·선물을
+// 따로 세지 않으므로 버킷을 나누면 한도 안쪽이라는 보장이 깨진다.
+const RATE_PER_SEC: Record<string, number> = { upbit: 5, binance: 7, bithumb: 2, bybit: 7, okx: 7 };
+const BURST: Record<string, number> = { upbit: 5, binance: 7, bithumb: 2, bybit: 7, okx: 7 }; // 버킷 최대치
 
 const g = globalThis as unknown as { __arbOrderBuckets?: Map<string, Bucket> };
 g.__arbOrderBuckets ??= new Map();

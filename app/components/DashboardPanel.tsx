@@ -9,7 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Opportunity, Portfolio } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
-import { vlabel } from "./cockpit-ui";
+import { vlabel, Spark } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
 import type { RiskState } from "./ControlPanel";
 import { EpisodeCard } from "./ControlPanel";
@@ -53,7 +53,7 @@ function Kpi({ label, value, chip, sub, series, tone, compact }: {
         <span
           className="tnum"
           style={{
-            fontSize: compact ? 19 : 24, fontWeight: 700, letterSpacing: "-0.02em",
+            fontSize: compact ? 19 : 28, fontWeight: 700, letterSpacing: "-0.02em",
             color: tone ?? "var(--text)",
             // Last-resort break: a very large P&L must wrap inside the card
             // rather than widen the track and scroll the whole page sideways.
@@ -72,12 +72,14 @@ function Kpi({ label, value, chip, sub, series, tone, compact }: {
   );
 }
 
-export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }: {
+export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onOpenSettings, mobile }: {
   opps: Opportunity[];
   mobile?: boolean;
   liveOverlay: Record<string, LiveGap>;
   onGoTab: (tab: "monitor" | "funding" | "listing" | "control" | "assets") => void;
   onExecute: (o: Opportunity) => void;
+  /** 리스크 한도 편집은 ⚙ 설정 모달에 산다 — "한도 조정 →"이 바로 연다. */
+  onOpenSettings?: () => void;
 }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -223,10 +225,15 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     () => live.map((o) => `${o.id}:${Math.round(liveNet(o) * 100)}`).join("|"),
     [live, liveNet],
   );
+  // PC는 전폭 카드라 10행 — 모바일은 첫 화면 카드여서 6행 유지.
+  // 플러스만: 상위 N개를 그냥 자르면 플러스가 N개보다 적을 때 마이너스가 목록을
+  // 채운다 — 이 카드는 "지금 먹을 게 있나"라서 비용 못 넘는 행은 노이즈다.
+  // (스캔/히스토리는 마이너스도 계속 기록한다 — 지속성·σ·복기가 그걸 먹는다.
+  //  전체 우주는 갭 보드에서 "수익만" 토글을 끄면 보인다.)
   const stream = useMemo(
-    () => [...live].sort((a, b) => liveNet(b) - liveNet(a)).slice(0, 6),
+    () => [...live].filter((o) => liveNet(o) > 0).sort((a, b) => liveNet(b) - liveNet(a)).slice(0, mobile ? 6 : 10),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rankKey collapses live+overlay to display precision
-    [rankKey],
+    [rankKey, mobile],
   );
 
   const secHd = (title: string, right?: React.ReactNode) => (
@@ -237,33 +244,52 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
     </div>
   );
 
-  // ── 자금 배분 카드 — 모바일은 compact: 총액·바·범례만 작게 ──
-  const fundsCard = (compact: boolean) => (
-    <div style={{ ...CARD, padding: compact ? "12px 14px" : "16px 18px" }}>
+  // ── 자금 배분 — 모바일: compact 카드, PC: 최상단 슬림 스트립 ──
+  // 잔고는 가장 느리게 변하는 정보라 두꺼운 히어로 카드를 줄 이유가 없다.
+  // 한 줄 스트립으로 최상단에 두면 "얼마 있고 어디에 있나"가 첫 눈에 들어오고,
+  // 감시 상태·실시간 기회(실제 용건)는 스크롤 없이 그대로 보인다.
+  const segBar = (h: number) => (
+    <div style={{ display: "flex", height: h, gap: 4 }}>
+      {p(cash) > 0 && <div title={`가용 ${usd(cash)}`} style={{ width: `${p(cash)}%`, background: "var(--brand)", opacity: 0.75, borderRadius: 6 }} />}
+      {p(coins) > 0 && <div title={`포지션 ${usd(coins)}`} style={{ width: `${p(coins)}%`, background: "var(--amber)", borderRadius: 6 }} />}
+      {p(transit) > 0 && <div title={`전송 중 ${usd(transit)}`} style={{ width: `${Math.max(2, p(transit))}%`, background: "var(--pos)", borderRadius: 6 }} />}
+    </div>
+  );
+  const legend = (fs: number, gap: number) => (
+    <div style={{ display: "flex", gap, fontSize: fs, color: "var(--text-dim)", flexWrap: "wrap" }}>
+      <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--brand)", opacity: 0.75, marginRight: 6 }} />가용 <b className="tnum">{usd(cash)}</b> · {p(cash)}%</span>
+      <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--amber)", marginRight: 6 }} />포지션 <b className="tnum">{usd(coins)}</b> · {p(coins)}%</span>
+      <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--pos)", marginRight: 6 }} />전송 중 <b className="tnum">{usd(transit)}</b> · {p(transit)}%</span>
+    </div>
+  );
+  const fundsCardMobile = (
+    <div style={{ ...CARD, padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-        <span style={{ fontSize: compact ? 12.5 : 13.5, fontWeight: 700 }}>자금 배분</span>
+        <span style={{ fontSize: 12.5, fontWeight: 700 }}>자금 배분</span>
         {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
-        {compact && <span className="tnum" style={{ fontSize: 15, fontWeight: 700, marginLeft: 2 }}>{usd(totalCap)}</span>}
+        <span className="tnum" style={{ fontSize: 15, fontWeight: 700, marginLeft: 2 }}>{usd(totalCap)}</span>
         <button type="button" onClick={() => onGoTab("assets")} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
       </div>
-      {!compact && (
-        <>
-          <div className="tnum" style={{ marginTop: 8, fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em" }}>{usd(totalCap)}</div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)" }}>
-            글로벌 {portfolio ? Math.round(portfolio.skewPct) : "—"} : KR {portfolio ? 100 - Math.round(portfolio.skewPct) : "—"}
-          </div>
-        </>
-      )}
-      <div style={{ marginTop: compact ? 10 : 16, display: "flex", height: compact ? 12 : 22, gap: 4 }}>
-        {p(cash) > 0 && <div title={`가용 ${usd(cash)}`} style={{ width: `${p(cash)}%`, background: "var(--brand)", opacity: 0.75, borderRadius: 6 }} />}
-        {p(coins) > 0 && <div title={`포지션 ${usd(coins)}`} style={{ width: `${p(coins)}%`, background: "var(--amber)", borderRadius: 6 }} />}
-        {p(transit) > 0 && <div title={`전송 중 ${usd(transit)}`} style={{ width: `${Math.max(2, p(transit))}%`, background: "var(--pos)", borderRadius: 6 }} />}
+      <div style={{ marginTop: 10 }}>{segBar(12)}</div>
+      <div style={{ marginTop: 8 }}>{legend(10.5, 12)}</div>
+    </div>
+  );
+  const fundsStrip = (
+    <div style={{ ...CARD, padding: "12px 18px", display: "flex", alignItems: "center", gap: 20, marginBottom: 12 }}>
+      <div style={{ flex: "0 0 auto" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span className="tnum" style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>{usd(totalCap)}</span>
+          {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
+        </div>
+        <div style={{ marginTop: 2, fontSize: 10.5, color: "var(--text-mute)" }}>
+          총자본 · 글로벌 {portfolio ? Math.round(portfolio.skewPct) : "—"} : KR {portfolio ? 100 - Math.round(portfolio.skewPct) : "—"}
+        </div>
       </div>
-      <div style={{ display: "flex", gap: compact ? 12 : 16, marginTop: compact ? 8 : 12, fontSize: compact ? 10.5 : 11.5, color: "var(--text-dim)", flexWrap: "wrap" }}>
-        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--brand)", opacity: 0.75, marginRight: 6 }} />가용 <b className="tnum">{usd(cash)}</b> · {p(cash)}%</span>
-        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--amber)", marginRight: 6 }} />포지션 <b className="tnum">{usd(coins)}</b> · {p(coins)}%</span>
-        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--pos)", marginRight: 6 }} />전송 중 <b className="tnum">{usd(transit)}</b> · {p(transit)}%</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {segBar(14)}
+        <div style={{ marginTop: 7 }}>{legend(11.5, 16)}</div>
       </div>
+      <button type="button" onClick={() => onGoTab("assets")} style={{ flex: "0 0 auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
     </div>
   );
 
@@ -274,7 +300,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
         <button type="button" onClick={() => onGoTab("monitor")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>갭 보드 →</button>
       ))}
       {stream.length === 0 ? (
-        <div style={{ padding: "22px 16px", fontSize: 12, color: "var(--text-mute)" }}>스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다.</div>
+        <div style={{ padding: "22px 16px", fontSize: 12, color: "var(--text-mute)" }}>
+          {live.length > 0
+            ? `지금은 비용을 넘는 기회 없음 — ${live.length}건 감시 중`
+            : "스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다."}
+        </div>
       ) : (
         <div style={{ padding: "2px 16px 8px" }}>
           {stream.map((o) => {
@@ -282,13 +312,15 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
             const held = o.persistence?.heldSec ?? 0;
             const [buy, sell] = o.legs;
             return (
-              <div key={o.id} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+              <div key={o.id} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
                 <span style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700 }}>{o.base}</div>
                   <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {o.kind === "kimchi" ? "김프" : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"} · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
                   </div>
                 </span>
+                {/* 30분 추이 — 전폭 승격으로 생긴 자리 (모바일은 3열 유지) */}
+                {!mobile && <Spark data={o.spark} costPct={o.costPct} />}
                 <span className="tnum" style={{ fontWeight: 700, color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
                 {/* 지속 열은 모바일에서 접는다 — 3열 템플릿에 자식이 4개면
                     마지막이 다음 줄로 밀려 레이아웃이 어긋난다. */}
@@ -322,10 +354,12 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
       {mobile && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
           {streamCard}
-          {fundsCard(true)}
+          {fundsCardMobile}
           <EpisodeCard />
         </div>
       )}
+      {/* PC: 잔고 스트립이 맨 위 — "얼마 있고 어디에 있나" 한 줄 */}
+      {!mobile && fundsStrip}
       {/* 상단 그리드: 감시 상태 | KPI 2×2 | 리스크 현황 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
         <div style={{ ...CARD, gridRow: mobile ? "auto" : "1 / 3", gridColumn: mobile ? "1 / -1" : undefined, padding: "16px 18px" }}>
@@ -417,21 +451,16 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, mobile }
           </div>
           <button
             type="button"
-            onClick={() => onGoTab("control")}
+            onClick={() => (onOpenSettings ? onOpenSettings() : onGoTab("control"))}
             style={{ marginTop: "auto", paddingTop: 10, border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
           >
-            한도 조정 →
+            한도 조정 (설정) →
           </button>
         </div>
       </div>
 
-      {/* 하단: 자금 배분 | 기회 스트림 — 모바일에선 둘 다 이미 위에 있다 */}
-      {!mobile && (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
-          {fundsCard(false)}
-          {streamCard}
-        </div>
-      )}
+      {/* 기회 스트림 — 자금이 스트립으로 올라가면서 전폭 승격 (모바일은 이미 위에) */}
+      {!mobile && <div style={{ marginTop: 12 }}>{streamCard}</div>}
 
       {/* 기회 복기 — 지난 기회 구간(임계 위)을 다시 본다. 실행이 아니라 분석이라
           운영 탭이 아니라 여기(보는 화면)에 둔다. */}

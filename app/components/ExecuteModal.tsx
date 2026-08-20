@@ -100,7 +100,10 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
         className="panel-in"
         style={{
           width: isMobile ? "100%" : 480, maxWidth: "100%",
-          maxHeight: isMobile ? "92dvh" : "90dvh", overflowY: "auto",
+          // 통스크롤 금지 — 내용이 길면 본문만 스크롤하고, 실행 버튼 줄은
+          // 하단 푸터로 상시 노출한다 (스크롤해야 버튼이 보이던 문제).
+          maxHeight: isMobile ? "92dvh" : "90dvh",
+          display: "flex", flexDirection: "column",
           background: "var(--card)", border: "1px solid var(--border-strong)",
           borderRadius: isMobile ? "16px 16px 0 0" : "var(--radius)",
           boxShadow: "var(--shadow-lg)",
@@ -111,10 +114,19 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
           <span style={{ fontWeight: 700, fontSize: 15 }}>실행 · {opp.base}</span>
           <span style={{ color: "var(--text-mute)", fontSize: 12 }}>{km.label}</span>
           <span style={{ flex: 1 }} />
+          {/* 접기 = 그냥 닫기 — 런은 스토어에 살아서 계속 돌고, 우하단 독이
+              진행 상황을 이어받는다. ✕와 결과는 같지만 "실행이 죽지 않는다"를
+              버튼이 말해준다 (런이 있을 때만 의미가 있어 그때만 노출). */}
+          {running && (
+            <button type="button" onClick={guardedClose} title="백그라운드로 접기 — 우하단에서 진행 상황이 계속 보입니다"
+              style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+              접기 ↘
+            </button>
+          )}
           <button type="button" onClick={guardedClose} style={xBtn}>✕</button>
         </div>
 
-        <div style={{ padding: 18 }}>
+        <div style={{ padding: 18, overflowY: "auto", minHeight: 0, flex: 1 }}>
           {opp.legs.map((l, i) => (
             <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 13.5 }}>
               <span>
@@ -272,11 +284,27 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
 
           <StepTimeline steps={plan} statuses={statuses} messages={messages} txs={txs} pauseAt={pauseAt} />
 
+          {/* Position / smart unwind — once a position exists (buy filled) and
+              the run isn't full-auto. Store-backed → survives modal close.
+              Hidden again when nothing is left to unwind (sold or settled) —
+              unless a manual unwind happened, whose log/PnL stays visible. */}
+          {run && statuses.buy === "done" && run.autoLevel !== "auto" &&
+            (run.remaining > run.totalQty * 1e-6 || run.unwindLog.length > 0) && (
+            <PositionPanel run={run} />
+          )}
+
+          <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
+            {store.killed
+              ? "킬 스위치가 활성화되어 신규 실행이 차단됩니다. 해제하려면 상단 정지 버튼을 누르세요."
+              : "실행은 백그라운드에서 돌아갑니다 — 이 창을 닫아도 계속 진행되며 '운영' 탭에서 상태를 볼 수 있습니다. 현재 DRY-RUN(시뮬)."}
+          </p>
+        </div>
+
+        {/* Run controls — 스크롤 영역 밖 고정 푸터. 에러도 버튼 옆에서 바로 보인다. */}
+        <div style={{ padding: "12px 18px 14px", borderTop: "1px solid var(--border)", background: "var(--card)", flex: "0 0 auto" }}>
           {phase === "error" && error && <Warn text={error} />}
           {startErr && <Warn text={startErr} />}
-
-          {/* Run controls */}
-          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: (phase === "error" && error) || startErr ? 10 : 0 }}>
             {phase === "idle" || phase === "done" ? (
               <button
                 type="button"
@@ -379,21 +407,6 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
               </button>
             )}
           </div>
-
-          {/* Position / smart unwind — once a position exists (buy filled) and
-              the run isn't full-auto. Store-backed → survives modal close.
-              Hidden again when nothing is left to unwind (sold or settled) —
-              unless a manual unwind happened, whose log/PnL stays visible. */}
-          {run && statuses.buy === "done" && run.autoLevel !== "auto" &&
-            (run.remaining > run.totalQty * 1e-6 || run.unwindLog.length > 0) && (
-            <PositionPanel run={run} />
-          )}
-
-          <p style={{ marginTop: 12, color: "var(--text-mute)", fontSize: 11.5, lineHeight: 1.5 }}>
-            {store.killed
-              ? "킬 스위치가 활성화되어 신규 실행이 차단됩니다. 해제하려면 상단 정지 버튼을 누르세요."
-              : "실행은 백그라운드에서 돌아갑니다 — 이 창을 닫아도 계속 진행되며 '운영' 탭에서 상태를 볼 수 있습니다. 현재 DRY-RUN(시뮬)."}
-          </p>
         </div>
       </div>
     </div>

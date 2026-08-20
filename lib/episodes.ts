@@ -23,9 +23,12 @@ const MIN_NET_PCT = Number(process.env.EPISODE_MIN_NET_PCT ?? 0);
 // 종료: 연속 이 횟수만큼 임계 미달이면 닫는다 (틱 3초 × 10 = 30초 유예 —
 // 스프레드가 한 틱 출렁인 걸 에피소드 끝으로 오인하지 않게).
 const CLOSE_TICKS = 10;
-// 기록 가치 하한: 한두 틱 반짝(호가 노이즈)은 버린다. 지속 9초+ 또는 피크 0.5%+.
-const MIN_DURATION_SEC = 9;
-const MIN_KEEP_PEAK_PCT = 0.5;
+// 기록 가치 하한: 5분 못 버틴 기회는 안 적는다 (운영자 결정 2026-08-21).
+// 이 전략의 전송 ETA가 60분인데 5분도 못 버틴 갭은 복기할 가치가 없다 —
+// 예전 하한(9초 또는 피크 0.5%+)은 호가 반짝까지 다 적어서 목록이 노이즈가
+// 됐다. 판정은 병합(12분 창) **후** 길이 기준이라 조각난 기회는 이어 붙인
+// 수명으로 평가된다. 실행된 에피소드는 길이 무관 무조건 남는다(finalize).
+const MIN_DURATION_SEC = Number(process.env.EPISODE_MIN_DURATION_SEC ?? 300);
 // 곡선 다운샘플 상한 — 넘으면 반으로 솎는다(첫/끝 보존). 해상도는 절반이 되지만
 // 모양은 남는다 — 복기가 원하는 건 모양이다.
 const MAX_POINTS = 120;
@@ -67,9 +70,38 @@ type Active = {
   samples: number;
 };
 
-const g = globalThis as unknown as { __arbEpisodes?: Map<string, Active> };
+/** 닫혔지만 아직 파일에 안 쓴 에피소드 — 병합 대기실.
+ *
+ *  왜 필요한가(실측): 290개 에피소드가 사실 **8개**의 (코인+경로) 조합이었다.
+ *  RED 하나가 82회로 쪼개졌고 재개 간격의 중앙값이 21~69초다. 0% 근처에서
+ *  깜빡이는 기회가 매번 새 에피소드를 열어, 30분짜리 기회 하나가 30초짜리
+ *  수십 개로 기록됐다. 그러면 복기 카드의 "얼마나 지속됐나"가 통째로 거짓말이
+ *  된다 — 지속시간은 조각 길이지 기회의 수명이 아니게 되니까.
+ *
+ *  그래서 닫자마자 쓰지 않고 여기 잠시 세워둔다. MERGE_GAP 안에 같은 기회가
+ *  다시 임계를 넘으면 새로 열지 않고 **이어 붙인다**. 창이 지나면 그때 쓴다. */
+type Parked = { a: Active; closedAt: number; reason: Episode["endReason"] };
+
+const g = globalThis as unknown as {
+  __arbEpisodes?: Map<string, Active>;
+  __arbEpisodesParked?: Map<string, Parked>;
+};
 g.__arbEpisodes ??= new Map();
+g.__arbEpisodesParked ??= new Map();
 const ACTIVE = g.__arbEpisodes;
+const PARKED = g.__arbEpisodesParked;
+
+/** 이 시간 안에 같은 기회가 돌아오면 같은 에피소드로 본다.
+ *
+ *  값의 근거(실측 재개 간격 분위수): p25=18s · p50=63s · p75=181s · p90=496s.
+ *  처음엔 3분으로 잡았는데 하필 p75에 걸쳐 293구간이 82구간으로밖에 안 줄었다.
+ *  12분이면 p90까지 흡수한다.
+ *
+ *  왜 이렇게 넉넉해도 되는가: 이 전략의 전송 ETA가 60분이다. 8분 끊겼다 돌아온
+ *  갭은 운영자 입장에서 **같은 사건**이다 — 한 시간짜리 여정 앞에서 8분의
+ *  끊김은 진입 판단을 바꾸지 않는다. 창을 좁게 잡아 조각을 늘리면, 조각 길이가
+ *  기회의 수명인 척하게 되는 쪽이 훨씬 큰 거짓말이다. */
+const MERGE_GAP_MS = Number(process.env.EPISODE_MERGE_GAP_SEC ?? 720) * 1000;
 
 function blockReasonOf(o: Opportunity): string | undefined {
   if (o.executable) return undefined;
@@ -115,16 +147,48 @@ async function append(ep: Episode): Promise<void> {
   } catch { /* 기록 실패가 스캔을 깨면 안 된다 */ }
 }
 
-function close(a: Active, endReason: Episode["endReason"]): void {
+/** 닫되 아직 쓰지 않는다 — 병합 창이 지나야 확정이다. */
+function park(id: string, a: Active, reason: Episode["endReason"]): void {
+  PARKED.set(id, { a, closedAt: Date.now(), reason });
+}
+
+/** 병합 창이 지난 대기 건을 파일로 확정한다. 매 틱 호출. */
+function flushParked(now: number): void {
+  for (const [id, p] of PARKED) {
+    if (now - p.closedAt < MERGE_GAP_MS) continue;
+    PARKED.delete(id);
+    finalize(p.a, p.reason);
+  }
+}
+
+function finalize(a: Active, endReason: Episode["endReason"]): void {
   const ep = a.ep;
   const last = ep.curve[ep.curve.length - 1];
   ep.endTs = last ? last[0] : ep.startTs;
   ep.durationSec = Math.round((ep.endTs - ep.startTs) / 1000);
   ep.avgNetPct = Math.round((a.sumNet / Math.max(1, a.samples)) * 1000) / 1000;
   ep.endReason = endReason;
-  // 노이즈 컷: 짧고 얕은 반짝은 기록 가치가 없다 (실행됐으면 무조건 남긴다).
-  if (!ep.executed && ep.durationSec < MIN_DURATION_SEC && ep.peakNetPct < MIN_KEEP_PEAK_PCT) return;
+  // 노이즈 컷: 하한 못 넘긴 기회는 버린다 (실행됐으면 무조건 남긴다).
+  // 피크 우회 없음 — 아무리 높은 피크도 5분을 못 버티면 전송형 전략에선
+  // 어차피 못 먹는 기회다.
+  if (!ep.executed && ep.durationSec < MIN_DURATION_SEC) return;
   void append(ep);
+}
+
+/** 프로세스가 내려갈 때 기록을 잃지 않게 — 종료 훅이 부른다.
+ *
+ *  **진행 중(ACTIVE)인 것까지** 확정한다. 대기실만 비우면, 재시작 시점에 살아
+ *  있던 에피소드는 통째로 사라진다 — 그리고 그건 대개 지금 가장 오래 지속되고
+ *  있는, 즉 가장 복기할 가치가 큰 기회다. */
+export function flushAllEpisodes(): void {
+  for (const [id, p] of PARKED) {
+    PARKED.delete(id);
+    finalize(p.a, p.reason);
+  }
+  for (const [id, a] of ACTIVE) {
+    ACTIVE.delete(id);
+    finalize(a, "decayed");
+  }
 }
 
 /**
@@ -145,6 +209,25 @@ export function recordEpisodes(opps: Opportunity[]): void {
       const price = o.legs.find((l) => l.quote === "USDT")?.price ?? o.legs[0]?.price ?? 0;
       if (!active) {
         if (!above) continue;
+        // 방금 닫힌 같은 기회가 대기실에 있으면 새로 열지 않고 이어 붙인다.
+        const parked = PARKED.get(o.id);
+        if (parked) {
+          PARKED.delete(o.id);
+          ACTIVE.set(o.id, parked.a);
+          parked.a.belowCount = 0;
+          // 아래 갱신 블록으로 흘러가게 한다 (이 틱의 점이 곡선에 실린다).
+          const resumed = parked.a;
+          resumed.ep.curve.push([now, r3(o.netPct), r3(o.grossPct), price]);
+          if (resumed.ep.curve.length > MAX_POINTS) resumed.ep.curve = thin(resumed.ep.curve);
+          resumed.sumNet += o.netPct;
+          resumed.samples++;
+          if (o.netPct > resumed.ep.peakNetPct) {
+            resumed.ep.peakNetPct = r3(o.netPct);
+            resumed.ep.peakTs = now;
+            resumed.ep.atPeak = snapshotPeak(o);
+          }
+          continue;
+        }
         const buy = o.legs.find((l) => l.side === "buy");
         const sell = o.legs.find((l) => l.side === "sell");
         ACTIVE.set(o.id, {
@@ -174,16 +257,24 @@ export function recordEpisodes(opps: Opportunity[]): void {
       if (above) active.belowCount = 0;
       else if (++active.belowCount >= CLOSE_TICKS) {
         ACTIVE.delete(o.id);
-        close(active, "decayed");
+        park(o.id, active, "decayed");
       }
     }
-    // 보드에서 사라진 기회 — 즉시 닫는다 (스프레드 소멸/상폐 등).
+    // 보드에서 사라진 기회 — 임계 미달과 **같은 유예**를 준다.
+    //
+    // 예전엔 즉시 닫았다. 그런데 기회가 보드에서 빠지는 흔한 이유는 소멸이
+    // 아니라 호가가 한 틱 벌어져 스프레드 게이트(MAX_SPREAD_PCT)에 걸리는
+    // 것이다. 그 한 틱마다 에피소드를 끊으니, decayed에 30초 유예를 준 의미가
+    // vanished 경로로 통째로 새고 있었다. 진짜로 사라진 기회는 어차피 유예가
+    // 지나면 닫힌다 — 늦게 닫혀서 잃는 건 없고, 일찍 끊어서 잃는 건 많다.
     for (const [id, a] of ACTIVE) {
-      if (!seen.has(id)) {
+      if (seen.has(id)) continue;
+      if (++a.belowCount >= CLOSE_TICKS) {
         ACTIVE.delete(id);
-        close(a, "vanished");
+        park(id, a, "vanished");
       }
     }
+    flushParked(now);
   } catch { /* 복기 기록이 스캔을 깨면 안 된다 */ }
 }
 
@@ -191,7 +282,10 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** 실행 연결 — startRun이 부른다. 활성 에피소드가 있으면 표식. */
 export function markEpisodeExecuted(oppId: string, runId: string, dry: boolean): void {
-  const a = ACTIVE.get(oppId);
+  // 병합 대기실도 본다 — 기회가 잠깐 임계 아래로 내려간 사이에 실행을 시작하는
+  // 건 드물지 않고(모달을 열어둔 채 몇 초 지나면 그렇게 된다), 그때 표식을
+  // 놓치면 "실행 가능했지만 안 함(놓친 기회)"으로 잘못 복기된다.
+  const a = ACTIVE.get(oppId) ?? PARKED.get(oppId)?.a;
   if (a && !a.ep.executed) a.ep.executed = { runId, dry, ts: Date.now() };
 }
 

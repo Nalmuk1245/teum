@@ -8,6 +8,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { beep, VenueLink } from "./cockpit-ui";
+import { authHeaders } from "@/lib/runStore";
 import {
   CAP, CARD, BTN, BTN_GHOST, INPUT, DETAIL_ANCHOR,
   fmtPx, ago, Countdown,
@@ -22,7 +23,9 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   const [rows, setRows] = useState<Listing[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [histOpen, setHistOpen] = useState(false);
+  // 기본 펼침 — 접혀 있으면 존재 자체를 모른다 (실사용 피드백). 긴 목록은
+  // 아래 스크롤 컨테이너가 감당한다.
+  const [histOpen, setHistOpen] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
 
   // PC 2단 배치에서 우측 컬럼이 데스크탑 표(최소 ~390px)를 담을 수 있는가.
@@ -51,6 +54,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   const [auto, setAuto] = useState<AutoCfg | null>(null);
   const [autoLive, setAutoLive] = useState(false);
   const [autoSize, setAutoSize] = useState("500");
+  const [autoErr, setAutoErr] = useState<string | null>(null);
   const [drilling, setDrilling] = useState(false);
   // 감지 알림 (비프 + 데스크톱) — persisted, 기본 on.
   const [detectAlert, setDetectAlert] = useState(true);
@@ -105,7 +109,12 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
 
   const saveAuto = async (p: Partial<AutoCfg>) => {
     try {
-      const j = await (await fetch("/api/listing-auto", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(p) })).json();
+      // authHeaders: 토큰이 있으면 실어 보낸다. 이 라우트 자체는 토큰을 요구하지
+      // 않고, 브라우저발 CSRF는 미들웨어(lib/originGuard)가 막는다.
+      const res = await fetch("/api/listing-auto", { method: "POST", headers: authHeaders(), body: JSON.stringify(p) });
+      const j = await res.json();
+      if (!res.ok) { setAutoErr(j.message ?? "자동매수 설정 실패"); return; }
+      setAutoErr(null);
       if (j.cfg) setAuto(j.cfg);
     } catch { /* ignore */ }
   };
@@ -178,6 +187,11 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
           {auto?.armed ? "끄기" : "켜기"}
         </button>
       </div>
+      {autoErr && (
+        <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border)", fontSize: 11, color: "var(--neg)" }}>
+          {autoErr}
+        </div>
+      )}
 
       {/* 플레이 리스트 */}
       {rows.length === 0 ? (
@@ -236,26 +250,33 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         </div>
       )}
 
-      {/* 성과 히스토리 — 같은 카드의 접이식 섹션 */}
-      {history.length > 0 && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setHistOpen(!histOpen)}
-            style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "9px 14px", cursor: "pointer", color: "var(--text-dim)" }}
-          >
-            <span style={{ fontSize: 12, fontWeight: 600 }}>성과 히스토리</span>
-            <span style={CAP}>{history.length}건 · 공지가→피크</span>
-            <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{histOpen ? "▲" : "▼"}</span>
-          </button>
-          {histOpen && (
+      {/* 성과 히스토리 — 같은 카드의 접이식 섹션 (기본 펼침) */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setHistOpen(!histOpen)}
+          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "9px 14px", cursor: "pointer", color: "var(--text-dim)" }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 600 }}>성과 히스토리</span>
+          <span style={CAP}>{history.length > 0 ? `${history.length}건 · 공지가→피크` : "공지가→피크"}</span>
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{histOpen ? "▲" : "▼"}</span>
+        </button>
+        {histOpen && history.length === 0 && (
+          // 0건이어도 섹션은 보인다 — 안 보이면 "기록 기능이 없다"로 읽힌다.
+          <div style={{ padding: "0 14px 12px", fontSize: 11.5, color: "var(--text-mute)" }}>
+            아직 기록 없음 — 감시 중 상장이 지나가면 자동으로 쌓입니다
+          </div>
+        )}
+        {histOpen && history.length > 0 && (
+          // 전 건 표시 — 잘라 보여주면 "이게 전부"로 오독한다. 길이는 스크롤이 감당.
+          <div style={{ maxHeight: 300, overflowY: "auto" }}>
             <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: "4px 12px", padding: "0 14px 12px", fontSize: 11, alignItems: "baseline" }}>
               <span style={CAP}>티커</span><span style={CAP}>공지</span>
               <span style={{ ...CAP, textAlign: "right" }}>피크</span>
               <span style={{ ...CAP, textAlign: "right" }}>도달</span>
               <span style={{ ...CAP, textAlign: "right" }}>실현</span>
-              {history.slice(0, 12).map((h) => (
+              {history.map((h) => (
                 <Fragment key={h.base + h.announcedAt}>
                   {/* 지난 상장도 다시 열어본다 — 그때 왜 그 값이 나왔는지 보려면
                       결국 같은 상세 패널이 필요하다. 티커 자체가 그 입구다. */}
@@ -278,9 +299,9 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
                 </Fragment>
               ))}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 

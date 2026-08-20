@@ -66,6 +66,9 @@ export type Opportunity = {
   rateBasis?: "trade" | "apr";
   /** Gap persistence — how long/steadily this edge has held (flicker vs real). */
   persistence?: { heldSec: number; hitRatePct: number; samples: number; volPctPerMin: number; jumpPct: number };
+  /** 30-min gross% history, downsampled (≤40, oldest→newest) — 보드 행 스파크라인.
+   *  net으로 그리려면 현재 costPct를 빼서 쓴다 (과거 비용은 안 남기므로 근사). */
+  spark?: number[];
   /** Fresh KR listing (상장따리): announced/opened on Upbit/Bithumb — the
    *  fastest kimchi spike. overseas = on a global CEX (front-runnable);
    *  opened = trading is live (else: announced, pre-open). */

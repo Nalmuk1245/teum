@@ -6,6 +6,7 @@
 // (파일 값이 우선). 클라이언트에는 절대 원문을 돌려주지 않는다(끝 4자리만).
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "fs";
+import { execFileSync } from "child_process";
 import path from "path";
 
 const FILE = path.join(process.cwd(), "data", "secrets.json");
@@ -94,8 +95,40 @@ export function saveSecrets(patch: Record<string, string>): { saved: string[]; c
   }
   mkdirSync(path.dirname(FILE), { recursive: true });
   writeFileSync(FILE, JSON.stringify(store, null, 2), "utf8");
-  try { chmodSync(FILE, 0o600); } catch { /* windows */ }
+  restrictToOwner(FILE);
   return { saved, cleared };
+}
+
+/** 이 파일은 거래소 키와 지갑 프라이빗 키를 평문으로 담는다 — 소유자만 읽게 한다.
+ *
+ *  POSIX는 chmod 0600이면 끝이지만 **Windows에서 chmod는 사실상 무동작**이다
+ *  (Node가 읽기전용 비트만 건드린다). 그래서 예전에는 chmod 실패를 "windows니까"
+ *  하고 조용히 삼켰고, 결과적으로 Windows 박스에서는 상속된 기본 ACL 그대로 —
+ *  같은 머신의 다른 계정·프로세스가 읽을 수 있는 파일에 키가 저장됐다.
+ *  Windows에서는 icacls로 상속을 끊고 현재 사용자에게만 전체 권한을 준다. */
+function restrictToOwner(file: string): void {
+  if (process.platform !== "win32") {
+    try { chmodSync(file, 0o600); } catch { /* 파일시스템이 거부 — 아래 경고와 동일 취급 */ }
+    return;
+  }
+  const user = process.env.USERNAME
+    ? `${process.env.USERDOMAIN ?? "%USERDOMAIN%"}\\${process.env.USERNAME}`
+    : null;
+  if (!user) { warnPerms(file); return; }
+  try {
+    // /inheritance:r = 상속된 ACE 제거(관리자·Users 그룹 등), /grant:r = 이 사용자만.
+    execFileSync("icacls", [file, "/inheritance:r", "/grant:r", `${user}:F`], {
+      stdio: "ignore", windowsHide: true, timeout: 5000,
+    });
+  } catch {
+    warnPerms(file);
+  }
+}
+
+function warnPerms(file: string): void {
+  console.warn(
+    `[secrets] ${file} 권한을 소유자 전용으로 좁히지 못했습니다 — 이 파일에는 거래소 키/지갑 키가 평문으로 들어갑니다. 파일 권한을 직접 확인하세요.`,
+  );
 }
 
 /** 클라이언트용 상태 — 원문 대신 설정 여부 + 끝 4자리 힌트만. */

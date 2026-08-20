@@ -7,11 +7,13 @@ import { CONFIG, TAG_REQUIRED, FEES } from "./config";
 import { sendToken, walletAddress } from "./wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 import { fetchDepositAddress } from "./deposits";
+import type { OrderResult } from "./orders";
 import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, bybitWithdrawTx, okxOrder, okxWithdraw, okxWithdrawTx, checkDeposit } from "./orders";
 import { resolveWalletAsset } from "./tokens";
 import { dexConfigured, approveDex, swapDex, CEXDEX_CHAINS, allTokens, QUOTE_STABLES } from "./dex";
 import { sendRawEvmTx } from "./wallet";
 import { isKilled } from "./killswitch";
+import { acquireSellWait, releaseSell } from "./sellLock";
 import { checkEntry, recordPnl } from "./risk";
 import { notifyNow } from "./telegram";
 import { recordTrade, type TimelineEntry } from "./trades";
@@ -77,9 +79,22 @@ export type StepResult = {
   ambiguous?: boolean;
   /** Not a failure, just not done yet (deposit still confirming). */
   pending?: boolean;
+  /** 방어적 중단 — 가드가 **작동한** 것이지 집행이 깨진 게 아니다(리스크 한도,
+   *  슬리피지 상한, 낡은 스냅샷, 키 없음, 미배선, 주소·태그 미확인 등).
+   *  서킷 브레이커는 이걸 세면 안 된다. 예전엔 한글 메시지 정규식으로 갈랐는데,
+   *  거래소 원문(영어) 메시지가 섞이거나 문구를 다듬는 순간 정상 거절이
+   *  집행 실패로 집계돼 브레이커가 조기에 걸렸다. 이제 플래그가 1차 근거고
+   *  정규식은 외부 문자열용 폴백으로만 남는다. */
+  defensive?: boolean;
   /** Wallet balance snapshot taken before an outbound withdrawal — the engine
    *  carries it to the `recv` step so arrival is judged on the delta. */
   walletBefore?: number;
+  /** 이 단계가 실현한 USD 손익 (settle이 채운다). 엔진이 런의 누적 실현 손익에
+   *  더한다 — 예전엔 정산 손익이 trades.jsonl에만 남고 런 객체에는 실리지 않아,
+   *  운영 탭 실행 카드와 실행 모달의 "실현 $" 배지가 **정산 완료 런에서 항상
+   *  0**이었다(값을 채우는 경로가 청산뿐이었다). 부분청산 뒤 정산까지 간 런은
+   *  청산분만 표시돼 실제 합계와 어긋났다. */
+  pnlUsd?: number;
 };
 // Explorer link for a tx on the opp's transfer chain.
 function txInfo(chainLabel: string | undefined, hash: string | null | undefined, dry: boolean) {
@@ -89,6 +104,19 @@ function txInfo(chainLabel: string | undefined, hash: string | null | undefined,
   return { hash, url };
 }
 const fail = (message: string): StepResult => ({ ok: false, dryRun: CONFIG.DRY_RUN, message });
+/** 방어적 중단 — 가드가 막은 것. 서킷 브레이커에 세지 않는다. */
+const guard = (message: string): StepResult => ({ ok: false, dryRun: CONFIG.DRY_RUN, message, defensive: true });
+
+/** 최소 출금 수량의 출처를 메시지에 밝힌다.
+ *
+ *  이 게이트는 예전엔 `buy.venue === "binance"`일 때만 돌았다. 그래서 bybit·OKX·
+ *  업비트·빗썸에서 매수한 경로는 방어 없이 출금 API 에러로 죽었는데, **그 시점엔
+ *  이미 헷지가 열려 있다**. 지금은 모든 다리에 건다: 수치 자체는 바이낸스
+ *  networkList가 출처라 다른 거래소에선 근사치지만, 이 게이트는 진입 롤백이
+ *  아직 가능한 지점에서 걸리므로 **틀려서 일찍 막는 쪽이 늦게 깨지는 쪽보다
+ *  싸다**. 근사치일 땐 메시지에 그렇게 적어 운영자가 판단할 수 있게 한다. */
+const minWithdrawNote = (venue?: string) =>
+  venue === "binance" ? " (바낸 기준)" : ` (바낸 기준 근사치 · 실제 ${venue ?? "출금 거래소"} 한도는 다를 수 있음)`;
 
 /** On-chain balance of `base` at our wallet on `chainKey`. null = can't tell. */
 async function walletBalanceOf(base: string, chainKey: string): Promise<number | null> {
@@ -125,8 +153,8 @@ async function walletArrival(
     }
     return { ok: true, dryRun: true, message: "지갑 수신 확인 (모의)", tx: { hash: `sim:${chain || "chain"}:recv:${opp.base}`, url: null } };
   }
-  if (!chain) return fail("체인 미상 — 수신 확인 불가");
-  if (!destAddr(chain)) return fail("지갑 주소 없음 — 수신 확인 불가");
+  if (!chain) return guard("체인 미상 — 수신 확인 불가");
+  if (!destAddr(chain)) return guard("지갑 주소 없음 — 수신 확인 불가");
   const bal = await walletBalanceOf(opp.base, chain);
   if (bal == null) return { ok: false, pending: true, dryRun: false, message: `${opp.base} 지갑 잔고 조회 실패 — 재확인 대기` };
   // Expect the withdrawal net of the venue's flat fee; 2% slack for fee-table
@@ -158,7 +186,7 @@ async function walletArrival(
 const unwired = (message: string): StepResult =>
   CONFIG.DRY_RUN
     ? { ok: true, dryRun: true, message: `${message} (모의) · 실주문 미배선` }
-    : { ok: false, dryRun: false, message: `실행 불가 — ${message} 미배선` };
+    : { ok: false, dryRun: false, message: `실행 불가 — ${message} 미배선`, defensive: true };
 
 // Execute ONE step server-side. Orders (Binance spot/perp, Upbit, Bithumb),
 // withdrawal, deposit polling and the personal-wallet transfer are wired to real
@@ -179,6 +207,11 @@ export async function runStep(
     durations?: Record<string, number>;
     /** 단계별 진행 기록(시각 포함) — settle에서 거래 레코드에 그대로 실린다. */
     timeline?: TimelineEntry[];
+    /** 이 런이 **실제로** 헷지를 열었는가. 예전엔 거래 기록의 `hedged`를
+     *  `opp.hasPerp`(그 코인에 퍼프가 존재하는가)로 남겨서, 헷지를 끄고 돈 런도
+     *  hasPerp면 true로, 헷지를 켜고 돈 런도 hasPerp가 없으면 false로 기록됐다 —
+     *  사후 분석에서 "헷지가 실제로 걸렸나"를 아예 가를 수 없었다. */
+    hedged?: boolean;
   },
 ): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
@@ -205,7 +238,7 @@ export async function runStep(
   // be closed out.
   const readOnlyStep = stepId === "deposit" || stepId === "recv" || stepId === "settle";
   if (!readOnlyStep && isKilled()) {
-    return fail("킬 스위치 활성 — 실행 차단");
+    return guard("킬 스위치 활성 — 실행 차단");
   }
   // 모의 장애 주입 (SIM_FAIL_PCT) — 롤백·서킷 브레이커·재시도 UI 리허설용.
   if (dry) {
@@ -213,29 +246,29 @@ export async function runStep(
     if (injected) return fail(injected);
   }
   if (isEntry) {
-    if (!(sizeUsd > 0)) return fail("주문 규모가 0 이하");
+    if (!(sizeUsd > 0)) return guard("주문 규모가 0 이하");
     // 스냅샷 신선도 — 라이브 진입은 2분 넘은 기회로 시작하지 않는다
     // (재검증이 있어도 진입 자체가 낡은 판단이면 원천 차단이 맞다).
     if (!dry && opp.ts && Date.now() - opp.ts > 120_000) {
-      return fail("기회 스냅샷 2분 초과 — 보드 갱신 후 다시 실행");
+      return guard("기회 스냅샷 2분 초과 — 보드 갱신 후 다시 실행");
     }
     const risk = checkEntry(sizeUsd);
-    if (risk) return fail(`리스크 한도 — ${risk}`);
+    if (risk) return guard(`리스크 한도 — ${risk}`);
   }
 
   switch (stepId) {
     case "buy": {
-      if (!buy) return fail("매수 다리 없음");
+      if (!buy) return guard("매수 다리 없음");
       // (킬 스위치·스냅샷 신선도·리스크 한도는 위 프리플라이트에서 처리)
       // 최소 출금 수량 사전 게이트 — 부분체결로 수량이 min 미달이면 출금
       // 단계에서 터지고 롤백 덤프로 이어진다. 진입 전에 막는다.
       const willWithdraw =
         opp.kind === "kimchi" || opp.kind === "cross-cex" ||
         (opp.kind === "cex-dex" && opp.legs.find((l) => l.venue === "dex")?.side === "sell");
-      if (willWithdraw && buy.venue === "binance") {
+      if (willWithdraw) {
         const wMin = withdrawMinCoin(opp.base);
         if (wMin != null && qty < wMin) {
-          return fail(`예상 수량 ${qty.toFixed(6)} < 바낸 최소 출금 ${wMin} — 규모를 키우거나 중단`);
+          return guard(`예상 수량 ${qty.toFixed(6)} < 최소 출금 ${wMin}${minWithdrawNote(buy.venue)} — 규모를 키우거나 중단`);
         }
       }
       // Live slippage cap — a thin book can eat the whole edge in one market order.
@@ -244,7 +277,7 @@ export async function runStep(
           quoteAmount: buy.quote === "KRW" ? qty * (buy.price || 0) : sizeUsd,
         });
         if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
-          return fail(`매수 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
+          return guard(`매수 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
         }
       }
       const r =
@@ -290,10 +323,10 @@ export async function runStep(
       // cex-dex: one-time ERC20 approve for the OKX aggregator spender. In DRY
       // this is a no-op; live checks OKX keys + wallet.
       if (dry) return { ok: true, dryRun: true, message: "DEX 승인 (모의)" };
-      if (!dexConfigured()) return fail("OKX_WEB3 키 없음 — DEX 실행 불가");
+      if (!dexConfigured()) return guard("OKX_WEB3 키 없음 — DEX 실행 불가");
       const dexLeg = opp.legs.find((l) => l.venue === "dex");
       const { chainKey, token } = await dexTarget(opp, dexLeg);
-      if (!chainKey || !token) return fail("DEX 토큰/체인 미확인 — 승인 차단");
+      if (!chainKey || !token) return guard("DEX 토큰/체인 미확인 — 승인 차단");
       const ap = await approveDex(chainKey, token.address, "115792089237316195423570985008687907853269984665640564039457584007913129639935");
       if (!ap) return fail("approve 캘리데이터 조회 실패");
       const res = await sendRawEvmTx({ chain: chainKey, to: ap.to, data: ap.data }, [ap.to]);
@@ -303,12 +336,12 @@ export async function runStep(
       // cex-dex DEX leg: OKX swap calldata → wallet signs (router whitelisted,
       // minReceive enforced by OKX per our slippage cap).
       if (dry) return { ok: true, dryRun: true, message: "DEX 스왑 (모의)", tx: { hash: "sim:dex:swap", url: null } };
-      if (!dexConfigured()) return fail("OKX_WEB3 키 없음 — DEX 실행 불가");
+      if (!dexConfigured()) return guard("OKX_WEB3 키 없음 — DEX 실행 불가");
       const dexLeg = opp.legs.find((l) => l.venue === "dex");
       const walletAddr = walletAddress();
-      if (!walletAddr) return fail("개인지갑 주소 없음 — 스왑 차단");
+      if (!walletAddr) return guard("개인지갑 주소 없음 — 스왑 차단");
       const { chainKey, token, stable } = await dexTarget(opp, dexLeg);
-      if (!chainKey || !token || !stable) return fail("DEX 경로 미확인 — 스왑 차단");
+      if (!chainKey || !token || !stable) return guard("DEX 경로 미확인 — 스왑 차단");
       // buy on DEX = stable→token; sell on DEX = token→stable.
       const dexBuys = dexLeg?.side === "buy";
       const from = dexBuys ? stable : token;
@@ -340,7 +373,7 @@ export async function runStep(
       // shorting the full buy leaves a residual net-short every trade.
       const wFee = withdrawFeeCoin(opp.base) ?? 0;
       const hedgeQty = Math.max(0, qty - wFee);
-      if (hedgeQty <= 0) return fail("헷지 수량 0 (출금비 차감 후)");
+      if (hedgeQty <= 0) return guard("헷지 수량 0 (출금비 차감 후)");
       // Live margin gate: the coin is in-flight and can't collateralize the
       // short — require free USDT ≥ 60% of notional (≈1.6x max) so a pump
       // during transfer doesn't liquidate the hedge exactly when it matters.
@@ -349,7 +382,7 @@ export async function runStep(
         const price = opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
         const notional = hedgeQty * price;
         if (free !== null && free < notional * 0.6) {
-          return fail(`선물 가용 마진 부족 ($${free.toFixed(0)} < 필요 $${(notional * 0.6).toFixed(0)}) — 청산 위험, 헷지 차단`);
+          return guard(`선물 가용 마진 부족 ($${free.toFixed(0)} < 필요 $${(notional * 0.6).toFixed(0)}) — 청산 위험, 헷지 차단`);
         }
       }
       const r = await binancePerp(opp.base, "SHORT", hedgeQty);
@@ -381,10 +414,10 @@ export async function runStep(
       const net = NET_LABEL[chain] ?? chain;
       // 부분체결 등으로 실수량이 최소 출금 미달이면 API 에러 대신 명시 중단
       // (여기서 실패해야 롤백 경로가 슬리피지 가드를 태운다).
-      if (buy?.venue === "binance") {
+      {
         const wMin = withdrawMinCoin(opp.base);
         if (wMin != null && qty < wMin) {
-          return fail(`체결 수량 ${qty.toFixed(6)} < 최소 출금 ${wMin} — 출금 불가, 수동 처리 또는 롤백`);
+          return guard(`체결 수량 ${qty.toFixed(6)} < 최소 출금 ${wMin}${minWithdrawNote(buy?.venue)} — 출금 불가, 수동 처리 또는 롤백`);
         }
       }
       const evm = getChain(chain)?.family === "evm";
@@ -460,21 +493,21 @@ export async function runStep(
     case "transfer": {
       // Personal wallet → destination exchange deposit address (EVM hop only).
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
-      if (!chain) return fail(`${opp.transfer?.network?.chain ?? "체인 미상"} — 미지원 체인`);
+      if (!chain) return guard(`${opp.transfer?.network?.chain ?? "체인 미상"} — 미지원 체인`);
       const destVenue = sell?.venue ?? "upbit";
       const fetched = await fetchDepositAddress(destVenue, opp.base, NET_LABEL[chain] ?? chain);
       // Live: never substitute a fallback destination for a real send.
-      if (!fetched?.address && !dry) return fail("입금주소 미확인 — 송금 차단");
-      if (TAG_REQUIRED.has(opp.base) && !fetched?.tag && !dry) return fail(`${opp.base} 태그 필수 — 태그 미확인, 송금 차단`);
+      if (!fetched?.address && !dry) return guard("입금주소 미확인 — 송금 차단");
+      if (TAG_REQUIRED.has(opp.base) && !fetched?.tag && !dry) return guard(`${opp.base} 태그 필수 — 태그 미확인, 송금 차단`);
       const to = fetched?.address || "0xDRYRUN_DEST";
       // 큐레이션 → 내 지갑 보유 컨트랙트(OKX) → 토큰리스트 순 자동 해석.
       const asset = await resolveWalletAsset(opp.base, chain);
-      if (asset.kind === "unknown" && !dry) return fail(`${opp.base} 토큰 컨트랙트 미확인 — 송금 차단 (운영 탭 > 수동 컨트랙트 등록으로 뚫을 수 있음)`);
+      if (asset.kind === "unknown" && !dry) return guard(`${opp.base} 토큰 컨트랙트 미확인 — 송금 차단 (운영 탭 > 수동 컨트랙트 등록으로 뚫을 수 있음)`);
       // FLOOR, never round: toFixed rounds half-up, so a balance of 1.0000004
       // became a 1.000001 request and the transfer reverted on insufficient
       // funds (gas burned, and past the irreversible boundary so no rollback).
       const sendQty = Math.floor(qty * 1e6) / 1e6;
-      if (!(sendQty > 0)) return fail("전송 수량 0 (6자리 내림 후)");
+      if (!(sendQty > 0)) return guard("전송 수량 0 (6자리 내림 후)");
       const res = await sendToken({
         chain, to, amountHuman: String(sendQty),
         tag: fetched?.tag ?? undefined,
@@ -518,20 +551,38 @@ export async function runStep(
       return { ok: r.ok, pending: r.pending, dryRun: r.dryRun, message: r.message, tx: dtx, filledQty: r.filledQty };
     }
     case "sell": {
-      if (!sell) return fail("매도 다리 없음");
+      if (!sell) return guard("매도 다리 없음");
       if (!dry) {
         const est = await estimateLegSlippage(sell.venue, sell.symbol, "sell", { baseQty: qty });
         if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
-          return fail(`매도 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
+          return guard(`매도 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 중단`);
         }
       }
-      const r =
-        sell.venue === "binance" ? await binanceSpot(opp.base, "SELL", { qty })
-        : sell.venue === "bybit" ? await bybitOrder(opp.base, "SELL", { qty })
-        : sell.venue === "okx" ? await okxOrder(opp.base, "SELL", { qty })
-        : sell.venue === "upbit" ? await upbitOrder(opp.base, "ask", { volume: qty })
-        : sell.venue === "bithumb" ? await bithumbOrder(opp.base, "ask", qty)
-        : null;
+      // 매도 뮤텍스 — 자동매도 트리거·상장 매도와 같은 (거래소, 코인)을 동시에
+      // 팔지 않는다. 이 락이 없으면 둘 중 하나가 거래소에서 거절되는데, 거절된
+      // 쪽이 하필 여기(비가역 출금 뒤)면 롤백이 불가능해 **퍼프 숏이 현물 없이
+      // 남는다**(네이키드 숏). 생성 시점 가드가 공존을 막지만 그건 advisory read라
+      // TOCTOU 창이 있고, 이 락이 그 창을 닫는 마지막 방어다.
+      const lockOwner = `run:${opp.id}:${stepId}`;
+      if (!(await acquireSellWait(sell.venue, opp.base, lockOwner))) {
+        // 실패가 아니라 대기 — 엔진의 pending 루프가 다음 주기에 다시 시도한다.
+        return {
+          ok: false, pending: true, dryRun: dry,
+          message: `${sell.venue} ${opp.base} 다른 매도자 처리 중 — 순서 대기`,
+        };
+      }
+      let r: OrderResult | null;
+      try {
+        r =
+          sell.venue === "binance" ? await binanceSpot(opp.base, "SELL", { qty })
+          : sell.venue === "bybit" ? await bybitOrder(opp.base, "SELL", { qty })
+          : sell.venue === "okx" ? await okxOrder(opp.base, "SELL", { qty })
+          : sell.venue === "upbit" ? await upbitOrder(opp.base, "ask", { volume: qty })
+          : sell.venue === "bithumb" ? await bithumbOrder(opp.base, "ask", qty)
+          : null;
+      } finally {
+        releaseSell(sell.venue, opp.base, lockOwner);
+      }
       if (!r) return unwired(`${sell.venue} ${opp.base} 매도`);
       // 모의 체결 — 매도 시점의 실호가 VWAP. 매수와 매도 사이에 (모의) 전송
       // 시간이 흘렀으므로, 이 재조회가 전송 중 가격 변동을 리허설 손익에 싣는다.
@@ -567,7 +618,7 @@ export async function runStep(
           ts: Date.now(), base: opp.base, kind: opp.kind,
           route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
           sizeUsd, detectedNetPct: opp.netPct, realizedNetPct, realizedPnlUsd,
-          hedged: !!opp.hasPerp, dryRun: dry, status: "done",
+          hedged: opts.hedged ?? !!opp.hasPerp, dryRun: dry, status: "done",
           durationsSec: opts.durations,
           timeline: opts.timeline?.length ? opts.timeline : undefined,
           txs: opts.txs?.length ? opts.txs : undefined,
@@ -606,7 +657,8 @@ export async function runStep(
             hedgePnlUsd: perpPnl !== 0 ? perpPnl : null,
           });
           const perpNote = perpPnl !== 0 ? ` · 헷지 ${perpPnl >= 0 ? "+" : "−"}$${Math.abs(perpPnl).toFixed(2)}` : "";
-          return { ok: true, dryRun: dry, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)})${perpNote} · 실체결 기반` };
+          // pnlUsd를 결과에 실어 보낸다 — 엔진이 런의 누적 실현 손익에 더한다.
+          return { ok: true, dryRun: dry, pnlUsd: pnl, message: `정산 · 실현 ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)})${perpNote} · 실체결 기반` };
         }
       }
       const pnl = (opp.netPct / 100) * sizeUsd;
@@ -620,7 +672,7 @@ export async function runStep(
       return { ok: true, dryRun: dry, message: `정산 · 순수익 ${opp.netPct >= 0 ? "+" : ""}${opp.netPct.toFixed(2)}% (${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}) · 추정치` };
     }
     default:
-      return fail(`알 수 없는 단계: ${stepId}`);
+      return guard(`알 수 없는 단계: ${stepId}`);
   }
 }
 

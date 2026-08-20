@@ -9,6 +9,7 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import AssetsPanel, { AssetSummary } from "./components/InventoryPanel";
 import CockpitBoard from "./components/CockpitBoard";
 import ExecuteModal from "./components/ExecuteModal";
+import RunDock from "./components/RunDock";
 import ControlPanel from "./components/ControlPanel";
 import { ListingPanel } from "./components/ListingPanel";
 import { GapInspect } from "./components/GapInspect";
@@ -312,7 +313,10 @@ export default function Cockpit() {
   }, []);
 
   return (
-    <main style={{ minHeight: "100dvh" }}>
+    // PC 확대 — 인라인 px가 수백 곳이라 base font로는 못 키운다. zoom은
+    // 레이아웃까지 스케일하는 표준 속성(FF 126+)이라 밀도 비율이 유지된다.
+    // QHD(2560)에서 1.15배 → 콘텐츠 폭 1680이 물리 ~1930px로 렌더.
+    <main style={{ minHeight: "100dvh", zoom: isMobile ? undefined : 1.15 }}>
       {/* ── Header ─────────────────────────────────────────────── */}
       <header
         style={{
@@ -389,7 +393,7 @@ export default function Cockpit() {
         )}
       </header>
 
-      <div style={{ maxWidth: 1560, margin: "0 auto", padding: isMobile ? "10px 10px" : "18px 24px" }}>
+      <div style={{ maxWidth: 1680, margin: "0 auto", padding: isMobile ? "10px 10px" : "18px 24px" }}>
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
         <div
           style={{
@@ -459,6 +463,7 @@ export default function Cockpit() {
             mobile={isMobile}
             onGoTab={(t) => setMode(t)}
             onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         )}
 
@@ -693,6 +698,14 @@ export default function Cockpit() {
       {selected && (
         <ExecuteModal opp={selected} initialRunId={openRunId} onClose={() => { setSelected(null); setOpenRunId(null); }} isMobile={isMobile} />
       )}
+      {/* 우하단 실행 독 — 모달을 접어도(닫아도) 진행 중인 런이 시야에 남는다 */}
+      <RunDock
+        runs={runList}
+        hidden={!!selected}
+        isMobile={isMobile}
+        onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }}
+        onMore={() => setMode("control")}
+      />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </main>
   );
