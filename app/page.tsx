@@ -14,6 +14,7 @@ import ControlPanel from "./components/ControlPanel";
 import { ListingPanel } from "./components/ListingPanel";
 import { GapInspect } from "./components/GapInspect";
 import { DashboardPanel } from "./components/DashboardPanel";
+import { PremiumPanel } from "./components/PremiumPanel";
 import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 import { useIsMobile } from "./mobile";
@@ -65,12 +66,12 @@ export default function Cockpit() {
   const [selected, setSelected] = useState<Opportunity | null>(null);
   // Tabs: monitor = one-shot gaps, funding = APR yields, execute = launch
   // trades, control = ops (runs dashboard + risk + kill), assets = balances.
-  const [mode, setMode] = useState<"home" | "monitor" | "funding" | "listing" | "control" | "assets">("home");
+  const [mode, setMode] = useState<"home" | "monitor" | "premium" | "funding" | "listing" | "control" | "assets">("home");
   // 새로고침해도 보던 탭 유지 — 상시 띄워 두는 화면이라 리셋되면 매번 다시 찾아간다.
   useEffect(() => {
     try {
       const v = localStorage.getItem("ac.mode");
-      if (v && ["home", "monitor", "funding", "listing", "control", "assets"].includes(v)) setMode(v as typeof mode);
+      if (v && ["home", "monitor", "premium", "funding", "listing", "control", "assets"].includes(v)) setMode(v as typeof mode);
     } catch { /* private mode */ }
   }, []);
   useEffect(() => {
@@ -416,6 +417,7 @@ export default function Cockpit() {
           {([
             { k: "home", label: "대시보드", sub: "요약" },
             { k: "monitor", label: "갭", sub: "차익·실행" },
+            { k: "premium", label: "프리미엄", sub: "갭 차트" },
             { k: "funding", label: "펀딩", sub: "APR" },
             { k: "listing", label: "상장", sub: "따리·물량" },
             { k: "control", label: "운영", sub: "실행·리스크" },
@@ -478,6 +480,9 @@ export default function Cockpit() {
             onOpenSettings={(t) => { setSettingsTab(t ?? null); setSettingsOpen(true); }}
           />
         )}
+
+        {/* ── 프리미엄 차트 — 두 거래소 갭의 시계열(레퍼런스 툴 구성) ── */}
+        {mode === "premium" && <PremiumPanel mobile={isMobile} />}
 
         {/* ── Control tower: runs dashboard + risk limits + tools ── */}
         {mode === "control" && (
