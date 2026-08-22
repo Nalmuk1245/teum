@@ -397,7 +397,7 @@ export default function Cockpit() {
         {/* Don't flash "실주문"(red) before meta loads — unknown ≠ live. */}
         {meta && (
           <Pill
-            text={meta.dryRun ? "모의" : "실주문"}
+            text={meta.dryRun ? "페이퍼" : "실주문"}
             tone={meta.dryRun ? "var(--amber)" : "var(--neg)"}
             soft
           />

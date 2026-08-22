@@ -50,6 +50,7 @@ import { notify, notifyNow, telegramConfigured } from "./telegram";
 import { startListingWatch, watchStatus } from "./listings";
 import { startWatchdog } from "./watchdog";
 import { loopLag } from "./loopLag"; // 프로세스 멈춤 상시 감시 (import만으로 시작)
+import { verdictSample } from "./watchVerdict";
 import { loadSection, saveSection } from "./persist";
 
 // 3s: a sweep costs ~0.8-1.2s once every venue fetch is timeout-bounded and the
@@ -173,14 +174,15 @@ function recordSrcHeat(): void {
     const w = watchStatus();
     const lag = loopLag();
     const h = Math.floor(Date.now() / 3600_000);
+    // 판정식은 lib/watchVerdict.ts 하나 — 카드의 상태 점과 같은 기준이어야
+    // 한 줄 안에서 점과 스트립이 반대로 말하는 일이 없다.
+    const input = { ...w, lag };
     const verdicts: Record<string, boolean | null> = {
       scan: true, // 성공한 틱에서만 불린다 — 표본 없음 = 스캔이 죽어 있었음
-      ann: w.annBlocked ? false : w.annOkAgoSec != null && w.annOkAgoSec < 120,
-      mkt: w.mktOkAgoSec != null && w.mktOkAgoSec < 60,
-      tg: w.tgConfigured ? w.tgOkAgoSec != null && w.tgOkAgoSec < 600 : null, // 미설정은 표본 제외
-      // worstMs는 10분 창 최악값 — 그대로 쓰면 1회 멈춤이 이후 10분을 전부
-      // down으로 칠한다. 발생 후 1분 안쪽일 때만 down으로 계상.
-      proc: lag ? !(lag.worstMs >= 400 && lag.worstAgoSec != null && lag.worstAgoSec < 60) : null,
+      ann: verdictSample("ann", input),
+      mkt: verdictSample("mkt", input),
+      tg: verdictSample("tg", input),
+      proc: verdictSample("proc", input),
     };
     const heat = loadSection<SrcHeatMap>("srcHeat") ?? {};
     for (const [src, ok] of Object.entries(verdicts)) {
@@ -268,10 +270,11 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
 }
 
 /** 감시 카드 "재시작" — 멈춘 latch를 강제 해제하고 즉시 한 틱 돈다.
- *  건강한 틱(10초 미만 진행 중)은 건드리지 않는다 — refresh()의 중첩 금지
- *  원칙(이벤트 루프 기아)을 무인증 POST가 우회하면 안 된다. */
+ *  진행 중인 틱은 stuck() 판정(STUCK_MS)을 그대로 따른다. 임계를 따로 두면
+ *  "건강한 틱"의 정의가 두 개가 되고, 무인증 POST가 refresh()의 중첩 금지
+ *  원칙(이벤트 루프 기아)을 우회하는 구멍이 된다. */
 export function kickScan(): void {
-  if (C.refreshing && Date.now() - C.refreshStartedAt < 10_000) return;
+  if (C.refreshing && !stuck()) return; // 살아 있는 틱은 건드리지 않는다
   C.refreshing = false;
   C.refreshStartedAt = 0;
   void refresh();

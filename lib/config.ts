@@ -15,7 +15,7 @@ export const CONFIG = {
   EXCLUDE: new Set([
     "USDT", "USDC", "DAI", "FDUSD", "BUSD", "TUSD", "USDP", "USDD",
     // 신규 스테이블 (2025~) — USDE/USDS는 업비트·빗썸에도 상장돼 있다.
-    "USDE", "USD1", "USDS", "PYUSD", "RLUSD", "USDG", "USDY", "EURC", "USDF", "FDUSD",
+    "USDE", "USD1", "USDS", "PYUSD", "RLUSD", "USDG", "USDY", "EURC", "USDF",
     "WBTC", "WETH", "WBETH", "STETH", "CBETH", "BTCB",
   ]),
   /** Minimum global-leg 24h volume (USD) for a premium to be actionable. */

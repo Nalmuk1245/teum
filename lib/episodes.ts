@@ -132,10 +132,16 @@ function snapshotPeak(o: Opportunity): Episode["atPeak"] {
 }
 
 function thin(curve: EpisodePoint[]): EpisodePoint[] {
-  // 반으로 솎기 — 짝수 인덱스만 남기되 마지막 점은 보존.
+  // 반으로 솎기 — 짝수 인덱스만 남기되 마지막 점과 "피크 점"은 보존.
+  // 1틱짜리 스파이크가 홀수 인덱스면 통째로 사라져, 곡선 최대가 저장된
+  // peakNetPct와 어긋난다 (헤더 +1.84% / 차트 라벨 +0.90% 식으로 갈림).
+  let pi = 0;
+  for (let i = 1; i < curve.length; i++) if (curve[i][1] > curve[pi][1]) pi = i;
+  const last = curve.length - 1;
   const out: EpisodePoint[] = [];
-  for (let i = 0; i < curve.length; i += 2) out.push(curve[i]);
-  if (out[out.length - 1] !== curve[curve.length - 1]) out.push(curve[curve.length - 1]);
+  for (let i = 0; i < curve.length; i++) {
+    if (i % 2 === 0 || i === pi || i === last) out.push(curve[i]);
+  }
   return out;
 }
 

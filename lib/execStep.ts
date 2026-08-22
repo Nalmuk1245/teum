@@ -299,7 +299,7 @@ export async function runStep(
         : buy.venue === "upbit" ? await upbitOrder(opp.base, "bid", { priceKrw: qty * (buy.price || 0) })
         : buy.venue === "bithumb" ? await bithumbOrder(opp.base, "bid", qty)
         : null;
-      if (!r) return unwired(`${buy.venue} ${opp.base} 매수`);
+      if (!r) { rec(null); return unwired(`${buy.venue} ${opp.base} 매수`); }
       // 모의 체결 — 그 순간의 실호가 VWAP로 채운다. 스냅샷가 체결이면 모의
       // 손익이 항상 보드 숫자와 같아져 리허설 기록이 아무것도 말해주지 않는다.
       // (수수료는 체결가에 반영 — settle이 실체결 경로로 실현 손익을 계산하게 된다.)
@@ -324,6 +324,7 @@ export async function runStep(
       // exceeding the balance, and settle unable to compute realized P&L (so
       // recordPnl never runs and the daily-loss limit goes blind). Stop instead.
       if (r.ok && !dry && !(r.filledQty && r.filledQty > 0)) {
+        rec(null); // 주문은 실제로 나갔다 — 체결량만 미확인이라 실패로 남긴다
         return {
           ok: false, dryRun: false,
           message: `${buy.venue} 매수는 성공했지만 체결량을 확인할 수 없습니다 — 명목 수량으로 진행하지 않습니다. 거래소에서 잔고 확인 후 수동 처리`,
@@ -612,7 +613,7 @@ export async function runStep(
       } finally {
         releaseSell(sell.venue, opp.base, lockOwner);
       }
-      if (!r) return unwired(`${sell.venue} ${opp.base} 매도`);
+      if (!r) { rec(null); return unwired(`${sell.venue} ${opp.base} 매도`); }
       // 모의 체결 — 매도 시점의 실호가 VWAP. 매수와 매도 사이에 (모의) 전송
       // 시간이 흘렀으므로, 이 재조회가 전송 중 가격 변동을 리허설 손익에 싣는다.
       if (dry && r.ok && SIM.bookFills) {

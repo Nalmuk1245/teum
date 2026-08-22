@@ -432,8 +432,6 @@ export function EpisodeCard() {
       .sort((a, b) => Number(b.outlastsEta === true) - Number(a.outlastsEta === true) || b.lastTs - a.lastTs);
   }, [eps]);
 
-  const kindLabel = (k: string) => k === "kimchi" ? "김프" : k === "cross-cex" ? "크로스" : k;
-
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3 }}>
@@ -487,7 +485,7 @@ export function EpisodeCard() {
                       {g.executedN > 0 && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--pos)" }}>실행 {g.executedN}</span>}
                     </span>
                     <span style={{ display: "block", fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
-                      {kindLabel(g.kind)} · {vlabel(g.buyVenue) ?? g.buyVenue} → {vlabel(g.sellVenue) ?? g.sellVenue}
+                      {kindLabel(g.kind, g.buyVenue, g.sellVenue)} · {vlabel(g.buyVenue) ?? g.buyVenue} → {vlabel(g.sellVenue) ?? g.sellVenue}
                       {g.windowN > 1 ? ` · ${g.windowN}회` : ""} · {when(g.lastTs)}
                     </span>
                   </span>
@@ -513,14 +511,14 @@ export function EpisodeCard() {
                             <span className="tnum" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {new Date(e.startTs).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}
                               <span style={{ color: "var(--text-mute)" }}> · {dur(e.durationSec)}</span>
-                              {e.executed && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: e.executed.dry ? "var(--sky)" : "var(--pos)" }}>{e.executed.dry ? "모의" : "실행"}</span>}
+                              {e.executed && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: e.executed.dry ? "var(--sky)" : "var(--pos)" }}>{e.executed.dry ? "페이퍼" : "실행"}</span>}
                             </span>
                             <span className="tnum" style={{ color: "var(--pos)" }}>+{e.peakNetPct.toFixed(2)}%</span>
                             <span style={{ fontSize: 9, color: "var(--text-mute)" }}>{eOpen ? "▲" : "▼"}</span>
                           </div>
                           {eOpen && (
                             <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9 }}>
-                              <EpisodeChart curve={e.curve} />
+                              <EpisodeChart curve={e.curve} peak={{ ts: e.peakTs, net: e.peakNetPct }} />
                               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 10.5, color: "var(--text-dim)", marginTop: 6 }} className="tnum">
                                 <span>평균 {e.avgNetPct >= 0 ? "+" : ""}{e.avgNetPct.toFixed(2)}%</span>
                                 <span>비용 {e.atPeak.costPct.toFixed(2)}%</span>

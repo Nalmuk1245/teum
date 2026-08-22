@@ -23,6 +23,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { secondsAboveZero } from "@/lib/episodeStats";
+import { dur } from "@/lib/format";
 
 /** [ts, netPct, grossPct, priceUsd] */
 export type CurvePoint = [number, number, number, number];
@@ -58,8 +59,8 @@ const clock = (t: number) =>
   new Date(t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 const clockSec = (t: number) =>
   new Date(t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-const durLabel = (sec: number) =>
-  sec >= 3600 ? `${(sec / 3600).toFixed(1)}시간` : sec >= 90 ? `${Math.round(sec / 60)}분` : `${Math.round(sec)}초`;
+// 지속시간 표기는 공용 포매터로 통일 (같은 카드의 그룹 줄과 단위가 갈리지 않게).
+const durLabel = (sec: number) => dur(sec);
 
 /** 눈금 후보 — 0은 항상, 나머지는 위아래 극값. 촘촘한 격자는 이 크기에서 잡음이다. */
 function ticks(lo: number, hi: number): number[] {
@@ -92,7 +93,7 @@ export function robustLow(nets: number[]): { lo: number; clipped: boolean } {
   return { lo: min, clipped: false };
 }
 
-export function EpisodeChart({ curve }: { curve: CurvePoint[] }) {
+export function EpisodeChart({ curve, peak: storedPeak }: { curve: CurvePoint[]; peak?: { ts: number; net: number } }) {
   const [wrapRef, W] = useWidth<HTMLDivElement>();
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -110,7 +111,9 @@ export function EpisodeChart({ curve }: { curve: CurvePoint[] }) {
   const nets = curve.map((p) => p[1]);
   const { lo: loRaw, clipped } = robustLow(nets);
   let lo = loRaw;
-  let hi = Math.max(...nets, 0);
+  // 저장된 피크가 곡선 최대보다 높으면(다운샘플이 스파이크를 떨군 경우)
+  // 스케일도 그걸 담아야 마커가 플롯 밖으로 나가지 않는다.
+  let hi = Math.max(...nets, storedPeak?.net ?? 0, 0);
   const trueMin = Math.min(...nets);
   const minIdx = nets.indexOf(trueMin);
   if (hi - lo < MIN_SPAN) {
@@ -156,8 +159,13 @@ export function EpisodeChart({ curve }: { curve: CurvePoint[] }) {
 
   let pi = 0;
   for (let i = 1; i < curve.length; i++) if (curve[i][1] > curve[pi][1]) pi = i;
-  const peak = curve[pi];
-  const px = x(peak[0]), py = y(peak[1]);
+  // 저장된 피크가 있으면 그걸 쓴다 — 다운샘플(thin)이 1틱 스파이크를 떨궈
+  // 곡선 최대가 헤더의 peakNetPct보다 낮게 나오는 경우가 있다.
+  const curvePeak = curve[pi];
+  const peak: CurvePoint = storedPeak && storedPeak.net >= curvePeak[1]
+    ? [storedPeak.ts, storedPeak.net, curvePeak[2], curvePeak[3]] as CurvePoint
+    : curvePeak;
+  const px = Math.min(W - PAD.right, Math.max(PAD.left, x(peak[0]))), py = y(peak[1]);
   // 피크 라벨이 좌우 밖으로 나가지 않게 앵커를 바꾼다 (잘림 방지).
   const anchor = px < PAD.left + 46 ? "start" : px > W - PAD.right - 46 ? "end" : "middle";
 

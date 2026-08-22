@@ -11,6 +11,7 @@ import { pct, usd, dur } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
 import { vlabel, Spark, oppKindLabel, kindLabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
+import { srcVerdict } from "@/lib/watchVerdict";
 import type { RiskState } from "./ControlPanel";
 import { EpisodeCard } from "./ControlPanel";
 
@@ -202,23 +203,32 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         : health.scanAgeSec < 60
           ? { heatKey: "scan", label: "스캔", sec: "시스템", state: "ok", text: `${health.scanAgeSec}초 전` }
           : { heatKey: "scan", label: "스캔", sec: "시스템", state: "warn", text: `정지 ${agoTxt(health.scanAgeSec)}`, action: { label: kicking ? "재시작 중…" : "재시작", onClick: () => void kickScan() } });
+    // 상태 판정식은 lib/watchVerdict.ts 하나를 서버(24h 스트립)와 공유한다 —
+    // 따로 적어두면 점은 초록인데 바로 아래 스트립 칸은 빨강인 자기모순이 난다.
+    const wi = { ...(watch ?? {}), lag: health?.loopLagMs ?? null };
+    const annV = watch ? srcVerdict("ann", wi) : null;
     rows.push(!watch ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "확인 중" }
       : watch.annBlocked ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)", title: "업비트 공지 API는 KR IP에서만 응답합니다 — KR 박스 이전 시 해소" }
-      : watch.annOkAgoSec != null ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "ok", text: `${agoTxt(watch.annOkAgoSec)}${watch.annLagP50Ms != null ? ` · 감지 p50 ${(watch.annLagP50Ms / 1000).toFixed(1)}s` : ""}` }
-      : { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" });
+      : watch.annOkAgoSec == null ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" }
+      : {
+          heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: annV ?? "off",
+          text: `${annV === "warn" ? "멈춤 " : ""}${agoTxt(watch.annOkAgoSec)}${watch.annLagP50Ms != null ? ` · 감지 p50 ${(watch.annLagP50Ms / 1000).toFixed(1)}s` : ""}`,
+        });
+    const mktV = watch ? srcVerdict("mkt", wi) : null;
     rows.push(!watch ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "확인 중" }
-      : watch.mktOkAgoSec != null && watch.mktOkAgoSec < 60 ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "ok", text: agoTxt(watch.mktOkAgoSec) }
-      : watch.mktOkAgoSec != null ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "warn", text: `멈춤 (${agoTxt(watch.mktOkAgoSec)})` }
-      : { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" });
+      : watch.mktOkAgoSec == null ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" }
+      : { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: mktV ?? "off", text: mktV === "warn" ? `멈춤 (${agoTxt(watch.mktOkAgoSec)})` : agoTxt(watch.mktOkAgoSec) });
+    const tgV = watch ? srcVerdict("tg", wi) : null;
     rows.push(!watch ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "확인 중" }
       : !watch.tgConfigured ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정", action: onOpenSettings ? { label: "설정", onClick: () => onOpenSettings("alerts") } : undefined }
-      : watch.tgOkAgoSec != null ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "ok", text: agoTxt(watch.tgOkAgoSec) }
-      : { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" });
+      : watch.tgOkAgoSec == null ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" }
+      : { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: tgV ?? "off", text: tgV === "warn" ? `조용함 (${agoTxt(watch.tgOkAgoSec)})` : agoTxt(watch.tgOkAgoSec) });
     const lag = health?.loopLagMs;
+    const procV = srcVerdict("proc", wi);
     rows.push(!lag ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: "off", text: "확인 중" }
-      : lag.worstMs >= 400
+      : procV === "warn"
         ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
-        : { heatKey: "proc", label: "프로세스", sec: "시스템", state: "ok", text: "정상 (10분 내 멈춤 없음)" });
+        : { heatKey: "proc", label: "프로세스", sec: "시스템", state: "ok", text: lag.worstMs >= 400 ? `회복됨 (최근 멈춤 ${Math.round(lag.worstMs)}ms)` : "정상 (10분 내 멈춤 없음)" });
     // 입출금 중단은 "우리 감시가 고장났나"가 아니라 시장 상태라 리스크 카드로 옮겼다.
     return rows;
   })();
@@ -518,7 +528,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           </div>
           <button
             type="button"
-            onClick={() => (onOpenSettings ? onOpenSettings() : onGoTab("control"))}
+            onClick={() => (onOpenSettings ? onOpenSettings("risk") : onGoTab("control"))}
             style={{ marginTop: "auto", paddingTop: 10, border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
           >
             한도 조정 (설정) →

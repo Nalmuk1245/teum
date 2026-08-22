@@ -120,7 +120,7 @@ export function PnlCalendar() {
             <span style={{ marginLeft: 8, color: "var(--text-mute)" }}>흑자 {sum.posDays}일 / 적자 {sum.negDays}일</span>
           </span>
         ) : sum.dry > 0 ? (
-          <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>모의 {sum.dry}건 · 리허설 {money(sum.dryPnl)}</span>
+          <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>페이퍼 {sum.dry}건 · 리허설 {money(sum.dryPnl)}</span>
         ) : (
           <span style={{ fontSize: 11, color: "var(--text-mute)" }}>{days == null ? "불러오는 중…" : "이 달 거래 없음"}</span>
         )}
@@ -168,8 +168,8 @@ export function PnlCalendar() {
                         {money(v!.pnlUsd)}
                       </div>
                     )}
-                    {hasReal && <div className="tnum" style={{ fontSize: 8, color: "var(--text-mute)" }}>{v!.realCount}건{v!.dryCount ? ` +모의` : ""}</div>}
-                    {dryOnly && <div className="tnum" style={{ fontSize: 8.5, color: "var(--sky)" }}>모의 {v!.dryCount}</div>}
+                    {hasReal && <div className="tnum" style={{ fontSize: 8, color: "var(--text-mute)" }}>{v!.realCount}건{v!.dryCount ? ` +페이퍼` : ""}</div>}
+                    {dryOnly && <div className="tnum" style={{ fontSize: 8.5, color: "var(--sky)" }}>페이퍼 {v!.dryCount}</div>}
                   </div>
                 );
               })}
