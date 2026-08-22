@@ -474,9 +474,8 @@ export default function Cockpit() {
             mobile={isMobile}
             onGoTab={(t) => setMode(t)}
             onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
-            onOpenSettings={() => setSettingsOpen(true)}
             onInspect={(o) => { setMode("monitor"); if (!isMobile) setInspectId(o.id); }}
-            onOpenSettings={(t) => { setSettingsTab(t); setSettingsOpen(true); }}
+            onOpenSettings={(t) => { setSettingsTab(t ?? null); setSettingsOpen(true); }}
           />
         )}
 

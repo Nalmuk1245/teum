@@ -78,12 +78,10 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   liveOverlay: Record<string, LiveGap>;
   onGoTab: (tab: "monitor" | "funding" | "listing" | "control" | "assets") => void;
   onExecute: (o: Opportunity) => void;
-  /** 리스크 한도 편집은 ⚙ 설정 모달에 산다 — "한도 조정 →"이 바로 연다. */
-  onOpenSettings?: () => void;
   /** 행 클릭 → 갭 보드의 그 기회 검사창으로 점프 (PC), 모바일은 보드 탭 이동. */
   onInspect?: (o: Opportunity) => void;
-  /** 감시 카드 조치 버튼 → 설정 모달을 해당 탭으로 연다. */
-  onOpenSettings?: (tab: "keys" | "risk" | "alerts" | "tools") => void;
+  /** ⚙ 설정 모달 열기 — "한도 조정 →"은 인자 없이, 감시 카드 조치는 탭 지정. */
+  onOpenSettings?: (tab?: "keys" | "risk" | "alerts" | "tools") => void;
 }) {
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
