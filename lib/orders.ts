@@ -35,7 +35,7 @@ const inflightFail = (e: unknown, what: string): OrderResult => ({
 // (e.g. a naked hedge). Never ok:true for an unexecuted step in live mode.
 const sim = (msg: string, hasKey: boolean): OrderResult =>
   CONFIG.DRY_RUN
-    ? { ok: true, dryRun: true, id: null, message: hasKey ? `DRY_RUN — ${msg}` : `키 없음 — ${msg} (모의)` }
+    ? { ok: true, dryRun: true, id: null, message: hasKey ? `페이퍼 — ${msg}` : `키 없음 — ${msg} (페이퍼)` }
     : { ok: false, dryRun: false, id: null, message: `실행 불가 — ${msg} (키 없음)` };
 
 // ── Binance (spot + futures + withdraw), HMAC-SHA256 ──────────────────────────

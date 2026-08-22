@@ -282,7 +282,7 @@ export function SellTriggerCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>자동 매도 트리거</span>
-        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>입금 도착 시 즉시 매도{dry ? " · 모의" : ""}</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>입금 도착 시 즉시 매도{dry ? " · 페이퍼" : ""}</span>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={() => setFormOpen((v) => !v)}
           style={{ border: `1px solid ${formOpen ? "var(--border-strong)" : "var(--brand)"}`, background: "transparent", color: formOpen ? "var(--text-dim)" : "var(--brand-2)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
@@ -530,7 +530,7 @@ export function EpisodeCard() {
                               </div>
                               <div style={{ marginTop: 5, fontSize: 11, fontWeight: 600, color: e.executed ? (e.executed.dry ? "var(--sky)" : "var(--pos)") : e.atPeak.executable ? "var(--amber)" : "var(--neg)" }}>
                                 {e.executed
-                                  ? (e.executed.dry ? "모의 실행함 — 운영 탭 거래 기록 참조" : "실행함 — 거래 기록 참조")
+                                  ? (e.executed.dry ? "페이퍼 실행함 — 운영 탭 거래 기록 참조" : "실행함 — 거래 기록 참조")
                                   : e.atPeak.executable
                                     ? "실행 가능했지만 안 함 (놓친 기회)"
                                     : `막혀 있었음: ${e.atPeak.blockReason ?? "사유 미상"}`}
@@ -863,7 +863,7 @@ function PnlViz({ trades }: { trades: TradeRec[] }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           {byKind.map(([k, v]) => (
             <span key={k} className="tnum" style={{ fontSize: 10.5, border: "1px solid var(--border)", borderRadius: 9, padding: "3px 9px", color: "var(--text-dim)" }}>
-              {k} {v.n}건{v.real ? <b style={{ marginLeft: 5, color: v.pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl).toFixed(2)}</b> : <span style={{ marginLeft: 5, color: "var(--text-mute)" }}>모의</span>}{v.leakN > 0 && <span title="실현 − 탐지 순수익 평균 (음수 = 탐지보다 실현이 나쁨)" style={{ marginLeft: 5, color: v.leakSum / v.leakN < -0.1 ? "var(--amber)" : "var(--text-mute)" }}>누수 {(v.leakSum / v.leakN).toFixed(2)}%p</span>}
+              {k} {v.n}건{v.real ? <b style={{ marginLeft: 5, color: v.pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl).toFixed(2)}</b> : <span style={{ marginLeft: 5, color: "var(--text-mute)" }}>페이퍼</span>}{v.leakN > 0 && <span title="실현 − 탐지 순수익 평균 (음수 = 탐지보다 실현이 나쁨)" style={{ marginLeft: 5, color: v.leakSum / v.leakN < -0.1 ? "var(--amber)" : "var(--text-mute)" }}>누수 {(v.leakSum / v.leakN).toFixed(2)}%p</span>}
             </span>
           ))}
         </div>
@@ -931,7 +931,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
               <span style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
                 <b>{t.base}</b>
                 <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-2)" }}>{kindKo}</span>
-                {t.dryRun && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 8, padding: "0 4px" }}>모의</span>}
+                {t.dryRun && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 8, padding: "0 4px" }}>페이퍼</span>}
                 {t.status && t.status !== "done" && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>{t.status}</span>}
               </span>
               <span style={{ display: "block", fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
@@ -1058,7 +1058,7 @@ export function ExecQualityCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>실행 품질</span>
-        {data && data.total > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{data.total}주문{data.dryN > 0 ? ` · 모의 ${data.dryN}` : ""}</span>}
+        {data && data.total > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{data.total}주문{data.dryN > 0 ? ` · 페이퍼 ${data.dryN}` : ""}</span>}
       </div>
       {!data || data.total === 0 ? (
         <div style={{ color: "var(--text-mute)", fontSize: 12 }}>기록 없음 — 주문(모의 포함)이 나가면 Order-to-Ack·슬리피지가 여기 쌓입니다</div>
@@ -1111,7 +1111,7 @@ export function PnlCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>거래 · 손익</span>
-        {st && st.dryCount > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>모의 {st.dryCount}건 포함</span>}
+        {st && st.dryCount > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>페이퍼 {st.dryCount}건 포함</span>}
       </div>
       {!st || st.count === 0 ? (
         <div style={{ color: "var(--text-mute)", fontSize: 12 }}>기록된 거래 없음 — 실행이 정산되면 여기에 쌓입니다</div>

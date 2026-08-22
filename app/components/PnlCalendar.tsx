@@ -155,7 +155,7 @@ export function PnlCalendar() {
                   <div
                     key={date}
                     onClick={() => v && setSel(isSel ? null : date)}
-                    title={v ? `${date} · ${v.count}건${hasReal ? ` · ${money(v.pnlUsd)}` : ""}${v.dryCount ? ` · 모의 ${v.dryCount}` : ""}` : date}
+                    title={v ? `${date} · ${v.count}건${hasReal ? ` · ${money(v.pnlUsd)}` : ""}${v.dryCount ? ` · 페이퍼 ${v.dryCount}` : ""}` : date}
                     style={{
                       minHeight: 44, borderRadius: 7, padding: "3px 4px 2px", background: bg,
                       border: isSel ? "1.5px solid var(--brand)" : date === today ? "1px solid var(--border-strong)" : "1px solid transparent",
@@ -211,7 +211,7 @@ export function PnlCalendar() {
                   <span style={{ marginLeft: 5, fontSize: 9.5, fontWeight: 700, color: "var(--brand-2)" }}>
                     {t.kind === "kimchi" ? "김프" : t.kind === "cross-cex" ? "크로스" : t.kind === "cex-dex" ? "CEX-DEX" : t.kind}
                   </span>
-                  {t.dryRun && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 8, padding: "0 4px" }}>모의</span>}
+                  {t.dryRun && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 8, padding: "0 4px" }}>페이퍼</span>}
                   <span style={{ marginLeft: 6, fontSize: 10, color: "var(--text-mute)" }}>{t.route}</span>
                 </span>
                 <span className="tnum" style={{ fontSize: 10, color: "var(--text-mute)" }}>

@@ -400,7 +400,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
                 background: health.killed ? "var(--neg)" : health.dryRun ? "var(--card-3)" : "var(--pos)",
                 color: health.killed ? "#fff" : health.dryRun ? "var(--text-dim)" : "var(--brand-ink)",
               }}>
-                {health.killed ? "킬스위치 ON" : health.dryRun ? "모의 (DRY)" : "라이브"}
+                {health.killed ? "킬스위치 ON" : health.dryRun ? "페이퍼" : "라이브"}
               </span>
             )}
           </div>
@@ -576,7 +576,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
                   <div key={i} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
                     <span style={{ minWidth: 0 }}>
                       <span style={{ fontWeight: 700 }}>{t.base}</span>
-                      <span style={{ marginLeft: 6, fontSize: 10.5, color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 모의" : ""}</span>
+                      <span style={{ marginLeft: 6, fontSize: 10.5, color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 페이퍼" : ""}</span>
                     </span>
                     <span className="tnum" style={{ fontWeight: 700, color: p2 == null ? "var(--text-mute)" : p2 >= 0 ? "var(--pos)" : "var(--neg)" }}>
                       {p2 == null ? "—" : `${p2 >= 0 ? "+" : "−"}$${Math.abs(p2).toFixed(2)}`}

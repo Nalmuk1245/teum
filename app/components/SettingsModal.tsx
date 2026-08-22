@@ -215,7 +215,7 @@ export function SettingsModal({ onClose, initialTab }: { onClose: () => void; in
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px 8px" }}>
             <span style={{ fontWeight: 700, fontSize: 15 }}>⚙ 설정</span>
             <span style={{ fontSize: 11, color: dryRun ? "var(--amber)" : "var(--neg)", fontWeight: 600 }}>
-              {dryRun ? "모의 모드 (DRY_RUN)" : "라이브 모드"}
+              {dryRun ? "페이퍼 모드" : "라이브 모드"}
             </span>
             <span style={{ flex: 1 }} />
             <button

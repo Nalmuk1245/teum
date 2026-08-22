@@ -2,7 +2,8 @@
 
 export const CONFIG = {
   /** While true, execution only simulates fills — no real orders are sent. */
-  DRY_RUN: process.env.DRY_RUN !== "false",
+  // 페이퍼 모드 (구 DRY_RUN). PAPER가 있으면 우선, 없으면 DRY_RUN — 기존 env 호환.
+  DRY_RUN: (process.env.PAPER ?? process.env.DRY_RUN) !== "false",
   /** Inject sample opportunities so the board renders without live/KR data. */
   USE_MOCK: process.env.USE_MOCK !== "false",
   /** USD/KRW fallback when no live FX source is wired. */
