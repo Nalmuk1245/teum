@@ -12,8 +12,29 @@ import type { LiveGap } from "@/lib/useLivePrices";
 import { KIND_META, vlabel, PersistChip, VenueLink, oppKindLabel } from "./cockpit-ui";
 import { TransferPanel } from "./ExecuteModal";
 import { TV_SYMBOL } from "./ListingPanel";
+import { PremiumChart, type Spec, type Market } from "./PremiumChart";
 
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
+
+// 프리미엄 차트가 그릴 수 있는 CEX (원화·바이낸스·바이빗). DEX 다리는 못 그린다.
+const PREM_VENUES = new Set(["upbit", "bithumb", "binance", "bybit"]);
+const isKR = (v: string) => v === "upbit" || v === "bithumb";
+
+// 기회 → 프리미엄 차트 A/B. 둘 다 그릴 수 있는 CEX이고 서로 다를 때만.
+// KR 다리를 A로 둔다(있으면) — 갭%(A−B) 부호가 김프 방향과 맞게. 둘 다 spot으로
+// 재구성한다(보드 갭이 현물-현물 기준; 헷지 퍼프는 별개다).
+function premiumPair(buyVenue?: string, sellVenue?: string): { a: Spec; b: Spec } | null {
+  if (!buyVenue || !sellVenue || buyVenue === sellVenue) return null;
+  if (!PREM_VENUES.has(buyVenue) || !PREM_VENUES.has(sellVenue)) return null;
+  const spec = (venue: string): Spec => ({ venue, market: "spot" as Market });
+  if (isKR(sellVenue) && !isKR(buyVenue)) return { a: spec(sellVenue), b: spec(buyVenue) };
+  if (isKR(buyVenue) && !isKR(sellVenue)) return { a: spec(buyVenue), b: spec(sellVenue) };
+  return { a: spec(buyVenue), b: spec(sellVenue) };
+}
+
+const PREM_UNITS: { u: number; label: string }[] = [
+  { u: 1, label: "1분" }, { u: 3, label: "3분" }, { u: 5, label: "5분" }, { u: 15, label: "15분" }, { u: 60, label: "1시간" },
+];
 
 // ── net% 히스토리 차트 — /api/gap-history의 gross 시계열 − 현재 비용 ──────────
 // 이 차트의 질문은 "지금 갭이 커지는 중인가, 그리고 지난 30분 중 얼마나
@@ -227,6 +248,11 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
   const [chart, setChart] = useState<string | null>(null);
   const activeChart = chartOpts.find((c) => c.key === chart) ?? chartOpts[0];
 
+  // 프리미엄 갭 차트 — 접어두고 열 때만 로드(검사창이 이미 빽빽하고, API 호출 절약).
+  const prem = useMemo(() => premiumPair(buy?.venue, sell?.venue), [buy?.venue, sell?.venue]);
+  const [showPrem, setShowPrem] = useState(false);
+  const [premUnit, setPremUnit] = useState(3);
+
   const line = (label: string, value: React.ReactNode, tone?: string) => (
     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
       <span style={{ color: "var(--text-mute)" }}>{label}</span>
@@ -286,6 +312,43 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
         {/* net 히스토리 */}
         <div style={{ margin: "12px 0 4px", ...CAP, color: "var(--text-dim)" }}>순수익 히스토리 (실호가 기준, 30분)</div>
         <Sparkline oppId={opp.id} costPct={opp.costPct} />
+
+        {/* 프리미엄 갭 (재구성) — 위 스파크라인이 못 주는 더 긴 창의 가격쌍·갭 맥락.
+            접어두고 열 때만 /api/premium을 친다. DEX 다리가 끼면 아예 안 뜬다. */}
+        {prem && (
+          <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => setShowPrem((s) => !s)}
+              style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", border: "none", background: "transparent", padding: 0, cursor: "pointer", color: "var(--text-dim)" }}
+            >
+              <span style={{ fontSize: 10, transform: showPrem ? "rotate(90deg)" : "none", transition: "transform .12s" }}>▸</span>
+              <span style={CAP}>프리미엄 갭 (재구성 · 종가 기준)</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 10.5, color: "var(--brand-2)", fontWeight: 600 }}>{showPrem ? "접기" : "펼치기"}</span>
+            </button>
+            {showPrem && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap", marginBottom: 6 }}>
+                  {PREM_UNITS.map((x) => (
+                    <button
+                      key={x.u} type="button" onClick={() => setPremUnit(x.u)}
+                      style={{
+                        border: "none", borderRadius: 7, padding: "3px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        background: premUnit === x.u ? "var(--brand-soft)" : "transparent",
+                        color: premUnit === x.u ? "var(--brand-2)" : "var(--text-mute)",
+                      }}
+                    >
+                      {x.label}
+                    </button>
+                  ))}
+                </div>
+                {/* 비용선은 이 기회의 실제 왕복비용을 그대로 쓴다(스캔 재조회 없이). */}
+                <PremiumChart coin={opp.base} a={prem.a} b={prem.b} unit={premUnit} costPct={opp.costPct} compact />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 수치 분해 */}
         <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
