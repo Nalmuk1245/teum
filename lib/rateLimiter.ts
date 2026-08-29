@@ -43,16 +43,18 @@ function refill(venue: string): Bucket {
  * 반환 false = 한도 대기가 너무 길다 → 호출자는 이번 주문을 건너뛰고 다음 주기에.
  */
 export async function acquireOrderSlot(venue: string): Promise<boolean> {
-  const b = refill(venue);
-  if (b.tokens >= 1) { b.tokens -= 1; return true; }
-  // 부족 — 1토큰 채워질 시간 계산.
   const rate = RATE_PER_SEC[venue] ?? 3;
-  const waitMs = ((1 - b.tokens) / rate) * 1000;
-  if (waitMs > MAX_WAIT_MS) return false;
-  await new Promise((r) => setTimeout(r, waitMs));
-  const b2 = refill(venue);
-  if (b2.tokens >= 1) { b2.tokens -= 1; return true; }
-  return false;
+  const deadline = Date.now() + MAX_WAIT_MS;
+  // 필요 시간을 정확히 자고 한 번만 재확인하면 안 된다 — setTimeout은 ms 절사에
+  // 이르게 깰 수 있어 토큰이 0.99…로 1에 못 미치는 타이밍 결함이 있었다(CI에서
+  // 재현). 올림+마진으로 자고, 그래도 모자라면 데드라인까지 루프.
+  for (;;) {
+    const b = refill(venue);
+    if (b.tokens >= 1) { b.tokens -= 1; return true; }
+    const waitMs = Math.ceil(((1 - b.tokens) / rate) * 1000) + 5;
+    if (Date.now() + waitMs > deadline) return false; // 너무 오래 걸림 — 포기
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
 }
 
 /** 진단용 — 현재 버킷 잔량. */
