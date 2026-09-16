@@ -1,6 +1,6 @@
 // Real exchange orders / withdrawal — signed. FULLY WIRED but dormant: each
 // call returns a simulated result unless CONFIG.DRY_RUN is false AND the venue's
-// keys are set. Server-only (node crypto). Powers the exec-step handlers.
+// keys are set. Server-only (node crypto). Powers the run engine's step executor (execStep).
 
 import crypto from "crypto";
 import { CONFIG } from "./config";
@@ -42,6 +42,10 @@ const sim = (msg: string, hasKey: boolean): OrderResult =>
 function bnKeys() {
   return { key: process.env.BINANCE_KEY, secret: process.env.BINANCE_SECRET };
 }
+// 키·시크릿 둘 다 있어야 서명이 된다. key만 보고 진행하면 secret 없는 createHmac이
+// try 안에서 throw → inflightFail → "결과 불명(ambiguous)"으로 분류돼, 요청이 나간
+// 적도 없는데 재시도·롤백이 막히고 폰이 울린다. 다른 거래소는 원래 둘 다 본다.
+const bnReady = () => { const { key, secret } = bnKeys(); return !!(key && secret); };
 
 // LOT_SIZE stepSize cache — raw float quantities get rejected (-1013) on nearly
 // every symbol, so quantities must be floored to the symbol's step.
@@ -83,8 +87,7 @@ async function binanceSigned(host: string, path: string, params: Record<string, 
 }
 
 export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { quoteUsd?: number; qty?: number }): Promise<OrderResult> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} ${side} 현물`, !!key);
+  if (CONFIG.DRY_RUN || !bnReady()) return sim(`Binance ${base} ${side} 현물`, bnReady());
   if (!(await acquireOrderSlot("binance"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const p: Record<string, string | number> = { symbol: `${base}USDT`, side, type: "MARKET" };
@@ -103,8 +106,7 @@ export async function binanceSpot(base: string, side: "BUY" | "SELL", opts: { qu
 
 // Perp short (open) / close (reduceOnly buy).
 export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: number): Promise<OrderResult> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 선물 ${action}`, !!key);
+  if (CONFIG.DRY_RUN || !bnReady()) return sim(`Binance ${base} 선물 ${action}`, bnReady());
   // 헷지 다리도 같은 IP 한도를 먹는다 — 매수 직후 항상 발사되므로, 페이싱에서
   // 빠지면 rate limiter가 막으려던 상황(연속 주문 폭주)이 그대로 생긴다.
   if (!(await acquireOrderSlot("binance"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
@@ -129,10 +131,9 @@ export async function binancePerp(base: string, action: "SHORT" | "CLOSE", qty: 
 
 /** Free USDT margin on the futures wallet (live only; null = unknown/keys). */
 export async function binanceFuturesFree(): Promise<number | null> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return null;
+  if (CONFIG.DRY_RUN || !bnReady()) return null;
   try {
-    const j = await binanceSignedGet("/fapi/v2/balance", {});
+    const j = await binanceSignedGet("/fapi/v2/balance", {}, "fapi.binance.com");
     const usdt = Array.isArray(j) ? j.find((b: { asset?: string }) => b.asset === "USDT") : null;
     return usdt ? Number(usdt.availableBalance ?? 0) : null;
   } catch {
@@ -145,8 +146,7 @@ export async function binanceFuturesFree(): Promise<number | null> {
 // limit flow is not wired (live unwind on a bithumb leg fails fast upstream).
 
 export async function binanceLimitSell(base: string, qty: number, price: number): Promise<OrderResult> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 지정가 매도 ${qty}@${price}`, !!key);
+  if (CONFIG.DRY_RUN || !bnReady()) return sim(`Binance ${base} 지정가 매도 ${qty}@${price}`, bnReady());
   if (!(await acquireOrderSlot("binance"))) return { ok: false, dryRun: false, id: null, message: "주문 rate 한도 대기 — 다음 주기 재시도" };
   try {
     const j = await binanceSigned("api.binance.com", "/api/v3/order", {
@@ -162,8 +162,7 @@ export async function binanceLimitSell(base: string, qty: number, price: number)
 
 /** Executed base qty + received quote so far for a Binance spot order. */
 export async function binanceOrderFills(base: string, orderId: string): Promise<{ filledQty: number; quoteFilled: number; open: boolean } | null> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return null;
+  if (CONFIG.DRY_RUN || !bnReady()) return null;
   try {
     const j = await binanceSignedGet("/api/v3/order", { symbol: `${base}USDT`, orderId });
     if (!j.orderId) return null;
@@ -254,8 +253,7 @@ export async function upbitCancelOrder(uuid: string): Promise<boolean> {
 
 /** Poll an exchange withdrawal for its on-chain txId (broadcast can lag). */
 export async function binanceWithdrawTx(base: string, wdId: string): Promise<string | null> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return null;
+  if (CONFIG.DRY_RUN || !bnReady()) return null;
   try {
     const j = await binanceSignedGet("/sapi/v1/capital/withdraw/history", { coin: base });
     const rec = Array.isArray(j) ? j.find((w: { id?: string; txId?: string }) => w.id === wdId) : undefined;
@@ -311,8 +309,7 @@ export async function okxWithdrawTx(wdId: string): Promise<string | null> {
 }
 
 export async function binanceWithdraw(base: string, network: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
-  const { key } = bnKeys();
-  if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 출금 → ${address.slice(0, 10)}…${tag ? ` (tag:${tag})` : ""}`, !!key);
+  if (CONFIG.DRY_RUN || !bnReady()) return sim(`Binance ${base} 출금 → ${address.slice(0, 10)}…${tag ? ` (tag:${tag})` : ""}`, bnReady());
   try {
     const j = await binanceSigned("api.binance.com", "/sapi/v1/capital/withdraw/apply", {
       coin: base, network, address, amount,
@@ -346,17 +343,28 @@ function upbitAuth(query: string) {
 async function upbitOrderDetail(uuid: string): Promise<{ filledQty?: number; quoteKrw?: number } | null> {
   const key = process.env.UPBIT_KEY, secret = process.env.UPBIT_SECRET;
   if (!key || !secret) return null;
-  await new Promise((r) => setTimeout(r, 600)); // market orders fill ~instantly
-  const query = new URLSearchParams({ uuid }).toString();
-  const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
-    headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
-  });
-  const j = await res.json();
-  if (!j?.uuid) return null;
-  const trades: Array<{ volume: string; funds: string }> = j.trades ?? [];
-  const filledQty = Number(j.executed_volume ?? 0) || trades.reduce((s2, t) => s2 + Number(t.volume), 0) || undefined;
-  const quoteKrw = trades.reduce((s2, t) => s2 + Number(t.funds), 0) || undefined;
-  return { filledQty, quoteKrw };
+  // 시장가는 보통 즉시 체결되지만 상세 조회에 체결이 반영되기까지 잠깐 늦을 수
+  // 있다. 예전엔 600ms 후 딱 1회 조회라, 그 순간 비어 있으면 체결량 미확인 →
+  // 매수는 ambiguous로 서고 매도는 정산이 추정치로 빠져 일일손실 한도가 눈멀었다.
+  // 바이비트/OKX/빗썸처럼 몇 번 더 본다.
+  let last: { filledQty?: number; quoteKrw?: number } | null = null;
+  for (let i = 0; i < 4; i++) {
+    await new Promise((r) => setTimeout(r, i === 0 ? 600 : 400));
+    try {
+      const query = new URLSearchParams({ uuid }).toString();
+      const res = await fetch(`https://api.upbit.com/v1/order?${query}`, {
+        headers: { Authorization: `Bearer ${upbitJwt(key, secret, query)}` }, cache: "no-store", signal: AbortSignal.timeout(10_000),
+      });
+      const j = await res.json();
+      if (!j?.uuid) continue;
+      const trades: Array<{ volume: string; funds: string }> = j.trades ?? [];
+      const filledQty = Number(j.executed_volume ?? 0) || trades.reduce((s2, t) => s2 + Number(t.volume), 0) || undefined;
+      const quoteKrw = trades.reduce((s2, t) => s2 + Number(t.funds), 0) || undefined;
+      last = { filledQty, quoteKrw };
+      if (filledQty && filledQty > 0) return last;
+    } catch { /* retry */ }
+  }
+  return last;
 }
 
 // 단일 코인 잔고 (거래소별). 자동매도 트리거의 하이브리드 모드가 매 주기 이걸
@@ -375,9 +383,13 @@ export async function coinBalance(venue: string, base: string): Promise<number |
       return a ? Number(a.balance) + Number(a.locked) : 0;
     }
     if (venue === "binance") {
-      const { key } = bnKeys();
-      if (!key) return null;
-      const j = await binanceSigned("api.binance.com", "/api/v3/account", {});
+      if (!bnReady()) return null;
+      // GET이다. 예전엔 binanceSigned(POST 고정)를 써서 바이낸스가 에러 JSON을
+      // 돌려줬고, j.balances가 없으니 아래 폴백이 **0**을 반환했다(null이 아님).
+      // hybrid 자동매도 트리거는 잔고 0 = "아직 도착 안 함"으로 읽어 영원히
+      // waiting이었다 — 코인이 바이낸스에 들어와도 아무도 안 팔았다.
+      const j = await binanceSignedGet("/api/v3/account", {});
+      if (!Array.isArray(j?.balances)) return null; // 에러 응답 → "모름"
       const b = (j.balances as Array<{ asset: string; free: string; locked: string }> | undefined)?.find((x) => x.asset === base);
       return b ? Number(b.free) + Number(b.locked) : 0;
     }
@@ -516,11 +528,14 @@ async function bithumbOrderFill(base: string, orderId: string, side: "bid" | "as
   return null;
 }
 
-export async function bithumbWithdraw(base: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
+export async function bithumbWithdraw(base: string, netType: string, address: string, amount: number, tag?: string): Promise<OrderResult> {
   const key = process.env.BITHUMB_KEY, secret = process.env.BITHUMB_SECRET;
   if (CONFIG.DRY_RUN || !key || !secret) return sim(`Bithumb ${base} 출금 → ${address.slice(0, 10)}…`, !!(key && secret));
   try {
-    const params: Record<string, string> = { currency: base, address, units: String(amount) };
+    // net_type 명시 — 입금주소 조회(deposits.ts)는 넘기면서 출금만 빠져 있었다.
+    // USDT 같은 멀티체인 코인은 거래소가 체인을 고르게 되는데, 체인이 어긋난
+    // 전송은 되돌릴 수 없다.
+    const params: Record<string, string> = { currency: base, net_type: netType, address, units: String(amount) };
     if (tag) params.destination = tag;
     const j = await bithumbSigned("/trade/btc_withdrawal", params);
     const ok = j.status === "0000";
@@ -531,11 +546,15 @@ export async function bithumbWithdraw(base: string, address: string, amount: num
 }
 
 // ── Deposit crediting check (poll) ────────────────────────────────────────────
-async function binanceSignedGet(path: string, params: Record<string, string | number>) {
+// host 인자 — 선물(/fapi/*)은 fapi.binance.com이다. 예전엔 api.binance.com 고정이라
+// binanceFuturesFree()가 라이브에서 **항상** 404 → null이었고, 헷지 마진 게이트는
+// (당시 fail-open이라) 한 번도 실제로 검사한 적이 없었다. 게이트를 fail-closed로
+// 바꾸면서 이게 드러났다 — 안 고치면 헷지가 항상 차단된다.
+async function binanceSignedGet(path: string, params: Record<string, string | number>, host = "api.binance.com") {
   const { key, secret } = bnKeys();
   const q = new URLSearchParams({ ...params, recvWindow: "5000", timestamp: String(Date.now()) } as Record<string, string>).toString();
   const sig = crypto.createHmac("sha256", secret!).update(q).digest("hex");
-  const res = await fetch(`https://api.binance.com${path}?${q}&signature=${sig}`, {
+  const res = await fetch(`https://${host}${path}?${q}&signature=${sig}`, {
     headers: { "X-MBX-APIKEY": key! }, cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   return res.json();
@@ -548,8 +567,7 @@ async function binanceSignedGet(path: string, params: Record<string, string | nu
  */
 export async function checkDeposit(venue: string, base: string, sinceTs: number): Promise<OrderResult> {
   if (venue === "binance") {
-    const { key } = bnKeys();
-    if (CONFIG.DRY_RUN || !key) return sim(`Binance ${base} 입금 확인`, !!key);
+    if (CONFIG.DRY_RUN || !bnReady()) return sim(`Binance ${base} 입금 확인`, bnReady());
     try {
       const j = await binanceSignedGet("/sapi/v1/capital/deposit/hisrec", { coin: base, startTime: sinceTs });
       const rec = Array.isArray(j)

@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     if (isKilled()) {
       return NextResponse.json({ error: "킬 스위치 활성 — 청산 차단" }, { status: 423 });
     }
-    // Live unwind places REAL orders — same guards as exec-step.
+    // Live unwind places REAL orders — same guards as the run engine.
     if (!CONFIG.DRY_RUN) {
       if (body.opportunity.mock) {
         return NextResponse.json({ error: "목업 기회는 실행 불가" }, { status: 400 });

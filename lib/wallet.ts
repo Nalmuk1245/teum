@@ -17,6 +17,13 @@ const ERC20_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
+// 컨펌 대기 상한. ethers의 wait()는 기본이 무한 대기라, 가스를 낮게 잡혔거나 체인이
+// 막히면 tx가 멤풀에 걸린 채 전송 단계가 끝나지 않았다 — 그동안 엔진은 busy라
+// cancel은 플래그만 세우고 unwind는 거절되고, 유일한 탈출이 프로세스 재시작이었다.
+// 시간이 차면 throw → 아래 catch가 "브로드캐스트됨(컨펌 확인 실패)"로 해시를 들고
+// 사람에게 넘긴다(재전송 금지 경로는 그대로). 12컨펌 ERC20이 ~3분이므로 넉넉히.
+const WAIT_TIMEOUT_MS = Number(process.env.WALLET_TX_WAIT_MS ?? 15 * 60_000);
+
 function familyKey(family: ChainFamily): string | undefined {
   switch (family) {
     case "evm": return process.env.WALLET_PRIVATE_KEY;
@@ -96,13 +103,13 @@ async function sendEvm(req: SendReq, key: string): Promise<SendResult> {
       const build = await okxBuild(req.chain, wallet.address, req.tokenAddress, 0n, data);
       const tx = await erc20.transfer(req.to, amount, build);
       hash = tx.hash;
-      await tx.wait(req.confirms ?? 1);
+      await tx.wait(req.confirms ?? 1, WAIT_TIMEOUT_MS);
     } else {
       const value = parseEther(req.amountHuman);
       const build = await okxBuild(req.chain, wallet.address, req.to, value);
       const tx = await wallet.sendTransaction({ to: req.to, value, ...build });
       hash = tx.hash;
-      await tx.wait(req.confirms ?? 1);
+      await tx.wait(req.confirms ?? 1, WAIT_TIMEOUT_MS);
     }
     return { ok: true, dryRun: false, hash, message: "전송 완료" };
   } catch (e) {
@@ -243,7 +250,7 @@ export async function sendRawEvmTx(tx: RawTx, allowList: string[], maxValueWei =
     const wallet = new Wallet(key, provider);
     const sent = await wallet.sendTransaction({ to: tx.to, data: tx.data, value, ...(tx.gas ? { gasLimit: BigInt(tx.gas) } : {}) });
     broadcastHash = sent.hash;
-    await sent.wait(1);
+    await sent.wait(1, WAIT_TIMEOUT_MS);
     return { ok: true, dryRun: false, hash: sent.hash, message: "온체인 전송 완료" };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "raw tx 실패";

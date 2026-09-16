@@ -9,6 +9,7 @@
 // deploy) and degrades to null elsewhere. Secondary/confirmation trigger: the
 // market-list diff (fires later, when trading actually opens).
 
+import type { Venue } from "./types";
 import { notifyNow } from "./telegram";
 import { loadSection, saveSection } from "./persist";
 import { primeUpbitMarkets } from "./exchanges";
@@ -192,6 +193,27 @@ export function setListingAuto(cfg: Partial<ListingAutoCfg>): ListingAutoCfg {
 const AUTO_MIN_MCAP_USD = Number(process.env.LISTING_AUTO_MIN_MCAP ?? 10_000_000);
 const AUTO_MAX_PUMP_PCT = Number(process.env.LISTING_AUTO_MAX_PUMP ?? 50);
 
+/** 상장 매수 슬리피지 게이트 — 엔진 경로(execStep의 buy)와 같은 상한을 건다.
+ *  자동매수·원클릭 매수는 거래소 어댑터를 직접 불러서 이 게이트가 없었다 — 정작
+ *  **무인으로 나가는** 경로만 빠져 있었던 것. 신규 상장 코인의 글로벌 호가는 얇은
+ *  게 정상이라 $500 시장가가 5~10%를 먹을 수 있다. 호가 조회 실패도 차단
+ *  (fail-closed) — 모르는 책에 시장가를 던지지 않는다. 반환 = 차단 사유(null=통과). */
+export async function listingSlipGate(venue: string, base: string, usd: number): Promise<string | null> {
+  const { CONFIG } = await import("./config");
+  if (CONFIG.DRY_RUN) return null;
+  const symbol = venue === "okx" ? `${base}-USDT` : `${base}USDT`;
+  try {
+    const { estimateLegSlippage } = await import("./quote");
+    const est = await estimateLegSlippage(venue as Venue, symbol, "buy", { quoteAmount: usd });
+    if (!est) return `${venue} ${base} 호가 없음 — 매수 차단`;
+    if (!est.filled) return `${venue} ${base} 호가 깊이 부족 ($${usd} 미체결) — 매수 차단`;
+    if (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT) return `매수 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% — 매수 차단`;
+    return null;
+  } catch (e) {
+    return `호가 조회 실패 (${e instanceof Error ? e.message : "?"}) — 매수 차단`;
+  }
+}
+
 async function autoBuy(base: string, gVenue: string, gPrice: number) {
   const cfg = getListingAuto();
   if (!cfg.armed) return;
@@ -209,7 +231,8 @@ async function autoBuy(base: string, gVenue: string, gPrice: number) {
   try {
     const { resolveToken } = await import("./tokenResolve");
     const t = await resolveToken(base);
-    if (!t) { void notifyNow(`⏸ 자동매수 스킵 — <b>${base}</b>: 토큰 메타 미확인 (CoinGecko 미등록) — 수동 판단 필요`); return; }
+    // resolveToken은 429도 null로 삼킨다(마지막 캐시 없으면) — "미등록"으로만 쓰면 오해.
+    if (!t) { void notifyNow(`⏸ 자동매수 스킵 — <b>${base}</b>: 토큰 메타 미확인 (CoinGecko 미등록 또는 레이트리밋) — 수동 판단 필요`); return; }
     if (t.marketCapUsd != null && t.marketCapUsd < AUTO_MIN_MCAP_USD) {
       void notifyNow(`⏸ 자동매수 스킵 — <b>${base}</b>: 시총 $${(t.marketCapUsd / 1e6).toFixed(1)}M < 하한 $${(AUTO_MIN_MCAP_USD / 1e6).toFixed(0)}M (저유동성)`);
       return;
@@ -219,6 +242,8 @@ async function autoBuy(base: string, gVenue: string, gPrice: number) {
       return;
     }
   } catch { /* resolve 오류 → 아래 주문은 진행하지 않음 */ return; }
+  const slip = await listingSlipGate(gVenue, base, cfg.sizeUsd);
+  if (slip) { void notifyNow(`⏸ 자동매수 차단 — <b>${base}</b>: ${slip}`); return; }
   const { binanceSpot, bybitOrder, okxOrder } = await import("./orders");
   const r =
     gVenue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: cfg.sizeUsd })
@@ -264,6 +289,22 @@ async function fetchNoticeOpensAt(noticeId: number): Promise<number | null> {
     const text = (j.data?.content ?? "").replace(/<[^>]+>/g, " ");
     return text ? parseOpenTimeKst(text) : null;
   } catch { return null; }
+}
+
+// ── 재시작 경계 방어 ────────────────────────────────────────────────────────────
+// 첫 폴은 보이는 공지를 baseline으로 삼킨다(정상). 그런데 재시작 창(pm2 autorestart,
+// max_memory_restart)에 떨어진 상장 공지는 그 baseline에 묻혀 영영 못 봤다. 마지막으로
+// 본 공지 id를 영속해 두고, 첫 폴에서도 그보다 새 id는 처리한다. 단 발행 시각이
+// ANN_BOOT_FRESH_MS 이내인 것만 — 며칠 꺼져 있다 켜지면 그 사이 공지 전부에
+// 자동매수가 나가선 안 된다. 발행 시각을 모르면 처리하지 않는다(보수적).
+export const ANN_BOOT_FRESH_MS = 10 * 60_000;
+/** 부팅 직후 첫 폴에서 이 공지를 "새 것"으로 처리할지. 순수 함수(테스트용). */
+export function isBootFreshNotice(
+  it: { id: number; publishedAt?: number }, lastSeenId: number, now: number, freshMs = ANN_BOOT_FRESH_MS,
+): boolean {
+  if (!(lastSeenId > 0) || !(it.id > lastSeenId)) return false;
+  if (it.publishedAt == null) return false;
+  return now - it.publishedAt >= 0 && now - it.publishedAt < freshMs;
 }
 
 /** Dedupe sets only ever grew (one entry per announcement / telegram message,
@@ -393,11 +434,15 @@ async function pollAnnouncements() {
   if (!items.length) return;
 
   const isFirst = !L.primedAnn;
+  const lastSeenId = isFirst ? (loadSection<number>("annLastId") ?? 0) : 0;
+  const maxId = Math.max(...items.map((i) => i.id));
+  if (maxId > (loadSection<number>("annLastId") ?? 0)) saveSection("annLastId", maxId);
+  const now = Date.now();
   for (const it of items) {
     if (L.annSeen.has(it.id)) continue;
     L.annSeen.add(it.id);
     trimSeen(L.annSeen);
-    if (isFirst) continue; // prime the baseline silently
+    if (isFirst && !isBootFreshNotice(it, lastSeenId, now)) continue; // prime the baseline silently
     if (!LISTING_RE.test(it.title)) continue;
     const tickers = new Set<string>();
     let m: RegExpExecArray | null;

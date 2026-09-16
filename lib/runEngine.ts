@@ -710,15 +710,23 @@ export function clearFinished() {
   persistRuns();
 }
 
-export async function unwindRun(id: string, fraction: number) {
+export type UnwindRunResult = { ok: true } | { error: string };
+/** 거절 사유를 돌려준다 — 예전엔 조용히 return이라, 입금 대기 90분 동안 청산
+ *  버튼이 무시돼도 UI엔 아무 말이 없었다. 라우트가 409로 올린다. */
+export async function unwindRun(id: string, fraction: number): Promise<UnwindRunResult> {
   const run = E.runs[id];
-  if (!run || run.unwinding || run.remaining <= 0) return;
+  if (!run) return { error: "런 없음" };
+  if (run.unwinding) return { error: "이미 청산 진행 중" };
+  if (run.remaining <= 0) return { error: "청산할 잔량 없음" };
   const eng = E.engines.get(id);
   // The loop and an unwind must never touch the same position concurrently:
   // unwinding while the loop is mid-`sell` (or paused right before it) sold the
   // same quantity twice, and the loop's `remaining = 0` could be overwritten by
   // this function's stale captured value, resurrecting a phantom position.
-  if (eng?.busy) return;
+  if (eng?.busy) {
+    const step = run.plan[eng.i]?.label ?? "?";
+    return { error: `실행 루프가 진행 중(${step}) — 청산 불가. 취소로 루프를 먼저 세우거나 단계가 끝난 뒤 다시 시도` };
+  }
   if (eng) eng.unwindLock = true;
   patch(id, { unwinding: true });
   try {
@@ -741,6 +749,12 @@ export async function unwindRun(id: string, fraction: number) {
         timeline: eng?.timeline?.length ? eng.timeline : undefined,
       });
     }
+    // 엔진의 헷지 수량도 같이 줄인다. 안 줄이면 이후 retry로 `close` 단계에 갔을 때
+    // 원래 수량으로 reduceOnly를 보내고, 바이낸스가 포지션 초과(-2022)로 거절해
+    // 잔여 숏이 남은 채 "수동 처리"로 섰다 — 매번 사람이 정리해야 했다.
+    if (eng && eng.hedgeQty && result.hedgeClosedQty > 0) {
+      eng.hedgeQty = Math.max(0, eng.hedgeQty - result.hedgeClosedQty);
+    }
     // Re-read: `run` was captured before a multi-second await.
     const cur = E.runs[id] ?? run;
     patch(id, {
@@ -749,9 +763,12 @@ export async function unwindRun(id: string, fraction: number) {
       unwindLog: [...cur.unwindLog, ...(result.log ?? [])],
       unwinding: false,
     });
+    return { ok: true };
   } catch (e) {
     const cur = E.runs[id] ?? run;
-    patch(id, { unwindLog: [...cur.unwindLog, `청산 오류: ${e instanceof Error ? e.message : "?"}`], unwinding: false });
+    const msg = e instanceof Error ? e.message : "?";
+    patch(id, { unwindLog: [...cur.unwindLog, `청산 오류: ${msg}`], unwinding: false });
+    return { error: `청산 오류: ${msg}` };
   } finally {
     if (eng) eng.unwindLock = false;
   }
@@ -791,7 +808,13 @@ if (!gW.__arbHedgeWatchSrv) {
         const notional = active.reduce((s, r) => s + r.sizeUsd, 0);
         const { binanceFuturesFree } = await import("./orders");
         const free = await binanceFuturesFree();
-        if (free !== null && free < notional * 0.3) {
+        // 조회 실패도 알린다 — 헷지가 열린 채 마진을 못 보는 상태는 "괜찮음"이 아니다.
+        // 예전엔 null이면 조용히 지나가서, 키 만료·API 장애 중엔 경보 자체가 꺼졌다.
+        if (free === null) {
+          void notify("hedge:margin:unknown", `⚠️ 헷지 증거금 조회 실패 — 헷지 명목 $${notional.toFixed(0)} 열려 있는데 선물 가용 마진을 못 읽습니다 (키/API 확인)`);
+          return;
+        }
+        if (free < notional * 0.3) {
           void notify("hedge:margin", `🚨 헷지 증거금 경보 — 선물 가용 $${free.toFixed(0)} / 헷지 명목 $${notional.toFixed(0)}. 증거금 추가 또는 부분 청산 검토.`);
         }
       } catch { /* next tick */ }

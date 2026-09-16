@@ -235,6 +235,11 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
     }).catch(() => {});
     startListingWatch(); // 상장따리: notice/TG/market watchers
     void import("./sellTriggers").then((m) => m.bootSellTriggers()).catch(() => {}); // 자동매도 재무장
+    // 실행 엔진 부팅 — 모듈 로드가 곧 boot()(재시작으로 끊긴 런을 error로 표시 +
+    // 텔레그램 통보)와 헷지 마진 워치 시작이다. 예전엔 /api/runs가 처음 불릴 때만
+    // 로드돼서, 탭을 닫아둔 채 pm2가 재시작하면 health 크론이 돌아도 "런 N건
+    // 중단됨" 알림이 UI를 열 때까지 안 왔다. 여기 얹어 health가 엔진도 깨운다.
+    void import("./runEngine").catch(() => {});
     // 경로 DB 워머 — KR 유니버스의 공식 컨트랙트를 미리 검증·적재해 둔다.
     // 런타임 해석(recv/transfer)이 콜드 구축을 밟는 일이 없어진다.
     void import("./tokenRoutes").then(({ startRouteWarmer }) =>

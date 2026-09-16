@@ -19,11 +19,16 @@ const g = globalThis as unknown as {
   __arbRisk?: { limits: Limits; day: string; realizedPnlUsd: number };
 };
 const persisted = loadSection<{ day: string; realizedPnlUsd: number }>("riskPnl");
+// UI에서 바꾼 한도는 재시작을 넘긴다. 예전엔 메모리에만 있어서 pm2가 재시작하면
+// env 초기값으로 돌아갔다 — 사고 중에 1회 한도를 $100으로 낮췄다가 재시작되면
+// $5,000으로 복귀했다. 킬 스위치·일일손실 집계는 이미 영속인데 한도만 빠져 있었다.
+// 우선순위는 secrets.json과 같다: 저장된 값 > env(초기값).
+const persistedLimits = loadSection<Partial<Limits>>("riskLimits");
 g.__arbRisk ??= {
   limits: {
-    maxPerTradeUsd: Number(process.env.RISK_MAX_PER_TRADE_USD ?? 5000),
-    maxInFlightUsd: Number(process.env.RISK_MAX_INFLIGHT_USD ?? 15000),
-    maxDailyLossUsd: Number(process.env.RISK_MAX_DAILY_LOSS_USD ?? 500),
+    maxPerTradeUsd: persistedLimits?.maxPerTradeUsd ?? Number(process.env.RISK_MAX_PER_TRADE_USD ?? 5000),
+    maxInFlightUsd: persistedLimits?.maxInFlightUsd ?? Number(process.env.RISK_MAX_INFLIGHT_USD ?? 15000),
+    maxDailyLossUsd: persistedLimits?.maxDailyLossUsd ?? Number(process.env.RISK_MAX_DAILY_LOSS_USD ?? 500),
   },
   day: persisted?.day ?? "",
   realizedPnlUsd: persisted?.realizedPnlUsd ?? 0,
@@ -52,6 +57,9 @@ export function setLimits(p: Partial<Limits>): Limits {
   for (const k of ["maxPerTradeUsd", "maxInFlightUsd", "maxDailyLossUsd"] as const) {
     if (typeof p[k] === "number" && Number.isFinite(p[k]) && p[k]! >= 0) S.limits[k] = p[k]!;
   }
+  // flush — 한도를 낮추는 건 대개 사고 중이고, 그 직후 크래시가 정확히 이 값이
+  // 필요한 순간이다.
+  flushSection("riskLimits", { ...S.limits });
   return getLimits();
 }
 

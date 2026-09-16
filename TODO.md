@@ -11,8 +11,27 @@
 - [x] **서킷 브레이커 분류** — 한글 메시지 정규식 → `defensive` 플래그. 거래소 영어 원문·문구 변경에 오분류되던 것
 - [x] **테스트·CI 도입** — vitest 43개(락·한도·플랜·rate limiter·인증·산식) + GitHub Actions(typecheck/test/check). 테스트는 임시 cwd에서 돈다(영속 계층이 운영 data/를 덮어쓰지 않게)
 
+## 🛡 실사용 감사 (2026-09-16) — 완료
+전 경로 코드 리뷰(엔진·스텝·주문·지갑·청산·자동매도·상장감시·부팅). "원칙은 세워뒀는데 한 경로만 빠진" 유형이 대부분.
+- [x] **바이낸스 잔고 조회가 항상 0** — `coinBalance("binance")`가 POST 고정 `binanceSigned`를 써서 에러 JSON → 폴백 0(null 아님). hybrid 자동매도가 영원히 waiting. `binanceSignedGet`으로 교체 + 에러 응답은 null. 고치면 드러나는 다음 문제(250ms × weight 20 = 한도 80%)는 거래소별 잔고 폴 주기(`BAL_POLL_MS`, 바낸 2s)로
+- [x] **상장 자동매수·원클릭에 슬리피지 게이트 없음** — 무인으로 나가는 경로만 `MAX_SLIPPAGE_PCT`가 빠져 있었다. `listingSlipGate`(호가 조회 실패도 차단)를 autoBuy·/api/listing-buy 둘 다에
+- [x] **EVM 전송 `wait()` 무한 대기** — 런이 영구 busy, cancel·unwind 불가. `WALLET_TX_WAIT_MS`(기본 15분) 타임아웃 → 기존 "브로드캐스트됨(컨펌 미확인)" 경로로
+- [x] **서킷 브레이커 → 자동매도 트리거 전멸** — 킬이면 status=error로 루프가 죽고 해제해도 안 살아났다(다른 코인 실패로도). 킬은 정지: 주문만 안 내고 루프는 유지
+- [x] **헷지 마진 게이트 fail-open** — `binanceFuturesFree()` null이면 통과했다. 차단으로. 마진 워치도 null이면 "조회 실패" 경보. 고치면서 드러난 것: 그 함수가 `api.binance.com`에 `/fapi/v2/balance`를 쳐서 **라이브에서 항상 null**이었다(선물은 `fapi.binance.com`) — 게이트가 실제로 검사한 적이 없었다. `binanceSignedGet`에 host 인자
+- [x] **매도 체결량 미확인 → 일일손실 한도 눈멂** — 매수엔 있던 ambiguous 가드가 매도엔 없어 settle이 추정 경로로 빠지고 recordPnl 미호출. 같은 가드 + 업비트 주문상세 조회 1회→4회
+- [x] **빗썸 출금 net_type 누락** — 입금주소 조회는 넘기면서 출금만 빠져 멀티체인 코인은 거래소가 체인을 골랐다
+- [x] **부팅** — health 크론이 스캔·감시는 깨우지만 `runEngine.boot()`(중단 런 표시·헷지 마진 워치)는 /api/runs 로드 때만 돌았다. scanCache 초기화에서 엔진도 로드. 첫 공지 폴이 재시작 창의 공지를 baseline으로 삼키던 것은 `annLastId` 영속 + 발행 10분 이내만 처리(`isBootFreshNotice`, 테스트)
+- [x] **리스크 한도 UI 변경 미영속** — 재시작하면 env 초기값 복귀. `riskLimits` flush(테스트)
+- [x] **롤백·청산 시장가의 슬리피지 게이트 fail-open** — `.catch(() => null)`로 호가 조회 실패 시 덤프. 진입과 같이 fail-closed(보류 + 텔레그램)
+- [x] **재시작 시 지정가 고아** — working→waiting하며 `openOrderId`를 버려 거래소의 살아있는 주문을 잊었다. id 있는 working은 그대로 복원해 trackOpenOrder가 이어받는다
+- [x] **부분 청산 후 `eng.hedgeQty` 미갱신** — 재개 시 close가 원래 수량 reduceOnly → -2022 거절. 청산분만큼 차감. unwind의 closeHedge도 요청량이 아니라 체결량만 인정
+- [x] **BINANCE_SECRET 누락이 "결과 불명"** — key만 보고 진행 → createHmac throw → inflightFail(ambiguous). `bnReady()`로 둘 다 확인
+- [x] **`/api/exec-step` 삭제** — 아무도 안 부르는데 살아 있던 자금 이동 라우트. 엔진의 중복 포지션·노출 한도·재검증·replay 방어를 전부 우회했다. idem 캐시도 함께 제거
+- [x] **`unwindRun` busy면 무응답** — 거절 사유를 돌려주고 라우트가 409로 올린다
+- [x] 자잘 — 지갑 수신 기준치 없을 때 절대잔고 대신 `min(잔고, 기대수량)`(기존 보유분 송금 방지) · CoinGecko null 알림 문구에 "레이트리밋" 명시 · 텔레그램 발송 실패 console.error
+
 ## 🔴 P0 — 실전화 (실제 자금 이동, 키 필요)
-`app/api/exec-step/route.ts` + `lib/orders.ts` (전부 DRY-RUN 게이트, 휴면):
+`lib/execStep.ts` + `lib/orders.ts` (전부 DRY-RUN 게이트, 휴면):
 - [x] **실주문** — 바낸 현물 매수/매도, USDT-M 숏/청산, 업비트 매수/매도 (서명 배선) — `lib/orders.ts`
 - [x] **실출금** — 바낸 → 개인지갑 (Binance `/capital/withdraw`, 서명)
 - [x] **토큰 전송 맵** — 주요 ERC20/TRC20 컨트랙트·decimals (`lib/tokens.ts`), 미확인 코인은 플래그

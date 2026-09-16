@@ -128,8 +128,16 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
   const closeHedge = async (qty: number) => {
     if (qty <= 0 || !opp.hasPerp) return;
     const r = await binancePerp(opp.base, "CLOSE", qty);
-    if (r.ok) hedgeClosed += qty;
-    log.push(r.ok ? `숏 ${qty.toFixed(4)} 비례 청산` : `숏 청산 실패: ${r.message} — 수동 확인`);
+    // 거래소가 보고한 체결량만 인정한다 — 요청 수량을 그대로 더하면 부분 체결에서
+    // hedgeClosed가 과대해지고, 엔진이 이 값으로 hedgeQty를 줄이므로 잔여 숏이
+    // 장부에서 사라진다(시장가 폴백에 이미 있던 원칙을 여기에도).
+    const closed = r.ok ? (r.filledQty && r.filledQty > 0 ? r.filledQty : 0) : 0;
+    if (closed > 0) hedgeClosed += closed;
+    log.push(
+      !r.ok ? `숏 청산 실패: ${r.message} — 수동 확인`
+      : closed > 0 ? `숏 ${closed.toFixed(4)} 비례 청산${closed < qty ? ` (요청 ${qty.toFixed(4)} 중 부분)` : ""}`
+      : `숏 청산 접수됐으나 체결량 미확인 — 선물 포지션 직접 확인`,
+    );
   };
 
   // Realized numbers for whatever has been sold SO FAR — shared by the normal
@@ -263,8 +271,14 @@ async function liveUnwind(opp: Opportunity, remainingQty: number, fractionIn: nu
   if (left > 0 && !bailout) {
     // Same slippage discipline as the normal sell leg: a market dump into a
     // broken book can cost more than holding the (hedged) position.
-    const est = await estimateLegSlippage(venue, sellLeg.symbol, "sell", { baseQty: left }).catch(() => null);
-    if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
+    // fail-closed — 호가 조회가 실패하면 시장가를 안 낸다. 예전엔 `.catch(() => null)`로
+    // 게이트를 건너뛰고 덤프했다: 모르는 책에 시장가는 상한 없는 슬리피지다.
+    let est: Awaited<ReturnType<typeof estimateLegSlippage>> | "unavailable";
+    try { est = await estimateLegSlippage(venue, sellLeg.symbol, "sell", { baseQty: left }); }
+    catch { est = "unavailable"; }
+    if (est === "unavailable") {
+      log.push(`시장가 보류 — 호가 조회 실패 · 잔량 ${left.toFixed(4)} 헷지 유지로 보유 (모르는 호가에 시장가 안 냄)`);
+    } else if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
       log.push(`시장가 보류 — 예상 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% · 잔량 ${left.toFixed(4)} 헷지 유지로 보유`);
     } else {
       const r = venue === "binance"

@@ -3,7 +3,7 @@ import { CONFIG } from "@/lib/config";
 import { isKilled } from "@/lib/killswitch";
 import { checkEntry } from "@/lib/risk";
 import { binanceSpot, bybitOrder, okxOrder } from "@/lib/orders";
-import { globalVenueFor, listingInfo, recordListingBuy } from "@/lib/listings";
+import { globalVenueFor, listingInfo, recordListingBuy, listingSlipGate } from "@/lib/listings";
 import { notifyNow } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +51,10 @@ export async function POST(req: Request) {
         if (p > 0) price = p;
       } catch { /* record without price */ }
     }
+
+    // 엔진 경로와 같은 슬리피지 상한 — 원클릭도 얇은 호가에 시장가를 던지지 않는다.
+    const slip = await listingSlipGate(venue, base, sizeUsd);
+    if (slip) return NextResponse.json({ ok: false, message: `슬리피지 게이트 — ${slip}` }, { status: 409 });
 
     const r =
       venue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: sizeUsd })

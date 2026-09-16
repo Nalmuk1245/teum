@@ -58,6 +58,11 @@ export type SellTrigger = {
 };
 
 const POLL_MS = 250;               // 주기 — 주문 한도의 70~80% 여유 (실측 후 조정)
+// hybrid는 매 주기 잔고를 읽는다. 바이낸스 /api/v3/account는 weight 20이라 250ms면
+// 4,800/min — IP 한도 6,000의 80%를 트리거 **하나**가 먹는다(둘이면 밴). 업비트
+// /v1/accounts는 30/s 버킷이라 250ms가 문제없다. 거래소별로 잔고 폴 주기를 나눈다.
+const BAL_POLL_MS: Record<string, number> = { binance: 2000 };
+const pollMsFor = (t?: SellTrigger) => (t && t.fire === "hybrid" ? BAL_POLL_MS[t.venue] ?? POLL_MS : POLL_MS);
 const BACKOFF_MS = 30_000;         // 거절/429 폭증 시 물러남
 const MIN_NOTIONAL = 5;            // 이 미만 잔고는 "도착 안 함"으로 (먼지 방지)
 const MAX_ATTEMPTS_DRY = 20;       // DRY에선 무한 시뮬 방지
@@ -69,9 +74,16 @@ const g = globalThis as unknown as G;
 function store(): Map<string, SellTrigger> {
   if (!g.__arbSellTriggers) {
     const saved = loadSection<SellTrigger[]>("sellTriggers") ?? [];
-    // 재시작하면 working 중이던 주문 상태는 신뢰할 수 없다 — waiting으로 되돌려
-    // 재무장(잔고가 아직 있으면 다시 판다). done/cancelled는 그대로.
-    g.__arbSellTriggers = new Map(saved.map((t) => [t.id, t.status === "working" || t.status === "arming" ? { ...t, status: "waiting", openOrderId: undefined } : t]));
+    // 재시작 복원. 미체결 지정가(openOrderId)가 있는 working은 **그대로 둔다** —
+    // 거래소에 그 주문이 살아 있으므로 trackOpenOrder가 체결·취소를 이어서 본다.
+    // 예전엔 openOrderId를 지우고 waiting으로 돌렸는데, 그러면 거래소의 지정가는
+    // 고아가 된다: 잔고가 locked라 재등록은 거절돼 이중 매도는 안 났지만, bid 모드
+    // re-peg가 멈추고 체결돼도 soldQty/proceeds에 안 잡혔다. 주문 id가 없는
+    // working(시장가 발사 중)·arming은 상태를 알 수 없으니 waiting으로.
+    g.__arbSellTriggers = new Map(saved.map((t) => [
+      t.id,
+      (t.status === "working" && !t.openOrderId) || t.status === "arming" ? { ...t, status: "waiting" } : t,
+    ]));
   }
   return g.__arbSellTriggers;
 }
@@ -104,7 +116,11 @@ async function limitSell(t: SellTrigger, qty: number, price: number) {
 /** 한 트리거의 한 주기. */
 async function tick(t: SellTrigger): Promise<void> {
   if (t.status === "done" || t.status === "cancelled" || t.status === "error") return;
-  if (isKilled()) { t.status = "error"; t.lastMsg = "킬 스위치 활성 — 트리거 정지"; persist(); return; }
+  // 킬 스위치는 **정지**지 사망이 아니다. 예전엔 status="error"로 세워 루프가
+  // 재스케줄을 멈췄고(해제해도 안 살아남), 서킷 브레이커가 **다른 코인**의 실패로
+  // 킬을 켜는 순간 전송 중이던 코인의 매도 트리거가 전부 죽었다 — 재등록 전까지
+  // 도착한 코인을 아무도 안 팔았다. 이제 주문만 안 내고 루프는 계속 돈다.
+  if (isKilled()) { t.lastMsg = "킬 스위치 활성 — 대기 (해제되면 재개)"; return; }
 
   // 실행 엔진이 같은 코인·거래소를 매도 관리 중이면 양보 (오버셀 방지).
   try {
@@ -263,12 +279,13 @@ function scheduleLoop(id: string): void {
         // 세기 시작하는 구간 — 폴 간격을 점진적으로 늘린다. 체결/등록되면 0으로.
         // nonFill 8회(≈2초)부터 개입, 32회면 BACKOFF_MS 상한.
         const nf = cur.nonFill;
-        const delay = nf < 8 ? POLL_MS : Math.min(BACKOFF_MS, POLL_MS * Math.pow(2, Math.floor((nf - 8) / 8) + 1));
+        const base = pollMsFor(cur);
+        const delay = nf < 8 ? base : Math.min(BACKOFF_MS, base * Math.pow(2, Math.floor((nf - 8) / 8) + 1));
         g.__arbSellLoops!.set(id, setTimeout(run, delay));
       }
     });
   };
-  g.__arbSellLoops!.set(id, setTimeout(run, POLL_MS));
+  g.__arbSellLoops!.set(id, setTimeout(run, pollMsFor(store().get(id))));
 }
 function stopLoop(id: string): void {
   const h = g.__arbSellLoops!.get(id);

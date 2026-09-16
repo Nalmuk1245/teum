@@ -1,6 +1,6 @@
 // Step executor — 한 단계를 서버에서 실행한다 (주문·출금·전송·정산 전부).
-// /api/exec-step 라우트와 서버 실행엔진(runEngine)이 공유. 라우트를 거치지
-// 않는 엔진 경로에서도 동일한 가드(킬스위치·리스크·슬리피지)가 적용된다.
+// 서버 실행엔진(runEngine)만 호출한다. 예전의 /api/exec-step 라우트는 엔진의
+// 중복 포지션 검사·노출 한도·재검증·replay 방어를 전부 우회하는 죽은 입구라 지웠다.
 
 import type { Opportunity } from "./types";
 import { CONFIG, TAG_REQUIRED, FEES } from "./config";
@@ -27,22 +27,6 @@ import { notify } from "./telegram";
 
 
 const NET_LABEL = BINANCE_NET; // shared exchange network codes
-
-// Idempotency cache — successful step results by run:step key, 10min TTL.
-const gi = globalThis as unknown as { __arbIdem?: Map<string, { r: StepResult; ts: number }> };
-gi.__arbIdem ??= new Map();
-export function idemGet(key: string): StepResult | null {
-  const hit = gi.__arbIdem!.get(key);
-  if (!hit || Date.now() - hit.ts > 10 * 60_000) return null;
-  return hit.r;
-}
-export function idemSet(key: string, r: StepResult) {
-  gi.__arbIdem!.set(key, { r, ts: Date.now() });
-  if (gi.__arbIdem!.size > 500) { // bound
-    const oldest = [...gi.__arbIdem!.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
-    if (oldest) gi.__arbIdem!.delete(oldest[0]);
-  }
-}
 
 // Our wallet's receive address on a chain family (for the withdraw destination).
 function destAddr(chainKey: string): string | null {
@@ -171,9 +155,11 @@ async function walletArrival(
   const basis = (before != null ? "증가분" : "잔고(기준치 없음)") + (feeKnown ? "" : " · 출금비 미상(관용치 10%)");
   if (ok) {
     // Thread the ACTUAL arrival forward so the send uses what really landed.
+    // 기준치가 없을 때(출금 전 RPC 조회 실패)는 절대잔고를 그대로 넘기지 않는다 —
+    // 같은 코인의 기존 보유분까지 다음 단계가 송금해 버린다. 기대 수량까지만.
     return {
       ok: true, dryRun: false,
-      filledQty: before != null ? arrived : bal,
+      filledQty: before != null ? arrived : Math.min(bal, qty),
       message: `지갑 수신 확인 · ${basis} ${arrived.toFixed(6)} ${opp.base}`,
     };
   }
@@ -396,7 +382,11 @@ export async function runStep(
         const free = await binanceFuturesFree();
         const price = opp.legs.find((l) => l.quote === "USDT")?.price ?? 0;
         const notional = hedgeQty * price;
-        if (free !== null && free < notional * 0.6) {
+        // fail-closed — 조회 실패(null)도 차단. 다른 게이트와 같은 원칙이다: 마진을
+        // 모르는 채 숏을 열면, 전송 중 펌핑에 청산당하는 게 정확히 이 게이트가
+        // 막으려던 상황이다. 예전엔 null이면 그냥 통과했다.
+        if (free === null) return guard("선물 가용 마진 조회 실패 — 헷지 차단 (재시도)");
+        if (free < notional * 0.6) {
           return guard(`선물 가용 마진 부족 ($${free.toFixed(0)} < 필요 $${(notional * 0.6).toFixed(0)}) — 청산 위험, 헷지 차단`);
         }
       }
@@ -481,7 +471,7 @@ export async function runStep(
         : buy?.venue === "bybit" ? bybitWithdraw(opp.base, net, dest, qty, tag ?? undefined)
         : buy?.venue === "okx" ? okxWithdraw(opp.base, net, dest, qty, tag ?? undefined)
         : buy?.venue === "upbit" ? upbitWithdraw(opp.base, net, dest, qty, tag ?? undefined)
-        : buy?.venue === "bithumb" ? bithumbWithdraw(opp.base, dest, qty, tag ?? undefined)
+        : buy?.venue === "bithumb" ? bithumbWithdraw(opp.base, net, dest, qty, tag ?? undefined)
         : null;
       if (!call) return unwired(`${buy?.venue} 출금`);
       const tW = Date.now();
@@ -629,6 +619,17 @@ export async function runStep(
           };
         }
       }
+      // 매수와 같은 가드. 체결량 없이 ok로 흘리면 settle이 실체결 경로를 못 타
+      // 추정치로 기록되고 recordPnl이 안 불려 **일일손실 한도가 눈먼다** — 매수엔
+      // 있던 가드가 매도엔 없었다. 비가역 이후라 롤백은 없지만, close·settle이
+      // 모르는 수량으로 진행하는 것보다 사람이 잔고를 보고 정리하는 쪽이 맞다.
+      if (r.ok && !dry && !(r.filledQty && r.filledQty > 0)) {
+        rec(null);
+        return {
+          ok: false, dryRun: false, ambiguous: true,
+          message: `${sell.venue} 매도는 성공했지만 체결량을 확인할 수 없습니다 — 거래소 잔고·체결 내역 확인 후 수동 정리 (헷지 유지)`,
+        };
+      }
       rec(r, r.filledQty, r.quoteFilled);
       return { ...r, message: r.message, fill: { qty: r.filledQty, quote: r.quoteFilled, ccy: sell.quote } };
     }
@@ -717,7 +718,16 @@ async function undoStep(stepId: StepId, opp: Opportunity, qty: number, hedgeQty?
     // 롤백도 시장가 매도다 — 얇은 호가에 덤프하면 방어 동작이 손실을 만든다.
     // 진입과 같은 슬리피지 상한을 적용, 초과 시 보류하고 사람을 부른다.
     if (!CONFIG.DRY_RUN && buy?.venue && buy.symbol) {
-      const est = await estimateLegSlippage(buy.venue, buy.symbol, "sell", { baseQty: qty }).catch(() => null);
+      // fail-closed — 호가 조회가 실패하면 보류. 예전엔 `.catch(() => null)`로
+      // 게이트를 건너뛰고 시장가를 던졌다: 진입은 조회 실패 시 주문을 안 내는데
+      // 방어 동작인 롤백만 그 순간 무방비였다.
+      let est: Awaited<ReturnType<typeof estimateLegSlippage>>;
+      try { est = await estimateLegSlippage(buy.venue, buy.symbol, "sell", { baseQty: qty }); }
+      catch (e) {
+        void notify(`rollback-hold:${opp.base}`,
+          `⚠ <b>${opp.base}</b> 롤백 보류 — 호가 조회 실패, 시장가 안 냄 · 수동 처리 필요 (수량 ${qty.toFixed(6)})`);
+        return { ok: false, dryRun: false, message: `롤백 보류: 호가 조회 실패 (${e instanceof Error ? e.message : "?"}) — 수동 처리 (텔레그램 발송)` };
+      }
       if (est && (est.slipPct > CONFIG.MAX_SLIPPAGE_PCT || !est.filled)) {
         void notify(`rollback-hold:${opp.base}`,
           `⚠ <b>${opp.base}</b> 롤백 보류 — 예상 슬리피지 ${est.slipPct.toFixed(2)}% > 상한 ${CONFIG.MAX_SLIPPAGE_PCT}% · 수동 처리 필요 (수량 ${qty.toFixed(6)})`);

@@ -22,14 +22,17 @@ async function send(text: string): Promise<void> {
   const { token, chat } = cfg();
   if (!token || !chat) return;
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
       signal: AbortSignal.timeout(5000),
     });
-  } catch {
-    /* best-effort */
+    // best-effort지만 **무음은 아니다** — "결과 불명 출금" 같은 알림이 유실됐을 때
+    // 로그에라도 남아야 나중에 "왜 몰랐나"를 추적할 수 있다.
+    if (!res.ok) console.error(`[telegram] 발송 실패 HTTP ${res.status}: ${text.slice(0, 80)}`);
+  } catch (e) {
+    console.error(`[telegram] 발송 실패: ${e instanceof Error ? e.message : e} — ${text.slice(0, 80)}`);
   }
 }
 

@@ -55,7 +55,11 @@ export async function POST(req: Request) {
         break;
       }
       case "clear": clearFinished(); break;
-      case "unwind": await unwindRun(body.id, body.fraction); break;
+      case "unwind": {
+        const r = await unwindRun(body.id, body.fraction);
+        if ("error" in r) return NextResponse.json({ error: r.error, ...snapshot() }, { status: 409 });
+        break;
+      }
       case "kill": setEngineKill(!!body.killed); break;
       default: return NextResponse.json({ error: "알 수 없는 action" }, { status: 400 });
     }
