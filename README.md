@@ -132,6 +132,7 @@ crontab -e   # * * * * * curl -sf localhost:3100/api/health >/dev/null   ← 무
 |---|---|
 | `RUNBOOK.md` | 실전화(`DRY_RUN=false`) 단계별 절차 · 키 권한 · pm2 · 헬스체크 |
 | `TODO.md` | 기능 백로그(우선순위별) |
+| `docs/LIVE_TEST_TODO.md` | **테스터용** — 거래소·체인 왕복이 필요한 검증 절차·기대 결과·보고 양식 (2026-09 실사용 감사 후속) |
 | `docs/RECOMMENDATIONS.md` | 개선·기능 추천(가치·비용 표기) |
 | `docs/REVIEW_2026-07-25.md` | 속도·안정성 점검 보고서 — 문제·수정·측정치·남은 항목 |
 

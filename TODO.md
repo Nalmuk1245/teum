@@ -13,6 +13,7 @@
 
 ## 🛡 실사용 감사 (2026-09-16) — 완료
 전 경로 코드 리뷰(엔진·스텝·주문·지갑·청산·자동매도·상장감시·부팅). "원칙은 세워뒀는데 한 경로만 빠진" 유형이 대부분.
+**거래소·체인 왕복이 필요한 검증은 `docs/LIVE_TEST_TODO.md`** — 테스터가 순서대로 따라 하고 결과를 기록하는 문서.
 - [x] **바이낸스 잔고 조회가 항상 0** — `coinBalance("binance")`가 POST 고정 `binanceSigned`를 써서 에러 JSON → 폴백 0(null 아님). hybrid 자동매도가 영원히 waiting. `binanceSignedGet`으로 교체 + 에러 응답은 null. 고치면 드러나는 다음 문제(250ms × weight 20 = 한도 80%)는 거래소별 잔고 폴 주기(`BAL_POLL_MS`, 바낸 2s)로
 - [x] **상장 자동매수·원클릭에 슬리피지 게이트 없음** — 무인으로 나가는 경로만 `MAX_SLIPPAGE_PCT`가 빠져 있었다. `listingSlipGate`(호가 조회 실패도 차단)를 autoBuy·/api/listing-buy 둘 다에
 - [x] **EVM 전송 `wait()` 무한 대기** — 런이 영구 busy, cancel·unwind 불가. `WALLET_TX_WAIT_MS`(기본 15분) 타임아웃 → 기존 "브로드캐스트됨(컨펌 미확인)" 경로로
