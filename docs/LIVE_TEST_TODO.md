@@ -18,7 +18,7 @@
 ## 1. 사전 준비
 
 - [ ] `RUNBOOK.md` 0~3절 완료 (KR IP, 텔레그램, 키 입력, `EXEC_TOKEN`, 소액 리스크 한도)
-- [ ] 이 브랜치 체크아웃: `git fetch && git checkout fix/live-audit-2026-09 && npm ci && npm run build && pm2 restart teum` (또는 `npm start`)
+- [ ] 최신 `main` 체크아웃: `git pull && npm ci && npm run build && pm2 restart teum` (또는 `npm start`) — 감사 수정분은 `main`에 병합돼 있다
 - [ ] 헬스체크 크론 등록 (RUNBOOK "헬스체크 crontab"). **T4가 이걸 검증한다.**
 - [ ] `.env.local`에 아래를 소액으로 잠금:
   ```
@@ -192,7 +192,7 @@
 
 ## 3. 고칠 때 규칙
 
-- 브랜치는 `fix/live-audit-2026-09`에서 따거나 그 위에 커밋. `main` 직접 커밋 금지
+- `main`에서 브랜치를 따서 고치고 PR. `main` 직접 커밋 금지
 - 고친 뒤 `npm run typecheck && npm test && npm run build` 통과 필수. 순수 로직이면 `test/liveAudit.test.ts`에 케이스 추가
 - 이 문서의 체크박스와 TODO.md 감사 섹션을 같이 갱신
 - **자금이 움직이는 경로를 고칠 땐** 롤백·ambiguous·킬스위치 분기를 건드리지 않았는지 diff에서 한 번 더 본다. 원칙은 코드 주석에 다 적혀 있다 — 특히 `lib/execStep.ts` 상단, `lib/orders.ts` `OrderResult` 타입, `lib/runEngine.ts` 헤더
