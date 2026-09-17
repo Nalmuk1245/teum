@@ -29,6 +29,12 @@
 // 이건 인증이 아니라 출처 확인이다. EXEC_TOKEN(자금 이동 액션)과 층이 다르고,
 // 로그인을 대신하지도 않는다 — `start:lan`으로 LAN에 열면 같은 망의 curl은
 // 그대로 들어온다(Origin을 안 붙이면 되니까). LAN 노출은 여전히 옵트인이다.
+//
+// 공인 주소로 열 때(ALLOWED_HOSTS): Host가 로컬/사설망이 아니면 무조건 거부하던
+// 규칙이 공인 IP·도메인 접속을 전부 막아 UI가 읽기 전용이 됐다. 운영자가 명시한
+// 호스트 목록은 통과시킨다. 리바인딩 방어는 유지된다 — 공격자 도메인은 목록에
+// 없으므로 Host가 그것이면 여전히 거부. 이 옵션은 BASIC_AUTH와 함께 쓰는 것이
+// 전제다(lib/basicAuth.ts).
 
 export type GuardVerdict = { ok: true } | { ok: false; reason: string };
 
@@ -59,18 +65,28 @@ export function isLocalOrPrivateHost(hostPort: string): boolean {
   return false;
 }
 
+/** Host가 허용 목록에 있는가 — `host:port` 정확 일치 또는 포트를 뗀 host 일치. */
+export function isAllowedHost(hostPort: string, allowed?: string[]): boolean {
+  if (!allowed?.length) return false;
+  const full = hostPort.trim().toLowerCase();
+  const bare = hostOnly(hostPort);
+  return allowed.some((a) => a === full || a === bare);
+}
+
 /** 이 요청을 받아도 되는가. 순수 함수 — 미들웨어가 헤더만 넘겨준다. */
 export function checkRequestOrigin(req: {
   method: string;
   origin: string | null;
   host: string | null;
+  /** 운영자가 명시적으로 허용한 공인 호스트 (`host:port` 또는 `host`). 소문자. */
+  allowedHosts?: string[];
 }): GuardVerdict {
   if (!MUTATING.has(req.method.toUpperCase())) return { ok: true };
 
   const host = req.host;
   if (!host) return { ok: false, reason: "Host 헤더 없음" };
-  if (!isLocalOrPrivateHost(host)) {
-    return { ok: false, reason: `외부 호스트로 들어온 요청 (Host: ${host}) — DNS 리바인딩 차단` };
+  if (!isLocalOrPrivateHost(host) && !isAllowedHost(host, req.allowedHosts)) {
+    return { ok: false, reason: `외부 호스트로 들어온 요청 (Host: ${host}) — DNS 리바인딩 차단 (허용하려면 ALLOWED_HOSTS)` };
   }
 
   const origin = req.origin;

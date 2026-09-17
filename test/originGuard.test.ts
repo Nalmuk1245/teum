@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { checkRequestOrigin, isLocalOrPrivateHost } from "@/lib/originGuard";
 
-const req = (over: Partial<{ method: string; origin: string | null; host: string | null }> = {}) => ({
+const req = (over: Partial<{ method: string; origin: string | null; host: string | null; allowedHosts: string[] }> = {}) => ({
   method: "POST", origin: null as string | null, host: "localhost:3100", ...over,
 });
 
@@ -70,6 +70,32 @@ describe("DNS 리바인딩 차단", () => {
 
   it("Host 헤더가 없으면 거부", () => {
     expect(checkRequestOrigin(req({ host: null })).ok).toBe(false);
+  });
+});
+
+describe("ALLOWED_HOSTS — 공인 주소로 열 때", () => {
+  const pub = "158.247.242.248:3101";
+
+  it("허용 목록에 있는 공인 Host는 통과 (Origin 일치)", () => {
+    expect(checkRequestOrigin(req({ origin: `http://${pub}`, host: pub, allowedHosts: [pub] })).ok).toBe(true);
+  });
+
+  it("포트를 뗀 host만 적어도 통과", () => {
+    expect(checkRequestOrigin(req({ origin: `http://${pub}`, host: pub, allowedHosts: ["158.247.242.248"] })).ok).toBe(true);
+  });
+
+  it("목록에 없는 공인 Host는 여전히 거부 — 리바인딩 방어 유지", () => {
+    const v = checkRequestOrigin(req({ origin: "http://evil.example.com:3101", host: "evil.example.com:3101", allowedHosts: [pub] }));
+    expect(v.ok).toBe(false);
+    expect(v.ok === false && v.reason).toMatch(/리바인딩/);
+  });
+
+  it("허용 Host라도 Origin이 다른 사이트면 거부 — CSRF 방어는 그대로", () => {
+    expect(checkRequestOrigin(req({ origin: "https://evil.example.com", host: pub, allowedHosts: [pub] })).ok).toBe(false);
+  });
+
+  it("빈 목록은 아무것도 열지 않는다", () => {
+    expect(checkRequestOrigin(req({ origin: `http://${pub}`, host: pub, allowedHosts: [] })).ok).toBe(false);
   });
 });
 
