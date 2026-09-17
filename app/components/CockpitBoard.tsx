@@ -65,7 +65,7 @@ export function Board({
       )}
 
       {loading && rows.length === 0 ? (
-        <Empty text="시장 스캔 중…" />
+        <Empty text="시장 스캔 중…" hint="첫 스캔은 몇 초 걸립니다 — 기회가 잡히면 여기 줄이 생깁니다" />
       ) : rows.length === 0 ? (
         <Empty text={emptyText ?? "기회 없음"} />
       ) : (

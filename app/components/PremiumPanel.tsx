@@ -37,9 +37,15 @@ const SEL: React.CSSProperties = {
   background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8,
   color: "var(--text)", padding: "5px 8px", fontSize: 12, outline: "none",
 };
+// 칩 하나의 모양은 하나 — 타임프레임·프리셋이 같은 세그먼트 셸(GROUP) 안에서 같은 칩(CHIP)을 쓴다.
+// 예전엔 타임프레임은 맨칩, 프리셋은 테두리칩이라 한 툴바에 컨트롤 양식이 셋이었다.
+const GROUP: React.CSSProperties = {
+  display: "inline-flex", gap: 2, padding: 3, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9,
+};
 const CHIP = (on: boolean): React.CSSProperties => ({
-  border: "none", borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer",
-  background: on ? "var(--brand-soft)" : "transparent", color: on ? "var(--brand-2)" : "var(--text-mute)",
+  border: "none", borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+  background: on ? "var(--brand-soft)" : "transparent", color: on ? "var(--brand-2)" : "var(--text-dim)",
+  transition: "background 120ms, color 120ms",
 });
 
 export function PremiumPanel({ mobile }: { mobile?: boolean }) {
@@ -100,22 +106,24 @@ export function PremiumPanel({ mobile }: { mobile?: boolean }) {
           </button>
         </div>
 
-        {/* 타임프레임 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap", marginBottom: 8 }}>
-          {UNITS.map((x) => (
-            <button key={x.u} type="button" onClick={() => setUnit(x.u)} style={CHIP(unit === x.u)}>{x.label}</button>
-          ))}
+        {/* 타임프레임 · 프리셋 — 같은 세그먼트 셸, 라벨은 왼쪽에 작게 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10.5, color: "var(--text-mute)", minWidth: 34 }}>주기</span>
+          <div className="no-bar" style={{ ...GROUP, overflowX: "auto", maxWidth: "100%" }}>
+            {UNITS.map((x) => (
+              <button key={x.u} type="button" onClick={() => setUnit(x.u)} style={CHIP(unit === x.u)}>{x.label}</button>
+            ))}
+          </div>
         </div>
-
-        {/* 프리셋 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
-          <span style={{ fontSize: 10.5, color: "var(--text-mute)", marginRight: 2 }}>프리셋</span>
-          {PRESETS.map((p, i) => (
-            <button key={p.label} type="button" onClick={() => { setA(p.a); setB(p.b); }}
-              style={{ ...CHIP(preset === i), border: "1px solid var(--border)", fontWeight: 600 }}>
-              {p.label}
-            </button>
-          ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <span style={{ fontSize: 10.5, color: "var(--text-mute)", minWidth: 34 }}>프리셋</span>
+          <div className="no-bar" style={{ ...GROUP, overflowX: "auto", maxWidth: "100%" }}>
+            {PRESETS.map((p, i) => (
+              <button key={p.label} type="button" onClick={() => { setA(p.a); setB(p.b); }} style={CHIP(preset === i)}>
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* 차트 코어 — 비용선은 스캔에서 자동 조회(costPct 미지정) */}

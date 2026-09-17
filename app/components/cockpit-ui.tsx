@@ -79,8 +79,8 @@ export function Tile({
       >
         {value}
       </div>
-      <div style={{ color: "var(--text-mute)", fontSize: 9, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 7, whiteSpace: "nowrap" }}>
-        {label}{sub ? <span style={{ color: "var(--text-mute)", opacity: 0.7 }}> · {sub}</span> : null}
+      <div style={{ color: "var(--text-mute)", fontSize: 10.5, fontWeight: 500, letterSpacing: "0.04em", marginTop: 7, whiteSpace: "nowrap" }}>
+        {label}{sub ? <span style={{ opacity: 0.8 }}> · {sub}</span> : null}
       </div>
     </div>
   );
@@ -117,10 +117,11 @@ export function Spark({ data, costPct }: { data?: number[]; costPct: number }) {
   );
 }
 
-export function Empty({ text }: { text: string }) {
+export function Empty({ text, hint }: { text: string; hint?: string }) {
   return (
-    <div style={{ padding: "56px 18px", textAlign: "center", color: "var(--text-mute)", fontSize: 14 }}>
-      {text}
+    <div style={{ padding: "48px 18px", textAlign: "center", color: "var(--text-dim)", fontSize: 14 }}>
+      <div>{text}</div>
+      {hint && <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-mute)" }}>{hint}</div>}
     </div>
   );
 }
@@ -317,21 +318,24 @@ export function LiveDots({ status, ages, isMobile }: { status: LiveStatus; ages:
   const chip = (on: boolean, age: number | null, label: string) => {
     const fresh = on && age != null && age <= 5;
     const tone = fresh ? "var(--pos)" : on ? "var(--amber)" : "var(--text-mute)";
+    const full = label === "BN" ? "Binance" : label === "UP" ? "Upbit" : "Bithumb";
+    // 미연결 칩은 점만 회색으로 두지 않는다 — 점선 테두리 + "—"로 "데이터 없음"을 읽히게.
     return (
       <span
         key={label}
-        title={`${label} · ${age != null ? age + "s 전" : "미수신"}`}
+        title={on ? `${full} 시세 · ${age != null ? age + "초 전" : "수신 대기"}` : `${full} 미연결 — 웹소켓 끊김 또는 키 미설정`}
         style={{
           display: "inline-flex", alignItems: "center", gap: 4,
-          border: "1px solid var(--border)", borderRadius: 9,
+          border: `1px ${on ? "solid" : "dashed"} ${on ? "var(--border)" : "var(--border-strong)"}`, borderRadius: 9,
           padding: isMobile ? "2px 5px" : "2px 7px",
-          background: "var(--card)",
+          background: on ? "var(--card)" : "transparent",
+          opacity: on ? 1 : 0.75,
         }}
       >
         <span style={{ width: 5, height: 5, borderRadius: 9, background: tone }} />
         <span className="tnum" style={{ fontSize: 10, fontWeight: 600, color: on ? "var(--text-dim)" : "var(--text-mute)" }}>
           {label}
-          {!isMobile && age != null && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}> {age}s</span>}
+          {!isMobile && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}> {on ? (age != null ? `${age}s` : "…") : "—"}</span>}
         </span>
       </span>
     );
@@ -359,7 +363,9 @@ export function Pill({
         display: "inline-flex", alignItems: "center", gap: 6,
         border: `1px solid ${soft ? "transparent" : tone}`,
         background: soft ? "color-mix(in srgb, " + tone + " 14%, transparent)" : "transparent",
-        color: tone, fontSize: 12, fontWeight: 600, borderRadius: 9, padding: "5px 11px",
+        color: tone, fontSize: 11.5, fontWeight: 600, borderRadius: 9, padding: "4px 9px",
+        // 헤더가 좁아져도 글자를 세로로 쪼개지 않는다 — 모바일에서 "페이퍼"가 3줄이 됐다.
+        whiteSpace: "nowrap", flex: "0 0 auto",
       }}
     >
       {dot && <span style={{ width: 7, height: 7, borderRadius: 9, background: tone }} />}

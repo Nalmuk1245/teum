@@ -13,8 +13,8 @@
   --header-bg: rgba(14, 16, 22, 0.72);
 
   --text: #eef0f4;
-  --text-dim: #a9aeb9;
-  --text-mute: #767c88;
+  --text-dim: #b6bbc6;
+  --text-mute: #8e94a1;
 
   /* 액센트 — 실행 가능한 것에만 */
   --brand: #6db1e8;
@@ -41,9 +41,9 @@
   --html-grad: linear-gradient(160deg, #101218 0%, #0a0c10 100%);
   --blob-warm-a: #b97b1e;
   --blob-warm-b: #8a5a14;
-  --blob-warm-o: 0.42;
+  --blob-warm-o: 0.16;
   --blob-cool: #4a63d8;
-  --blob-cool-o: 0.30;
+  --blob-cool-o: 0.20;
 
   --sans: "Pretendard Variable", Pretendard, "Inter", -apple-system, system-ui,
     "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -84,9 +84,9 @@
   --html-grad: linear-gradient(160deg, #eef0f3 0%, #e6e8ec 100%);
   --blob-warm-a: #ffd76a;
   --blob-warm-b: #ffb84d;
-  --blob-warm-o: 0.75;
+  --blob-warm-o: 0.38;
   --blob-cool: #3b57d0;
-  --blob-cool-o: 0.35;
+  --blob-cool-o: 0.25;
 }
 
 * {
@@ -129,10 +129,10 @@ body::after {
   pointer-events: none;
 }
 body::before {
-  width: 56vw;
-  height: 44vw;
-  left: 26vw;
-  top: -8vw;
+  width: 48vw;
+  height: 38vw;
+  left: 58vw;
+  top: -22vw;
   background: radial-gradient(circle at 45% 45%, var(--blob-warm-a) 0%, var(--blob-warm-b) 40%, transparent 72%);
   filter: blur(80px);
   opacity: var(--blob-warm-o);
@@ -178,6 +178,10 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
 }
+
+/* 탭바 등 가로 스크롤 스트립 — 스크롤바를 숨겨도 스와이프는 된다 */
+.no-bar { scrollbar-width: none; }
+.no-bar::-webkit-scrollbar { display: none; }
 
 ::-webkit-scrollbar {
   width: 8px;

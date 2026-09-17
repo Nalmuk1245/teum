@@ -15,17 +15,29 @@ import { srcVerdict } from "@/lib/watchVerdict";
 import type { RiskState } from "./ControlPanel";
 import { EpisodeCard } from "./ControlPanel";
 
-const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
+const CAP: React.CSSProperties = { fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-mute)" };
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)"  }
+// 핵심 카드(실시간 기회) — 한 단계 밝은 표면·강한 테두리·깊은 그림자로 격자에서 떠오르게.
+const CARD_HERO: React.CSSProperties = { ...CARD, background: "var(--card-2)", border: "1px solid var(--border-strong)", boxShadow: "var(--shadow)" };
+// 카드 우상단 "… →" 이동 링크 — 대시보드 전체가 같은 모양을 쓴다.
+const LINK: React.CSSProperties = { border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 };
+// 응답이 이 시간 넘게 안 오면 "불러오는 중"이 아니라 "응답 없음"이다.
+const STALE_MS = 12_000;
 
 // 세션 동안 쌓는 미니 바차트 (숫자에 맥락 부여 — 시안의 vertical bars)
 function MiniBars({ series, color }: { series: number[]; color?: string }) {
   const max = Math.max(...series, 1);
   const view = series.slice(-14);
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 34, marginTop: 10 }}>
+    <div
+      title={view.length < 2 ? "세션 추이 — 스캔이 갱신될 때마다 8초 간격으로 쌓입니다" : undefined}
+      style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 34, marginTop: 10 }}
+    >
       {view.length < 2 ? (
-        <span style={{ fontSize: 9.5, color: "var(--text-mute)" }}>세션 데이터 수집 중…</span>
+        // 카드 4장에 같은 "수집 중…" 문장을 반복하지 않는다 — 빈 자리엔 자리표시 바만.
+        Array.from({ length: 14 }, (_, i) => (
+          <span key={i} style={{ flex: 1, borderRadius: 2, height: 3, background: "var(--border)" }} />
+        ))
       ) : view.map((v, i) => (
         <span
           key={i}
@@ -66,7 +78,7 @@ function Kpi({ label, value, chip, sub, series, tone, compact }: {
         {chip && <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "var(--pos-soft)", color: "var(--pos)" }}>{chip}</span>}
       </div>
       {sub && (
-        <div style={{ marginTop: 3, fontSize: compact ? 10 : 10.5, color: "var(--text-mute)", minWidth: 0, overflowWrap: "anywhere" }}>{sub}</div>
+        <div style={{ marginTop: 3, fontSize: compact ? 10.5 : 11, color: "var(--text-mute)", minWidth: 0, overflowWrap: "anywhere" }}>{sub}</div>
       )}
       <MiniBars series={series} color={tone} />
     </div>
@@ -96,15 +108,20 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   const [gatesPartial, setGatesPartial] = useState(false);
   const [tradeCount, setTradeCount] = useState<number | null>(null);
   const [mock, setMock] = useState(true);
+  // 잔고 응답을 한 번이라도 받았나 — 데모 배너는 "키가 없다"를 확인한 뒤에만 띄운다.
+  const [portfolioLoaded, setPortfolioLoaded] = useState(false);
+  // 서버가 STALE_MS 안에 아무 응답도 안 줬다 — "불러오는 중"을 계속 보여주면 거짓말이다.
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     const load = () => {
       fetch("/api/risk", { cache: "no-store" }).then((r) => r.json()).then(setRisk).catch(() => {});
-      fetch("/api/balances", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (j.portfolio) { setPortfolio(j.portfolio); setMock(!!j.portfolio.mock); } }).catch(() => {});
+      fetch("/api/balances", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (j.portfolio) { setPortfolio(j.portfolio); setMock(!!j.portfolio.mock); } }).catch(() => {}).finally(() => setPortfolioLoaded(true));
       fetch("/api/health", { cache: "no-store" }).then((r) => r.json()).then(setHealth).catch(() => {});
     };
     load();
     const id = setInterval(load, 15_000);
+    const sid = setTimeout(() => setStale(true), STALE_MS);
     const loadFeeds = () => {
       fetch("/api/trades", { cache: "no-store" }).then((r) => r.json()).then((j) => { setTradeCount(j.stats?.count ?? 0); setTrades((j.trades ?? []).slice(0, 6)); }).catch(() => {});
       fetch("/api/listings", { cache: "no-store" }).then((r) => r.json()).then((j) => {
@@ -123,8 +140,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
     }).catch(() => {});
     loadGates();
     const gid = setInterval(loadGates, 5 * 60_000);
-    return () => { clearInterval(id); clearInterval(fid); clearInterval(gid); };
+    return () => { clearInterval(id); clearInterval(fid); clearInterval(gid); clearTimeout(sid); };
   }, []);
+  // 응답이 오면 stale은 무의미 — 이후 폴링이 끊기는 건 health.scanAgeSec가 잡는다.
+  const loading = (!health || !watch) && !stale;
+  const pendingText = stale ? "응답 없음" : "불러오는 중…";
 
   // 실데이터 지표 (mock 제외)
   const live = useMemo(() => opps.filter((o) => !o.mock && o.kind !== "funding-basis"), [opps]);
@@ -171,6 +191,9 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   const expoUse = risk && risk.maxInFlightUsd > 0 ? (inFlight / risk.maxInFlightUsd) * 100 : 0;
   const lossUse = risk && risk.maxDailyLossUsd > 0 ? (Math.max(0, -pnl) / risk.maxDailyLossUsd) * 100 : 0;
   const headroom = Math.max(0, Math.round(100 - Math.max(expoUse, lossUse)));
+  // 한도가 하나도 없으면 "여유 100%"는 거짓 안심이다 — 게이지를 죽이고 미설정이라고 말한다.
+  const riskConfigured = !!risk && (risk.maxInFlightUsd > 0 || risk.maxDailyLossUsd > 0 || risk.maxPerTradeUsd > 0);
+  const gaugeTone = !riskConfigured ? "var(--text-mute)" : headroom < 30 ? "var(--neg)" : headroom < 60 ? "var(--amber)" : "var(--pos)";
 
   // 자금 배분 — 가용(현금) / 포지션(코인) / 전송 중(개인지갑 + 인플라이트)
   const cash = (portfolio?.venues ?? []).reduce((s, v) => s + v.cashUsd, 0);
@@ -196,7 +219,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
     const rows: SrcRow[] = [];
     const agoTxt = (s: number | null) => (s == null ? "수신 없음" : s < 90 ? `${s}초 전` : `${Math.round(s / 60)}분 전`);
     rows.push(!health
-      ? { heatKey: "scan", label: "스캔", sec: "시스템", state: "off", text: "확인 중" }
+      ? { heatKey: "scan", label: "스캔", sec: "시스템", state: stale ? "warn" : "off", text: pendingText }
       : health.scanAgeSec == null
         // 방금 기동해 첫 스캔이 아직 안 온 상태 — 고장이 아니다.
         ? { heatKey: "scan", label: "스캔", sec: "시스템", state: "off", text: "첫 스캔 대기" }
@@ -207,7 +230,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
     // 따로 적어두면 점은 초록인데 바로 아래 스트립 칸은 빨강인 자기모순이 난다.
     const wi = { ...(watch ?? {}), lag: health?.loopLagMs ?? null };
     const annV = watch ? srcVerdict("ann", wi) : null;
-    rows.push(!watch ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "확인 중" }
+    rows.push(!watch ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: stale ? "warn" : "off", text: pendingText }
       : watch.annBlocked ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "warn", text: "차단 (비KR IP)", title: "업비트 공지 API는 KR IP에서만 응답합니다 — KR 박스 이전 시 해소" }
       : watch.annOkAgoSec == null ? { heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: "off", text: "수신 없음" }
       : {
@@ -215,17 +238,17 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           text: `${annV === "warn" ? "멈춤 " : ""}${agoTxt(watch.annOkAgoSec)}${watch.annLagP50Ms != null ? ` · 감지 p50 ${(watch.annLagP50Ms / 1000).toFixed(1)}s` : ""}`,
         });
     const mktV = watch ? srcVerdict("mkt", wi) : null;
-    rows.push(!watch ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "확인 중" }
+    rows.push(!watch ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: stale ? "warn" : "off", text: pendingText }
       : watch.mktOkAgoSec == null ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" }
       : { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: mktV ?? "off", text: mktV === "warn" ? `멈춤 (${agoTxt(watch.mktOkAgoSec)})` : agoTxt(watch.mktOkAgoSec) });
     const tgV = watch ? srcVerdict("tg", wi) : null;
-    rows.push(!watch ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "확인 중" }
+    rows.push(!watch ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: stale ? "warn" : "off", text: pendingText }
       : !watch.tgConfigured ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "미설정", action: onOpenSettings ? { label: "설정", onClick: () => onOpenSettings("alerts") } : undefined }
       : watch.tgOkAgoSec == null ? { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: "off", text: "수신 대기" }
       : { heatKey: "tg", label: "텔레그램 감지", sec: "감지 소스", state: tgV ?? "off", text: tgV === "warn" ? `조용함 (${agoTxt(watch.tgOkAgoSec)})` : agoTxt(watch.tgOkAgoSec) });
     const lag = health?.loopLagMs;
     const procV = srcVerdict("proc", wi);
-    rows.push(!lag ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: "off", text: "확인 중" }
+    rows.push(!lag ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: !health && stale ? "warn" : "off", text: health ? "측정 대기" : pendingText }
       : procV === "warn"
         ? { heatKey: "proc", label: "프로세스", sec: "시스템", state: "warn", text: `멈춤 ${Math.round(lag.worstMs)}ms${lag.worstAgoSec != null ? ` (${agoTxt(lag.worstAgoSec)})` : ""} — 메모리 확인` }
         : { heatKey: "proc", label: "프로세스", sec: "시스템", state: "ok", text: lag.worstMs >= 400 ? `회복됨 (최근 멈춤 ${Math.round(lag.worstMs)}ms)` : "정상 (10분 내 멈춤 없음)" });
@@ -311,7 +334,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         <span style={{ fontSize: 12.5, fontWeight: 700 }}>자금 배분</span>
         {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
         <span className="tnum" style={{ fontSize: 15, fontWeight: 700, marginLeft: 2 }}>{usd(totalCap)}</span>
-        <button type="button" onClick={() => onGoTab("assets")} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
+        <button type="button" onClick={() => onGoTab("assets")} style={{ ...LINK, marginLeft: "auto" }}>상세 →</button>
       </div>
       <div style={{ marginTop: 10 }}>{segBar(12)}</div>
       <div style={{ marginTop: 8 }}>{legend(10.5, 12)}</div>
@@ -332,21 +355,23 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         {segBar(14)}
         <div style={{ marginTop: 7 }}>{legend(11.5, 16)}</div>
       </div>
-      <button type="button" onClick={() => onGoTab("assets")} style={{ flex: "0 0 auto", border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상세 →</button>
+      <button type="button" onClick={() => onGoTab("assets")} style={{ ...LINK, flex: "0 0 auto" }}>상세 →</button>
     </div>
   );
 
   // ── 실시간 기회 카드 ──
   const streamCard = (
-    <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+    <div style={{ ...CARD_HERO, padding: 0, minWidth: 0 }}>
       {secHd("실시간 기회", (
-        <button type="button" onClick={() => onGoTab("monitor")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>갭 보드 →</button>
+        <button type="button" onClick={() => onGoTab("monitor")} style={LINK}>갭 보드 →</button>
       ))}
       {stream.length === 0 ? (
-        <div style={{ padding: "22px 16px", fontSize: 12, color: "var(--text-mute)" }}>
+        <div style={{ padding: "22px 16px", fontSize: 12.5, color: "var(--text-mute)" }}>
           {live.length > 0
             ? `지금은 비용을 넘는 기회 없음 — ${live.length}건 감시 중`
-            : "스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다."}
+            : portfolioLoaded && mock
+              ? "데모 모드 — 실데이터 기회는 거래소 키를 넣어야 잡힙니다."
+              : "스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다."}
         </div>
       ) : (
         <div style={{ padding: "2px 16px 8px" }}>
@@ -402,6 +427,20 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           <EpisodeCard />
         </div>
       )}
+      {/* 데모 배너 — 키가 없으면 아래 카드 대부분이 빈 채로 남는다. 그 이유와 다음 행동을
+          한 줄로. "확인 중"이 영영 안 끝나는 걸 사용자가 기다리게 두지 않는다. */}
+      {portfolioLoaded && mock && (
+        <div style={{ ...CARD, display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 12, background: "var(--brand-soft)", border: "1px solid color-mix(in srgb, var(--brand) 40%, transparent)" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: "var(--brand-ink)", background: "var(--brand)", borderRadius: 999, padding: "2px 8px", flex: "0 0 auto" }}>데모</span>
+          <span style={{ fontSize: 12.5, color: "var(--text)", minWidth: 0 }}>
+            거래소 API 키가 없어 <b>목업 데이터</b>로 표시 중입니다. 잔고·리스크·감지 소스는 키를 넣어야 채워집니다.
+          </span>
+          <span style={{ flex: 1 }} />
+          {onOpenSettings && (
+            <button type="button" onClick={() => onOpenSettings("keys")} style={{ ...LINK, fontSize: 12, whiteSpace: "nowrap" }}>키 설정 →</button>
+          )}
+        </div>
+      )}
       {/* PC: 잔고 스트립이 맨 위 — "얼마 있고 어디에 있나" 한 줄 */}
       {!mobile && fundsStrip}
       {/* 상단 그리드: 감시 상태 | KPI 2×2 | 리스크 현황 */}
@@ -421,7 +460,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
             )}
           </div>
           <div style={{ marginTop: 4, fontSize: 11, color: warnCount > 0 ? "var(--neg)" : "var(--text-mute)" }}>
-            {warnCount > 0 ? `⚠ ${warnCount}개 항목 조치 필요`
+            {loading ? "상태 불러오는 중…"
+              : warnCount > 0 ? `⚠ ${warnCount}개 항목 조치 필요`
               : unknownCount > 0 ? `${unknownCount}개 항목 확인 불가 (미설정·대기)`
               : "감지 소스·프로세스 전부 정상"}
           </div>
@@ -467,13 +507,10 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               </div>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => onGoTab("control")}
-            style={{ marginTop: 12, width: "100%", border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: "var(--radius-sm)", padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-          >
-            운영 탭에서 상세 →
-          </button>
+          {/* 이동 링크는 다른 카드와 같은 "… →" 텍스트 — 전폭 버튼은 주요 액션처럼 보였다. */}
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+            <button type="button" onClick={() => onGoTab("control")} style={LINK}>운영 탭 →</button>
+          </div>
         </div>
 
         <Kpi label="기회" value={String(live.length)} sub="실데이터 · 전략 3종" series={hist.current.opp} compact={mobile} />
@@ -497,15 +534,26 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
 
         <div style={{ ...CARD, gridColumn: mobile ? "1 / -1" : "4", gridRow: mobile ? "auto" : "1 / 3", padding: "16px 18px", display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>리스크 현황</div>
+          {/* 게이지는 값을 그린다 — 예전엔 세 색 호가 고정 장식이라 미설정에도 초록 100%였다.
+              트랙 위에 여유율만큼만 채우고, 색은 여유 구간(초록/앰버/빨강)·미설정(회색)으로. */}
           <div style={{ position: "relative", margin: "10px auto 0", width: 180, height: 106 }}>
-            <svg viewBox="0 0 200 118" width="180" height="106" aria-label={`리스크 여유 ${headroom}%`}>
-              <path d="M 18 108 A 84 84 0 0 1 60 36" fill="none" stroke="var(--amber)" strokeWidth="14" strokeLinecap="round" opacity={expoUse > 60 || lossUse > 60 ? 1 : 0.55} />
-              <path d="M 74 26 A 84 84 0 0 1 140 30" fill="none" stroke="var(--pos)" strokeWidth="14" strokeLinecap="round" />
-              <path d="M 154 40 A 84 84 0 0 1 182 108" fill="none" stroke="var(--brand)" strokeWidth="14" strokeLinecap="round" opacity={0.75} />
+            <svg viewBox="0 0 200 118" width="180" height="106" aria-label={riskConfigured ? `리스크 여유 ${headroom}%` : "리스크 한도 미설정"}>
+              <path d="M 16 108 A 84 84 0 0 1 184 108" fill="none" stroke="var(--card-3)" strokeWidth="14" strokeLinecap="round" />
+              {riskConfigured && headroom > 0 && (
+                <path
+                  d="M 16 108 A 84 84 0 0 1 184 108" fill="none" stroke={gaugeTone} strokeWidth="14" strokeLinecap="round"
+                  pathLength={100} strokeDasharray={`${headroom} 100`}
+                  style={{ transition: "stroke-dasharray 400ms ease-out, stroke 300ms" }}
+                />
+              )}
             </svg>
             <div style={{ position: "absolute", left: 0, right: 0, top: 48, textAlign: "center" }}>
-              <div style={CAP}>리스크 여유</div>
-              <div className="tnum" style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: headroom < 30 ? "var(--neg)" : headroom < 60 ? "var(--amber)" : "var(--text)" }}>{headroom}%</div>
+              <div style={CAP}>{riskConfigured ? "리스크 여유" : "리스크 한도"}</div>
+              {riskConfigured ? (
+                <div className="tnum" style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: headroom < 30 ? "var(--neg)" : headroom < 60 ? "var(--amber)" : "var(--text)" }}>{headroom}%</div>
+              ) : (
+                <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text-dim)", marginTop: 6 }}>{risk ? "미설정" : stale ? "응답 없음" : "확인 중"}</div>
+              )}
             </div>
           </div>
           <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", fontSize: 12 }}>
@@ -516,7 +564,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               // 감시 카드에서 이사 — 시장 게이트 상태는 리스크의 일부다.
               {
                 l: "입출금 중단",
-                v: gatesBlocked == null ? "확인 중" : gatesBlocked > 0 ? `${gatesBlocked}종` : gatesPartial ? "일부만 확인 (키 필요)" : "없음",
+                v: gatesBlocked == null ? (stale ? "응답 없음" : "불러오는 중…") : gatesBlocked > 0 ? `${gatesBlocked}종` : gatesPartial ? "일부만 확인 (키 필요)" : "없음",
                 warn: (gatesBlocked ?? 0) > 0,
               },
             ].map((r) => (
@@ -529,9 +577,9 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           <button
             type="button"
             onClick={() => (onOpenSettings ? onOpenSettings("risk") : onGoTab("control"))}
-            style={{ marginTop: "auto", paddingTop: 10, border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
+            style={{ ...LINK, marginTop: "auto", paddingTop: 10, textAlign: "left" }}
           >
-            한도 조정 (설정) →
+            {riskConfigured ? "한도 조정 (설정) →" : "한도 설정하기 →"}
           </button>
         </div>
       </div>
@@ -548,10 +596,10 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         {/* 상장 감시 */}
         <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
           {secHd("상장 감시", (
-            <button type="button" onClick={() => onGoTab("listing")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>상장 탭 →</button>
+            <button type="button" onClick={() => onGoTab("listing")} style={LINK}>상장 탭 →</button>
           ))}
           {!listWatch ? (
-            <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>불러오는 중…</div>
+            <div style={{ padding: "18px 16px", fontSize: 12, color: stale ? "var(--neg)" : "var(--text-mute)" }}>{stale ? "응답 없음 — 서버 상태를 확인하세요" : "불러오는 중…"}</div>
           ) : listWatch.plays.length === 0 ? (
             <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>👀 감시 중 — 신규 상장이 감지되면 여기 뜹니다</div>
           ) : (
@@ -578,7 +626,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           {secHd("최근 거래", (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
               {tradeCount != null && <span style={{ fontSize: 11, color: "var(--text-mute)" }}>누적 {tradeCount}건</span>}
-              <button type="button" onClick={() => onGoTab("control")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>운영 탭 →</button>
+              <button type="button" onClick={() => onGoTab("control")} style={LINK}>운영 탭 →</button>
             </span>
           ))}
           {trades.length === 0 ? (

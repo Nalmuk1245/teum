@@ -1168,6 +1168,19 @@ export function TelegramCard() {
 
 function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange: (v: AutoEntryCfg) => void; killed: boolean }) {
   const num = (v: string) => Number(v.replace(/[^\d.]/g, "")) || 0;
+  // 켜기는 "자동 매수를 무장"하는 행동이라 두 번 눌러야 한다 — 첫 클릭은 확인 요청,
+  // 4초 안에 다시 누르면 켜짐. 끄기는 즉시(안전한 방향은 마찰이 없어야 한다).
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const id = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(id);
+  }, [confirming]);
+  const toggle = () => {
+    if (cfg.armed) { onChange({ ...cfg, armed: false }); setConfirming(false); return; }
+    if (!confirming) { setConfirming(true); return; }
+    setConfirming(false); onChange({ ...cfg, armed: true });
+  };
   const field = (label: string, key: "minNet" | "minHeld" | "sizeUsd", suffix: string) => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
@@ -1180,16 +1193,24 @@ function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange:
     </label>
   );
   return (
-    <div style={{ background: cfg.armed ? "var(--brand-soft)" : "var(--card)", border: `1px solid ${cfg.armed ? "var(--brand)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
+    // 무장 상태는 앰버(주의)다 — 파랑은 "실행 가능한 것"의 색이지 "위험이 켜진 것"의 색이 아니다.
+    <div style={{ background: cfg.armed ? "color-mix(in srgb, var(--amber) 12%, transparent)" : "var(--card)", border: `1px solid ${cfg.armed ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>조건부 자동 진입</span>
-        <span style={{ width: 6, height: 6, borderRadius: 9, background: cfg.armed ? "var(--pos)" : "var(--text-mute)" }} />
-        <span style={{ fontSize: 11, color: cfg.armed ? "var(--pos)" : "var(--text-mute)" }}>{cfg.armed ? "켜짐" : "꺼짐"}</span>
+        <span style={{ width: 6, height: 6, borderRadius: 9, background: cfg.armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ fontSize: 11, fontWeight: cfg.armed ? 700 : 400, color: cfg.armed ? "var(--amber)" : "var(--text-mute)" }}>{cfg.armed ? "무장됨" : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
-        <button type="button" disabled={killed} onClick={() => onChange({ ...cfg, armed: !cfg.armed })}
-          style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
-            background: cfg.armed ? "var(--neg)" : "var(--brand-grad)", color: cfg.armed ? "#fff" : "var(--brand-ink)" }}>
-          {cfg.armed ? "끄기" : "켜기"}
+        {confirming && !cfg.armed && (
+          <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 600 }}>자동 매수가 켜집니다 — 한 번 더</span>
+        )}
+        <button type="button" disabled={killed} onClick={toggle}
+          title={cfg.armed ? "자동 진입 끄기" : "조건 충족 시 자동으로 매수+헷지 — 두 번 눌러 켭니다"}
+          style={{ borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
+            border: `1px solid ${cfg.armed ? "var(--border-strong)" : "var(--amber)"}`,
+            background: cfg.armed ? "transparent" : confirming ? "var(--amber)" : "color-mix(in srgb, var(--amber) 16%, transparent)",
+            color: cfg.armed ? "var(--text)" : confirming ? "var(--brand-ink)" : "var(--amber)",
+            transition: "background 120ms, color 120ms" }}>
+          {cfg.armed ? "끄기" : confirming ? "확인 · 켜기" : "켜기"}
         </button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginTop: 10 }}>

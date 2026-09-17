@@ -73,17 +73,23 @@ export function PremiumChart({
 }) {
   const [data, setData] = useState<Series | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [autoCost, setAutoCost] = useState<number | null>(null);
   const effectiveCost = costPct === undefined ? autoCost : costPct;
 
   const load = useCallback(async () => {
-    onBusy?.(true); setErr(null); onError?.(null);
+    onBusy?.(true); setLoading(true); setErr(null); onError?.(null);
     try {
       const q = `coin=${encodeURIComponent(coin)}&a=${specParam(a)}&b=${specParam(b)}&unit=${unit}&count=${unit >= 240 ? 500 : 400}`;
-      const j = await (await fetch(`/api/premium?${q}`, { cache: "no-store" })).json();
+      const r = await fetch(`/api/premium?${q}`, { cache: "no-store" });
+      const j = await r.json();
       if (j.error) { setErr(j.error); onError?.(j.error); setData(null); } else { setData(j); }
-    } catch { setErr("조회 실패"); onError?.("조회 실패"); setData(null); }
-    finally { onBusy?.(false); }
+    } catch {
+      // 네트워크·타임아웃 — "조회 실패" 두 글자로는 뭘 해야 할지 모른다.
+      const m = "서버에서 캔들을 받지 못했습니다 — 네트워크나 거래소 API 지연일 수 있습니다";
+      setErr(m); onError?.(m); setData(null);
+    }
+    finally { onBusy?.(false); setLoading(false); }
   }, [coin, a, b, unit, onBusy, onError]);
   useEffect(() => { void load(); }, [load]);
 
@@ -199,9 +205,10 @@ export function PremiumChart({
     const pS = charts.current.pS;
     if (!pS) return;
     const lines: ReturnType<ISeriesApi<"Area">["createPriceLine"]>[] = [];
-    const css = getComputedStyle(document.documentElement);
+    // 여기도 cssColor를 거친다 — 원시 getPropertyValue는 프로덕션에서 hsla를 돌려줘
+    // createPriceLine이 던지고, 그 뒤 갭 패널 전체가 빈 채로 남았다.
     lines.push(pS.createPriceLine({
-      price: 0, color: css.getPropertyValue("--border-strong").trim() || "rgba(255,255,255,0.2)",
+      price: 0, color: cssColor("--border-strong", "rgba(255,255,255,0.2)"),
       lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: "0%",
     }));
     if (effectiveCost != null) {
@@ -209,7 +216,7 @@ export function PremiumChart({
       for (const p of [effectiveCost, -effectiveCost]) {
         lines.push(pS.createPriceLine({
           price: Math.round(p * 100) / 100,
-          color: css.getPropertyValue("--amber").trim() || "#e8b04c",
+          color: cssColor("--amber", "#e8b04c"),
           lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
           title: p > 0 ? "비용" : "비용(역)",
         }));
@@ -246,10 +253,28 @@ export function PremiumChart({
         )}
       </div>
 
-      {err && <div style={{ fontSize: 12, color: "var(--neg)", padding: "8px 0" }}>{err}</div>}
-
-      {/* 가격 패널 */}
+      {/* 가격 패널 — 오류·로딩은 차트 영역 안에 겹쳐 보여준다. 빈 차트 두 장 위에
+          빨간 한 줄만 있던 예전 화면은 "깨진 것"으로 읽혔다. 실패엔 재시도 버튼이 붙는다. */}
       <div style={{ position: "relative" }}>
+        {(err || (loading && !data)) && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 2, display: "grid", placeItems: "center",
+            background: "color-mix(in srgb, var(--card) 70%, transparent)", borderRadius: 10,
+          }}>
+            {err ? (
+              <div style={{ textAlign: "center", maxWidth: 360, padding: "0 16px" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--neg)" }}>{coin} {specLabel(a)} vs {specLabel(b)} 조회 실패</div>
+                <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.5 }}>{err}</div>
+                <button type="button" onClick={() => void load()}
+                  style={{ marginTop: 10, border: "1px solid var(--border-strong)", background: "var(--card-2)", color: "var(--text)", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  다시 시도
+                </button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12.5, color: "var(--text-dim)" }}>캔들 불러오는 중…</div>
+            )}
+          </div>
+        )}
         <div ref={priceRef} style={{ width: "100%" }} />
         <div style={{ position: "absolute", left: 8, top: 4, display: "flex", gap: 10, fontSize: 10, pointerEvents: "none" }}>
           <span style={{ color: "var(--brand-2)", fontWeight: 700 }}>■ {specLabel(a)}</span>
@@ -279,7 +304,7 @@ export function PremiumChart({
             <span style={{ flex: 1 }} />
             <span>{data?.note}</span>
           </>
-        ) : !err && <span>불러오는 중…</span>}
+        ) : !err && <span>{loading ? "불러오는 중…" : "데이터 없음"}</span>}
       </div>
     </div>
   );

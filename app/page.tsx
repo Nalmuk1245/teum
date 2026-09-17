@@ -333,8 +333,8 @@ export default function Cockpit() {
       <header
         style={{
           position: "sticky", top: 0, zIndex: 20,
-          display: "flex", alignItems: "center", gap: isMobile ? 10 : 14,
-          padding: isMobile ? "9px 12px" : "9px 16px",
+          display: "flex", alignItems: "center", gap: isMobile ? 6 : 14,
+          padding: isMobile ? "9px 10px" : "9px 16px",
           borderBottom: "1px solid var(--border)",
           background: "var(--header-bg)",
           backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)",
@@ -357,15 +357,17 @@ export default function Cockpit() {
           onClick={() => setKillSwitch(!runsStore.killed)}
           title={runsStore.killed ? "킬 스위치 활성 — 눌러서 해제" : "전체 중단 (킬 스위치)"}
           style={{
-            display: "inline-flex", alignItems: "center", gap: 4,
-            border: `1px solid ${runsStore.killed ? "var(--neg)" : "var(--border-strong)"}`,
-            background: runsStore.killed ? "var(--neg-soft)" : "transparent",
-            color: runsStore.killed ? "var(--neg)" : "var(--text-dim)",
-            borderRadius: 9, padding: "0 10px", height: 28, boxSizing: "border-box",
-            fontSize: 11, fontWeight: 700, cursor: "pointer",
+            // 킬 스위치는 항상 "빨간 것"으로 읽혀야 한다 — 회색 테두리는 비활성처럼 보였다.
+            // 평소: 붉은 윤곽 + 붉은 글자. 작동 중: 붉은 채움 + 흰 글자.
+            display: "inline-flex", alignItems: "center", gap: 5,
+            border: `1px solid ${runsStore.killed ? "var(--neg)" : "color-mix(in srgb, var(--neg) 55%, transparent)"}`,
+            background: runsStore.killed ? "var(--neg)" : "var(--neg-soft)",
+            color: runsStore.killed ? "#fff" : "var(--neg)",
+            borderRadius: 9, padding: "0 11px", height: 28, boxSizing: "border-box",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.02em", cursor: "pointer",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "var(--neg)" : "var(--text-mute)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "#fff" : "var(--neg)" }} />
           {runsStore.killed ? "중단됨" : "STOP"}
         </button>
         <button
@@ -407,9 +409,14 @@ export default function Cockpit() {
 
       <div style={{ maxWidth: 1680, margin: "0 auto", padding: isMobile ? "10px 10px" : "18px 24px" }}>
         {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
+        {/* 탭 7개를 한 줄에 — PC는 균등 분배, 모바일은 가로 스크롤(줄바꿈·글자 잘림 금지).
+            repeat(6,1fr) 그리드는 7번째 탭을 둘째 줄로 떨어뜨렸다. */}
         <div
+          className="no-bar"
           style={{
-            display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
+            display: "flex",
+            overflowX: isMobile ? "auto" : undefined,
+            WebkitOverflowScrolling: "touch",
             marginBottom: isMobile ? 10 : 14,
             borderBottom: "1px solid var(--border)",
           }}
@@ -435,14 +442,17 @@ export default function Cockpit() {
                   setMode(m.k);
                 }}
                 style={{
-                  border: "none", cursor: "pointer", borderRadius: 0, padding: "10px 8px",
+                  border: "none", cursor: "pointer", borderRadius: 0,
+                  padding: isMobile ? "9px 14px" : "10px 8px",
+                  flex: isMobile ? "0 0 auto" : "1 1 0", minWidth: 0,
                   background: "transparent",
                   borderBottom: active ? "2px solid var(--brand)" : "2px solid transparent",
                   marginBottom: -1,
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+                  whiteSpace: "nowrap",
                 }}
               >
-                <span style={{ fontSize: 13.5, fontWeight: active ? 700 : 500, color: active ? "var(--text)" : "var(--text-mute)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 13.5, fontWeight: active ? 700 : 500, color: active ? "var(--text)" : "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {m.label}
                   {m.k === "control" && activeRuns > 0 && (
                     <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "var(--brand-ink)", background: "var(--brand)", borderRadius: 9, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
@@ -450,7 +460,7 @@ export default function Cockpit() {
                     </span>
                   )}
                 </span>
-                <span style={{ fontSize: 9, letterSpacing: "0.08em", color: active ? "var(--text-dim)" : "var(--text-mute)" }}>
+                <span style={{ fontSize: 10, letterSpacing: "0.06em", color: active ? "var(--text-dim)" : "var(--text-mute)" }}>
                   {m.sub}
                 </span>
               </button>
@@ -566,23 +576,27 @@ export default function Cockpit() {
           })}
         </div>
         </div>
-        {/* Always visible (outside the scrollable chip strip). */}
-        <button
-          type="button"
-          onClick={togglePlusOnly}
-          title="순수익 마이너스(비용 못 넘는) 갭 숨기기"
-          style={{
-            border: `1px solid ${plusOnly ? "var(--pos)" : "var(--border)"}`,
-            cursor: "pointer", borderRadius: 9, flex: "0 0 auto",
-            padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
-            background: plusOnly ? "var(--pos-soft)" : "transparent",
-            color: plusOnly ? "var(--pos)" : "var(--text-dim)",
-            transition: "background 120ms, color 120ms",
-          }}
-        >
-          수익만
-          <span style={{ marginLeft: 6, fontWeight: 500 }}>{positive}</span>
-        </button>
+        {/* Always visible (outside the scrollable chip strip) — but styled as the
+            strip's sibling: same shell, same chip shape. The old green outline made it
+            look like a third kind of control next to the filter group. */}
+        <div style={{ display: "inline-flex", padding: 4, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 9, flex: "0 0 auto" }}>
+          <button
+            type="button"
+            onClick={togglePlusOnly}
+            title="순수익 마이너스(비용 못 넘는) 갭 숨기기"
+            aria-pressed={plusOnly}
+            style={{
+              border: "none", cursor: "pointer", borderRadius: 9,
+              padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
+              background: plusOnly ? "var(--pos-soft)" : "transparent",
+              color: plusOnly ? "var(--pos)" : "var(--text-dim)",
+              transition: "background 120ms, color 120ms",
+            }}
+          >
+            수익만
+            <span style={{ marginLeft: 6, fontWeight: 500, color: plusOnly ? "var(--pos)" : "var(--text-mute)" }}>{positive}</span>
+          </button>
+        </div>
         </div>
         )}
 
