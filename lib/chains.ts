@@ -64,7 +64,8 @@ export function chainKeyFromLabel(label?: string): string {
   if (s.includes("kaia") || s.includes("klaytn") || s.includes("klay")) return "kaia";
   if (s.includes("linea")) return "linea";
   if (s.includes("scroll")) return "scroll";
-  if (s.includes("zksync") || s.includes("era")) return "zksync";
+  // "era"만으로 잡으면 Hedera가 zkSync로 붙는다 — zksync 명시 표기만.
+  if (s.includes("zksync")) return "zksync";
   if (s.includes("mantle")) return "mantle";
   if (s.includes("blast")) return "blast";
   if (s.includes("sonic")) return "sonic";

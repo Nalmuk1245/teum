@@ -2,11 +2,12 @@
 // 서버 실행엔진(runEngine)만 호출한다. 예전의 /api/exec-step 라우트는 엔진의
 // 중복 포지션 검사·노출 한도·재검증·replay 방어를 전부 우회하는 죽은 입구라 지웠다.
 
-import type { Opportunity } from "./types";
+import type { Opportunity, Venue } from "./types";
 import { CONFIG, TAG_REQUIRED, FEES } from "./config";
 import { sendToken, walletAddress } from "./wallet";
 import { BINANCE_NET, chainKeyFromLabel, getChain, isGlobal, isKr } from "./chains";
 import { fetchDepositAddress } from "./deposits";
+import { venueNetCode } from "./transfers";
 import type { OrderResult } from "./orders";
 import { binanceSpot, binancePerp, binanceFuturesFree, binanceWithdraw, binanceWithdrawTx, upbitOrder, upbitWithdraw, upbitWithdrawTx, bithumbOrder, bithumbWithdraw, bybitOrder, bybitWithdraw, bybitWithdrawTx, okxOrder, okxWithdraw, okxWithdrawTx, checkDeposit } from "./orders";
 import { resolveWalletAsset } from "./tokens";
@@ -26,7 +27,13 @@ import type { StepId } from "./execPlan";
 import { notify } from "./telegram";
 
 
-const NET_LABEL = BINANCE_NET; // shared exchange network codes
+// 거래소별 체인 코드 — 스윕이 저장한 그 거래소의 원문 코드(transfers.venueNetCode).
+// 예전엔 바낸 코드를 모든 거래소에 그대로 넘겼다(업비트 net_type ≠ 바낸 network).
+// 라이브에서 코드를 모르면 보내지 않는다. DRY는 표시용으로 바낸 코드로 강등.
+function netCodeFor(venue: Venue | undefined, base: string, chain: string, dry: boolean): string | null {
+  if (!venue) return null;
+  return venueNetCode(venue, base, chain) ?? (dry ? (BINANCE_NET[chain] ?? chain) : null);
+}
 
 // Our wallet's receive address on a chain family (for the withdraw destination).
 function destAddr(chainKey: string): string | null {
@@ -418,7 +425,9 @@ export async function runStep(
           ? { ok: true, dryRun: true, message: `${buy?.venue} 출금 (모의) · 체인 미상 — 라이브면 차단됨`, tx: simTx }
           : fail(`체인 미상(${opp.transfer?.network?.chain ?? "?"}) — 출금 차단`);
       }
-      const net = NET_LABEL[chain] ?? chain;
+      const chainKeyResolved = opp.transfer?.network?.chainKey || chain;
+      const net = netCodeFor(buy?.venue, opp.base, chainKeyResolved, dry);
+      if (!net) return fail(`${buy?.venue}의 ${chainKeyResolved} 체인 코드 미확인 — 출금 차단 (게이트 스윕에 그 체인 행이 없음)`);
       // 부분체결 등으로 실수량이 최소 출금 미달이면 API 에러 대신 명시 중단
       // (여기서 실패해야 롤백 경로가 슬리피지 가드를 태운다).
       {
@@ -442,8 +451,11 @@ export async function runStep(
         dest = destAddr(chain); // personal wallet
         if (toWallet) note = " → 개인지갑(DEX 매도용)";
       } else {
-        // Direct exchange→exchange: use the destination's real deposit address+tag.
-        const fetched = await fetchDepositAddress(destVenue, opp.base, net);
+        // Direct exchange→exchange: use the destination's real deposit address+tag,
+        // asked with the DESTINATION's own chain code (not the source's).
+        const destNet = netCodeFor(destVenue, opp.base, chainKeyResolved, dry);
+        if (!destNet) return fail(`${destVenue}의 ${chainKeyResolved} 체인 코드 미확인 — 입금주소 조회 불가, 출금 차단`);
+        const fetched = await fetchDepositAddress(destVenue, opp.base, destNet);
         dest = fetched?.address ?? null;
         tag = fetched?.tag ?? null;
         note = ` → ${destVenue} 직접`;
@@ -504,7 +516,9 @@ export async function runStep(
       const chain = chainKeyFromLabel(opp.transfer?.network?.chain);
       if (!chain) return guard(`${opp.transfer?.network?.chain ?? "체인 미상"} — 미지원 체인`);
       const destVenue = sell?.venue ?? "upbit";
-      const fetched = await fetchDepositAddress(destVenue, opp.base, NET_LABEL[chain] ?? chain);
+      const destNet = netCodeFor(destVenue, opp.base, opp.transfer?.network?.chainKey || chain, dry);
+      if (!destNet) return guard(`${destVenue}의 ${chain} 체인 코드 미확인 — 입금주소 조회 불가, 송금 차단`);
+      const fetched = await fetchDepositAddress(destVenue, opp.base, destNet);
       // Live: never substitute a fallback destination for a real send.
       if (!fetched?.address && !dry) return guard("입금주소 미확인 — 송금 차단");
       if (TAG_REQUIRED.has(opp.base) && !fetched?.tag && !dry) return guard(`${opp.base} 태그 필수 — 태그 미확인, 송금 차단`);

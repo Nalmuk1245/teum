@@ -78,9 +78,14 @@ function blockSecOf(chainLabel: string): number | null {
  */
 export function transferEtaMin(base: string): number {
   const net = coinNetwork(base);
-  const blockSec = blockSecOf(net.chain);
-  if (blockSec != null && net.confirms > 0) {
-    const eta = WITHDRAW_PROCESS_MIN + (blockSec * net.confirms) / 60 + CREDIT_BUFFER_MIN;
+  return etaForChain(net.chain, net.confirms, base);
+}
+
+/** 특정 체인(라벨+컨펌)으로 보낼 때의 ETA — 경로 선택(pickRoute)이 후보마다 부른다. */
+export function etaForChain(chainLabel: string, confirms: number, base: string): number {
+  const blockSec = blockSecOf(chainLabel);
+  if (blockSec != null && confirms > 0) {
+    const eta = WITHDRAW_PROCESS_MIN + (blockSec * confirms) / 60 + CREDIT_BUFFER_MIN;
     return Math.min(90, Math.max(1, Math.round(eta * 10) / 10));
   }
   // 강등: 체인을 모르면 코인 테이블, 그것도 없으면 기본값

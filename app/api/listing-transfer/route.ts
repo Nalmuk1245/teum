@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { CONFIG, TAG_REQUIRED } from "@/lib/config";
 import { isKilled } from "@/lib/killswitch";
 import { CHAINS, BINANCE_NET } from "@/lib/chains";
+import { venueNetCode } from "@/lib/transfers";
 import { fetchDepositAddress } from "@/lib/deposits";
 import { sendToken, walletAddress } from "@/lib/wallet";
 import { resolveWalletAsset } from "@/lib/tokens";
@@ -56,7 +57,9 @@ export async function POST(req: Request) {
     }
 
     const dry = CONFIG.DRY_RUN;
-    const net = BINANCE_NET[chain] ?? chain;
+    // 목적지 거래소가 부르는 체인 코드로 묻는다. 라이브에서 모르면 보내지 않는다.
+    const net = venueNetCode(venue, base, chain) ?? (dry ? (BINANCE_NET[chain] ?? chain) : null);
+    if (!net) return NextResponse.json({ ok: false, message: `${venue}의 ${chain} 체인 코드 미확인 — 송금 차단 (키 등록 후 게이트 스윕 필요)` }, { status: 400 });
     const fetched = await fetchDepositAddress(venue, base, net);
     if (!fetched?.address && !dry) {
       return NextResponse.json({ ok: false, message: `${venue} 입금주소 미확인 — 송금 차단 (키/코인 지원 확인)` }, { status: 400 });

@@ -19,20 +19,16 @@ import crypto from "crypto";
 import type { TransferStatus, Venue, WalletStatus } from "./types";
 import { BINANCE_NET, chainKeyFromLabel } from "./chains";
 import { COIN_NETWORK, COIN_NETWORK_DEFAULT } from "./config";
-import { setLiveNetwork } from "./networks";
+import { setLiveNetwork, coinNetwork, withdrawFeeCoin, etaForChain } from "./networks";
+import { canonChain, pickRoute, venueChainState, type NetRow, type NetsByVenue, type RouteChoice } from "./netcodes";
 
 // ── 네트워크(체인)별 상세 ─────────────────────────────────────────────────────
 // 거래소 응답에는 체인별 입출금 상태가 이미 들어 있는데, 코인 한 줄로 접으면서
 // 버리고 있었다. "ETH는 열렸는데 BSC는 막힘" 같은 정보가 곧 전송 경로 선택이므로
 // 같은 스윕에서 보존한다 — 추가 API 호출은 없다.
-export type NetDetail = {
-  net: string;            // 거래소가 부르는 체인 이름 (ETH, BSC, TRC20, …)
-  deposit: boolean;
-  withdraw: boolean;
-  feeCoin?: number;       // 출금 수수료 (코인 단위) — 주는 거래소만
-  isDefault?: boolean;    // 그 거래소의 기본 체인
-};
-type NetsByVenue = Partial<Record<Venue, NetDetail[]>>;
+// 각 행은 거래소 원문 코드(net)와 정규화 키(chainKey, netcodes.canonChain)를 함께
+// 든다: 경로 선택은 chainKey로, 출금·입금주소 API 호출은 net(원문)으로.
+export type NetDetail = NetRow;
 const gn = globalThis as unknown as {
   __arbGateNets?: Map<string, NetsByVenue>;
   /** 거래소별 마지막 성공 스윕 시각 — 키가 죽으면 상세가 낡는데, 시각이 없으면
@@ -47,13 +43,71 @@ export function gateNetworks(base: string): { nets: NetsByVenue; fetchedAt: Part
   return { nets: gn.__arbGateNets!.get(base.toUpperCase()) ?? {}, fetchedAt: { ...gn.__arbGateNetsAt } };
 }
 
-function putNets(venue: Venue, base: string, nets: NetDetail[]): void {
+function putNets(venue: Venue, base: string, nets: Omit<NetDetail, "chainKey">[]): void {
   if (!nets.length) return;
   const m = gn.__arbGateNets!;
   const e = m.get(base) ?? {};
-  e[venue] = nets;
+  e[venue] = nets.map((n) => ({ ...n, chainKey: canonChain(n.net, base) }));
   m.set(base, e);
   gn.__arbGateNetsAt![venue] = Date.now();
+}
+
+/**
+ * 거래소가 이 (코인, 체인)을 부르는 원문 코드 — 출금·입금주소 API의 network/net_type/chain 인자.
+ * 스윕이 저장한 행에서 찾고, 없으면 바낸·바이비트·OKX만 정적 표로 내려간다(그 셋은
+ * 코드 체계를 안다). 업비트는 스윕 행이 유일한 근거라 없으면 null — 라이브에서 차단된다.
+ * 빗썸은 체인 API가 없어 바낸 코드를 그대로 쓴다(종전과 같음, 호출부가 표시).
+ */
+export function venueNetCode(venue: Venue, base: string, chainKey: string): string | null {
+  const rows = gn.__arbGateNets!.get(base.toUpperCase())?.[venue];
+  const hit = rows?.find((r) => r.chainKey === chainKey);
+  if (hit) return hit.net;
+  if (venue === "binance" || venue === "bybit" || venue === "bithumb") return BINANCE_NET[chainKey] ?? null;
+  if (venue === "okx") return OKX_NET[chainKey] ?? null;
+  return null;
+}
+
+/** 한 거래소의 (코인, 체인) 입출금 상태. rows 없으면 코인 단위로 강등, 그것도 없으면 null. */
+export function venueChainStatus(
+  ts: TransferStatus | undefined, venue: Venue, base: string, chainKey: string,
+): { deposit: boolean | null; withdraw: boolean | null; supported: boolean | null } {
+  const rows = gn.__arbGateNets!.get(base.toUpperCase())?.[venue];
+  const coin = walletStatus(ts, venue, base);
+  const deposit = venueChainState(rows, chainKey, "deposit", coin);
+  const withdraw = venueChainState(rows, chainKey, "withdraw", coin);
+  const supported: boolean | null = !rows ? null
+    : rows.some((r) => r.chainKey === chainKey) ? true
+    : rows.some((r) => !r.chainKey) ? null : false;
+  return { deposit, withdraw, supported };
+}
+
+/**
+ * 매수 → 매도 거래소 전송 경로 (체인) 선택. 전략이 기회마다 부른다.
+ * 체인 데이터가 있는 거래소는 체인 단위로, 없는 거래소(빗썸·키 없음)는 코인 단위로 본다.
+ */
+export function routeFor(base: string, buyVenue: Venue, sellVenue: Venue, ts: TransferStatus | undefined): RouteChoice {
+  const cur = coinNetwork(base); // 라이브(바낸 기본 체인) > 큐레이션 > ERC20
+  // 레지스트리 밖 체인(Stellar·Bitcoin·Cardano…)은 라벨로 키가 안 나온다. 그건 그 코인의
+  // 자기 체인이므로 `native:TICKER` — 거래소 행의 canonChain("XLM","XLM")과 같은 키다.
+  // 비워 두면 pickRoute가 ethereum으로 강등해 XLM을 ERC20으로 표시했다.
+  const fbKey = chainKeyFromLabel(cur.chain) || `native:${base.toUpperCase()}`;
+  return pickRoute({
+    base, buyVenue, sellVenue,
+    nets: gn.__arbGateNets!.get(base.toUpperCase()) ?? {},
+    coinLevel: { buy: walletStatus(ts, buyVenue, base), sell: walletStatus(ts, sellVenue, base) },
+    fallback: { chainKey: fbKey, label: cur.chain, confirms: cur.confirms, feeCoin: withdrawFeeCoin(base) },
+    eta: (label, confirms) => etaForChain(label, confirms, base),
+  });
+}
+
+/** 매핑 안 된 거래소 체인 코드 — 키 넣고 확인할 때 canonChain 표에 뭘 더해야 하는지 보여준다. */
+export function unmappedNetCodes(base: string): { venue: Venue; net: string }[] {
+  const out: { venue: Venue; net: string }[] = [];
+  const e = gn.__arbGateNets!.get(base.toUpperCase()) ?? {};
+  for (const [venue, rows] of Object.entries(e) as [Venue, NetRow[]][]) {
+    for (const r of rows) if (!r.chainKey) out.push({ venue, net: r.net });
+  }
+  return out;
 }
 
 // ── Bithumb (public) ──────────────────────────────────────────────────────────
@@ -110,7 +164,7 @@ async function fetchUpbit(): Promise<Map<string, WalletStatus> | null> {
     const arr = (await res.json()) as Array<{ currency: string; wallet_state: string; net_type?: string | null }>;
     if (!Array.isArray(arr)) return null;
     const m = new Map<string, WalletStatus>();
-    const nets = new Map<string, NetDetail[]>();
+    const nets = new Map<string, Omit<NetDetail, "chainKey">[]>();
     for (const x of arr) {
       const s = x.wallet_state; // working | withdraw_only | deposit_only | paused | unsupported
       const st = {
@@ -128,11 +182,12 @@ async function fetchUpbit(): Promise<Map<string, WalletStatus> | null> {
     // (fetchBinance/fetchBybit/fetchOkx). 목표 체인 행이 없을 때만 OR로 내려간다.
     for (const [base, list] of nets) {
       putNets("upbit", base, list);
-      const wanted = BINANCE_NET[wantedChainKey(base)];
-      const hit = wanted ? list.find((n) => n.net.toUpperCase() === wanted.toUpperCase()) : undefined;
-      m.set(base, hit
-        ? { deposit: hit.deposit, withdraw: hit.withdraw }
-        : { deposit: list.some((n) => n.deposit), withdraw: list.some((n) => n.withdraw) });
+      // 코인 요약은 기본 체인 행. 없으면 요약을 비운다(=미확인) — 예전 OR 완화는
+      // "다른 체인이 열렸으니 통과"였고, 그 뒤 우리 체인으로 보내 좌초할 수 있었다.
+      // 체인 단위 판단은 routeFor/venueChainStatus가 저장된 행으로 직접 한다.
+      const want = wantedChainKey(base);
+      const hit = list.find((n) => canonChain(n.net, base) === want);
+      if (hit) m.set(base, { deposit: hit.deposit, withdraw: hit.withdraw });
     }
     return m;
   } catch {
@@ -166,8 +221,7 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       // suspended while another is up, coin-level would greenlight a trade that
       // strands at the withdraw step. Match our chain's networkList entry.
       const chainKey = chainKeyFromLabel((COIN_NETWORK[c.coin] ?? COIN_NETWORK_DEFAULT).chain);
-      const wanted = BINANCE_NET[chainKey];
-      const net = (wanted ? c.networkList?.find((n) => n.network === wanted) : undefined)
+      const net = c.networkList?.find((n) => canonChain(n.network, c.coin) === chainKey)
         ?? c.networkList?.find((n) => n.isDefault);
       m.set(c.coin, net
         ? { deposit: !!net.depositEnable, withdraw: !!net.withdrawEnable }
@@ -175,6 +229,7 @@ async function fetchBinance(): Promise<Map<string, WalletStatus> | null> {
       putNets("binance", c.coin, (c.networkList ?? []).map((n) => ({
         net: n.network, deposit: !!n.depositEnable, withdraw: !!n.withdrawEnable,
         feeCoin: n.withdrawFee ? Number(n.withdrawFee) : undefined, isDefault: !!n.isDefault,
+        label: n.name || undefined, confirms: n.minConfirm,
       })));
       // Feed the LIVE network facts (chain label, confirms, fee) so strategies +
       // the depth quote use real values instead of the curated tables.
@@ -222,14 +277,9 @@ async function fetchBybit(): Promise<Map<string, WalletStatus> | null> {
     for (const r of j.result.rows) {
       const chains = r.chains ?? [];
       if (!chains.length) continue;
-      const wanted = BINANCE_NET[wantedChainKey(r.coin)];
-      const net = wanted ? chains.find((c) => c.chain?.toUpperCase() === wanted.toUpperCase()) : undefined;
-      m.set(r.coin, net
-        ? { deposit: net.chainDeposit === "1", withdraw: net.chainWithdraw === "1" }
-        : {
-            deposit: chains.some((c) => c.chainDeposit === "1"),
-            withdraw: chains.some((c) => c.chainWithdraw === "1"),
-          });
+      const want = wantedChainKey(r.coin);
+      const net = chains.find((c) => canonChain(c.chain, r.coin) === want);
+      if (net) m.set(r.coin, { deposit: net.chainDeposit === "1", withdraw: net.chainWithdraw === "1" });
       putNets("bybit", r.coin, chains.map((c) => ({
         net: c.chain, deposit: c.chainDeposit === "1", withdraw: c.chainWithdraw === "1",
       })));
@@ -275,13 +325,9 @@ async function fetchOkx(): Promise<Map<string, WalletStatus> | null> {
     }
     const m = new Map<string, WalletStatus>();
     for (const [coin, rows] of byCoin) {
-      const wanted = OKX_NET[wantedChainKey(coin)];
-      const net = wanted
-        ? rows.find((r) => r.chain?.toUpperCase().includes(wanted.toUpperCase()))
-        : undefined;
-      m.set(coin, net
-        ? { deposit: !!net.canDep, withdraw: !!net.canWd }
-        : { deposit: rows.some((r) => r.canDep), withdraw: rows.some((r) => r.canWd) });
+      const want = wantedChainKey(coin);
+      const net = rows.find((r) => canonChain(r.chain ? r.chain.replace(`${coin}-`, "") : coin, coin) === want);
+      if (net) m.set(coin, { deposit: !!net.canDep, withdraw: !!net.canWd });
       putNets("okx", coin, rows.map((r) => ({
         // OKX 체인명은 "USDT-ERC20" 꼴 — 코인 접두는 떼고 네트워크만 남긴다.
         net: r.chain ? r.chain.replace(`${coin}-`, "") : coin,

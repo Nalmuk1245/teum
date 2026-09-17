@@ -10,7 +10,7 @@ import {
   CONFIG, FEES, NETWORK_PCT, NETWORK_PCT_DEFAULT,
   COIN_NETWORK, COIN_NETWORK_DEFAULT,
 } from "./config";
-import { walletStatus } from "./transfers";
+import { walletStatus, routeFor, venueChainStatus } from "./transfers";
 import { coinNetwork, withdrawFeeCoin, transferEtaMin } from "./networks";
 import { erc20Symbol } from "./tokens";
 import { chainKeyFromLabel } from "./chains";
@@ -159,25 +159,27 @@ const kimchi: Strategy = {
       // to the sell venue. If either is disabled, the edge can't be captured.
       const buyVenue: Venue = buyGlobal ? best.gv : best.kv;
       const sellVenue: Venue = buyGlobal ? best.kv : best.gv;
-      const wStat = walletStatus(ctx.transfers, buyVenue, base);
-      const dStat = walletStatus(ctx.transfers, sellVenue, base);
+      // 체인은 기회마다 고른다 — 매수 거래소 출금·매도 거래소 입금이 **같은 체인**에서
+      // 둘 다 열린 후보 중 ETA 최단. 코인당 기본 체인 하나로 판단하던 때는 그 체인이
+      // 막히면 다른 열린 체인이 있어도 끝이었고, 반대로 표기가 안 맞으면 OR로 통과됐다.
+      const route = routeFor(base, buyVenue, sellVenue, ctx.transfers);
       // 역프 (buy on KR, withdraw KR→overseas): Korean exchanges freeze crypto
       // withdrawals for ~24-72h after a KRW deposit and enforce whitelist/limits,
       // so a KR-buy leg is NOT a 1-minute settlement — reflect a realistic ETA
       // and flag it so the operator doesn't treat it as a fast arb.
       const isReverse = !buyGlobal; // buying on the KR venue
       // 컨펌 시간 기반 실질 ETA — 라이브 컨펌 수(바낸 minConfirm)가 있으면 그 기반.
-      const baseEta = transferEtaMin(base);
+      const baseEta = route.etaMin;
       const transfer: TransferGate = {
-        withdraw: { venue: buyVenue, enabled: wStat ? wStat.withdraw : null },
-        deposit: { venue: sellVenue, enabled: dStat ? dStat.deposit : null },
+        withdraw: { venue: buyVenue, enabled: route.withdraw },
+        deposit: { venue: sellVenue, enabled: route.deposit },
         // 역프 60분: 운영자 결정(2026-07-27) — KR 출금 동결(24~72h)은 **신규 원화
         // 입금분**에 걸리고, 이 계좌는 기존 예치금으로 돌므로 해당 없음. 감사
         // R3(역프 펀딩 과소)도 같은 이유로 기각. 신규 입금으로 운용을 바꾸면
         // 이 가정이 깨진다 — 그때는 이 값과 hedgeCost 펀딩 창을 같이 늘릴 것.
         etaMin: isReverse ? Math.max(baseEta, 60) : baseEta,
         blocked: false,
-        network: coinNetwork(base),
+        network: { chain: route.label, confirms: route.confirms, chainKey: route.chainKey, alternatives: route.alternatives, reason: route.reason },
       };
       // FAIL-CLOSED: a persistent kimchi premium usually exists BECAUSE deposits
       // are suspended on the KR side — so unknown (null) status must NOT pass as
@@ -291,12 +293,13 @@ const crossCex: Strategy = {
         transferPct + FEES.slippagePct * 2;
       const net = gross - cost;
 
+      const route = routeFor(base, lo.v, hi.v, ctx.transfers);
       const transfer: TransferGate = {
-        withdraw: { venue: lo.v, enabled: walletStatus(ctx.transfers, lo.v, base)?.withdraw ?? null },
-        deposit: { venue: hi.v, enabled: walletStatus(ctx.transfers, hi.v, base)?.deposit ?? null },
-        etaMin: transferEtaMin(base),
+        withdraw: { venue: lo.v, enabled: route.withdraw },
+        deposit: { venue: hi.v, enabled: route.deposit },
+        etaMin: route.etaMin,
         blocked: false,
-        network: coinNetwork(base),
+        network: { chain: route.label, confirms: route.confirms, chainKey: route.chainKey, alternatives: route.alternatives, reason: route.reason },
       };
       transfer.blocked =
         transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
@@ -510,9 +513,13 @@ async function scanCexDex(ctx: ScanContext): Promise<Opportunity[]> {
       // 전송형 공통 게이트 재료: 바낸의 이 코인 입출금 네트워크가 견적 체인과
       // 같아야 루트가 성립한다 (다르면 산 코인을 그 체인으로 못 보낸다).
       const netInfo = coinNetwork(base); // live(바낸 networkList) 우선, 없으면 큐레이션
+      // 바낸이 이 코인을 **견적 체인**으로 입출금하는지를 그 체인 행으로 직접 본다.
+      // 체인 행이 있으면(키 있음) supported·deposit·withdraw가 그 체인 값이고,
+      // 없으면(키 없음) 큐레이션 기본 체인과 견적 체인의 일치 여부로 강등한다.
+      const cs = venueChainStatus(ctx.transfers, "binance", base, uni.chain);
       const netChainKey = chainKeyFromLabel(netInfo.chain);
-      const chainMatch: boolean | null = netChainKey ? netChainKey === uni.chain : null; // null = 미상
-      const wStat = walletStatus(ctx.transfers, "binance", base); // null = 키 없음/미상장
+      const chainMatch: boolean | null = cs.supported !== null ? cs.supported : (netChainKey ? netChainKey === uni.chain : null);
+      const wStat = cs.deposit === null && cs.withdraw === null ? null : { deposit: cs.deposit === true, withdraw: cs.withdraw === true };
       const etaMin = transferEtaMin(base); // 컨펌 시간 기반 (미상 코인은 내부에서 테이블→기본값 강등)
       const mk = (dir: "buyDex" | "sellDex", grossPct: number, gasUnits: number, dexPrice: number) => {
         // ±8% 넘는 "갭"은 차익이 아니라 죽은 풀이거나 다른 토큰이다 — 행 자체를

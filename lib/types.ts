@@ -43,7 +43,15 @@ export type TransferGate = {
   deposit: LegGate; // deposit it to the sell venue
   etaMin: number; // estimated in-flight time = price-exposure window
   blocked: boolean; // a known-disabled leg → not settleable regardless of edge
-  network?: { chain: string; confirms: number }; // transfer chain + deposit confirmations
+  network?: {
+    chain: string; confirms: number; // transfer chain label + deposit confirmations
+    /** 정규화 체인 키 (netcodes.canonChain) — 실행 단계가 거래소별 코드로 되돌린다 */
+    chainKey?: string;
+    /** 양쪽 다 열린 다른 체인 수 (이 체인이 막혀도 갈 길이 있나) */
+    alternatives?: number;
+    /** 선택 사유 / 막힌 이유 */
+    reason?: string;
+  };
 };
 
 /** A single ranked arbitrage opportunity, strategy-agnostic. */

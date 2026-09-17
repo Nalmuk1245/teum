@@ -77,6 +77,14 @@
 
 ---
 
+### T15. 체인 코드 매핑이 빈틈없다 (돈 안 나감 · 키만 필요)
+**바뀐 것:** 코인당 체인 하나로 고정하고 거래소 표기가 안 맞으면 "아무 체인이나 열림"으로 완화하던 게이트를, 거래소 표기를 정규화(`lib/netcodes.ts canonChain`)해 기회마다 양쪽이 같이 연 체인을 고르는 방식(`routeFor`)으로 바꿨다. 출금·입금주소 조회도 그 거래소의 원문 코드를 쓴다. **매핑 안 된 코드는 미확인(null)으로 남아 라이브 실행을 막는다** — 그래서 이 항목은 "막히는 게 없나"를 보는 것이다.
+- [ ] 키 등록 후 1분 뒤: `curl -s localhost:3100/api/gate-networks?coin=USDT | jq .unmapped` → `[]`
+- [ ] 같은 확인을 XRP · ETH · SOL · 상장따리 후보 알트 3개에 반복. `unmapped`에 뜨는 `{venue, net}`을 전부 기록
+- [ ] 뜬 코드가 있으면 `lib/netcodes.ts`의 `EXACT` 표에 추가 (어느 체인인지는 거래소 입금 화면으로 확인) → 재시작 → 다시 `[]`
+- [ ] 갭 보드에서 기회 하나 열어 전송 체인 라벨과 사유(`transfer.network.reason`)가 실제 거래소 입금 화면의 체인과 같은지
+**실패하면:** `lib/netcodes.ts` `canonChain`/`EXACT`, `lib/transfers.ts` `putNets`(원문 코드 보존)·`routeFor`. 단위 테스트 `test/netcodes.test.ts`.
+
 ## B. 라이브 항목 — `DRY_RUN=false`, 소액
 
 > B로 넘어가기 전: A 전부 통과, `EXEC_TOKEN` 설정, 리스크 한도 소액 잠금 확인. 항목 순서를 지킨다 — 뒤로 갈수록 위험하다.

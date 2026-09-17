@@ -56,7 +56,8 @@
 - [x] **빗썸 입금주소** — /info/wallet_address (태그 분리)
 - [x] **바이낸스 networkList 실데이터화** — getall에서 체인명·minConfirm·withdrawFee 추출 → lib/networks.ts 게터(라이브 우선, 큐레이션 폴백), 전략·견적이 참조
 - [x] **개인지갑 토큰 보유** — RPC 폴백에 ERC20(큐레이션+수동등록)/TRC20(계정조회 동봉)/SPL(전 계정 1콜) 잔고 편입, 스테이블 $1 평가 (`lib/walletBalances.ts`)
-- [ ] **업비트↔바이낸스 네트워크 코드 매핑** (키 필요 · 2026-07-25 논의)
+- [x] **체인 단위 게이트·경로 선택 (2026-09-17)** — `lib/netcodes.ts`: 거래소 표기 정규화(canonChain) + 기회마다 양쪽 열린 체인 중 ETA 최단 선택(pickRoute). 문자열 불일치 시 OR 완화 제거(미매핑=null, 목록에 없음=false). 출금·입금주소 조회는 거래소 원문 코드(venueNetCode), 라이브에서 모르면 차단. 테스트 15건. 남은 것 ↓
+- [ ] **업비트↔바이낸스 네트워크 코드 매핑 검증** (키 필요 · LIVE_TEST_TODO T15) — 이제 정적 표 대신 `canonChain`이 맞추고, 못 맞춘 코드는 `/api/gate-networks?coin=X`의 `unmapped`로 드러난다. 키 넣고 비면 끝.
       현재 전송 체인은 바이낸스 networkList(또는 큐레이션 `COIN_NETWORK`)에서 고르고,
       **그 바이낸스 코드를 업비트 `net_type`으로 그대로 넘긴다**(`NET_LABEL = BINANCE_NET`).
       두 거래소 표기가 항상 같지 않다(바이낸스는 `ARBITRUM`/`AVAXC`/`OPTIMISM` 식).
