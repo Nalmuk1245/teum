@@ -77,13 +77,28 @@
 
 ---
 
-### T15. 체인 코드 매핑이 빈틈없다 (돈 안 나감 · 키만 필요)
-**바뀐 것:** 코인당 체인 하나로 고정하고 거래소 표기가 안 맞으면 "아무 체인이나 열림"으로 완화하던 게이트를, 거래소 표기를 정규화(`lib/netcodes.ts canonChain`)해 기회마다 양쪽이 같이 연 체인을 고르는 방식(`routeFor`)으로 바꿨다. 출금·입금주소 조회도 그 거래소의 원문 코드를 쓴다. **매핑 안 된 코드는 미확인(null)으로 남아 라이브 실행을 막는다** — 그래서 이 항목은 "막히는 게 없나"를 보는 것이다.
-- [ ] 키 등록 후 1분 뒤: `curl -s localhost:3100/api/gate-networks?coin=USDT | jq .unmapped` → `[]`
-- [ ] 같은 확인을 XRP · ETH · SOL · 상장따리 후보 알트 3개에 반복. `unmapped`에 뜨는 `{venue, net}`을 전부 기록
+### T22. 체인 코드 매핑이 빈틈없다 (돈 안 나감 · 키만 필요)
+**바뀐 것 (2026-09-17):** 코인당 체인 하나로 고정하고 거래소 표기가 안 맞으면 "아무 체인이나 열림"으로 완화하던 게이트를, 거래소 표기를 정규화(`lib/netcodes.ts canonChain`)해 기회마다 양쪽이 같이 연 체인을 고르는 방식(`lib/transfers.ts routeFor`)으로 바꿨다. 출금·입금주소 조회도 그 거래소의 원문 코드(`venueNetCode`)를 쓴다. **매핑 안 된 코드는 미확인(null)으로 남아 라이브 실행을 막는다** — 그래서 이 항목은 "막히는 게 없나"를 보는 것이다. 정규화 표는 API 문서 기준으로 만들었고 **실제 응답으로 검증된 적이 없다.**
+- [ ] 거래소 키(업비트·바낸·바이비트·OKX) 등록 후 1분 뒤: `curl -s localhost:3100/api/gate-networks?coin=USDT | jq .unmapped` → `[]`
+- [ ] 같은 확인을 XRP · ETH · SOL · BTC · 상장따리 후보 알트 3개에 반복. `unmapped`에 뜨는 `{venue, net}`을 **전부** 기록해 보고서에
+- [ ] `jq .networks.upbit` 로 업비트 행의 `net`(원문)과 `chainKey`(정규화)를 나란히 보고, 업비트 웹 입금 화면의 네트워크 이름과 맞는지 코인 3개 대조
 - [ ] 뜬 코드가 있으면 `lib/netcodes.ts`의 `EXACT` 표에 추가 (어느 체인인지는 거래소 입금 화면으로 확인) → 재시작 → 다시 `[]`
-- [ ] 갭 보드에서 기회 하나 열어 전송 체인 라벨과 사유(`transfer.network.reason`)가 실제 거래소 입금 화면의 체인과 같은지
 **실패하면:** `lib/netcodes.ts` `canonChain`/`EXACT`, `lib/transfers.ts` `putNets`(원문 코드 보존)·`routeFor`. 단위 테스트 `test/netcodes.test.ts`.
+
+### T23. 기회마다 고른 전송 체인이 실제 거래소 화면과 같다 (돈 안 나감)
+**바뀐 것:** 전송 체인이 코인당 고정이 아니라 기회마다 "매수 거래소 출금 + 매도 거래소 입금이 같은 체인에서 둘 다 열린 후보 중 ETA 최단"으로 결정된다. 기회 JSON의 `transfer.network`에 `chain`(라벨)·`chainKey`·`alternatives`(양쪽 열린 다른 체인 수)·`reason`(선택/차단 사유)이 실린다.
+- [ ] `curl -s localhost:3100/api/scan | jq '[.opportunities[] | select(.kind=="kimchi" and .mock!=true) | {base, legs:[.legs[].venue], net:.transfer.network, w:.transfer.withdraw.enabled, d:.transfer.deposit.enabled}] | .[:10]'`
+- [ ] USDT·XRP·SOL처럼 멀티체인 코인 3개: `reason`이 "양쪽 열림 N개 중 ETA 최단"이고 고른 체인이 **매수 거래소 출금 화면과 매도 거래소 입금 화면 양쪽에 실제로 있는지** 대조
+- [ ] 키가 있는데도 `w`/`d`가 `null`인 코인이 있으면 그 코인의 `unmapped`(T22)를 확인 — null은 "표기를 못 맞췄다"는 뜻이어야 하고, 매핑됐는데 null이면 버그
+- [ ] **관찰:** 특정 체인 입출금이 실제로 막힌 코인이 생기면(거래소 공지) 그 코인의 `reason`이 다른 열린 체인으로 바뀌는지, 없으면 "출금 막힘/입금 막힘"으로 뜨는지 기록
+**실패하면:** `lib/netcodes.ts` `pickRoute`(후보·정렬), `lib/transfers.ts` `routeFor`(기본 체인 키 — 레지스트리 밖 체인은 `native:TICKER`).
+
+### T24. 모르는 코인의 기본 체인(ERC20 가정)이 바낸 networkList로 대체된다 (돈 안 나감 · 바낸 키)
+**바뀐 것 없음 — 남은 구멍이라 확인만:** 큐레이션 표(`lib/config.ts COIN_NETWORK`)에 없는 코인은 **Ethereum (ERC20)** 으로 가정한다. 바낸 키가 있으면 `/sapi/v1/capital/config/getall`의 기본 네트워크가 이를 덮어쓴다. 키 없이 돌리면 솔라나 코인(예: TRUMP)이 Ethereum으로 뜬다 — 이건 버그가 아니라 키 부재다.
+- [ ] 바낸 키 없이: `jq '.opportunities[] | select(.base=="TRUMP") | .transfer.network'` → Ethereum (기대되는 잘못된 값)
+- [ ] 바낸 키 등록 + 1분 뒤 같은 명령 → 바낸이 부르는 체인(Solana)으로 바뀜, `confirms`가 바낸 `minConfirm` 값
+- [ ] 큐레이션에 없는 KR 상장 알트 5개를 골라 같은 확인. 여전히 Ethereum인데 실제로는 다른 체인인 코인이 있으면 **보고** (바낸이 그 코인을 상장 안 했거나 networkList가 비어 있는 경우)
+**실패하면:** `lib/transfers.ts` `fetchBinance()`의 `setLiveNetwork`, `lib/networks.ts` `coinNetwork()`.
 
 ## B. 라이브 항목 — `DRY_RUN=false`, 소액
 
@@ -167,7 +182,9 @@
 **주의:** 파라미터명이 빗썸 API가 받는 이름인지 **코드가 아니라 빗썸 문서/고객센터로 먼저 확인**한다. 거절되면 안전(돈 안 나감), 무시되면 위험(체인 어긋남). 그래서 단일 체인 코인부터.
 - [ ] **1단계 — 단일 체인 코인**: 빗썸에서 BTC(또는 체인이 하나뿐인 코인) **최소 출금 수량**을 본인 바낸 입금주소로. 역프 경로가 아니라면 이 단계는 **빗썸 웹 API 테스트로 대체 가능**: `lib/orders.ts` `bithumbWithdraw()`가 보내는 파라미터(`currency, net_type, address, units[, destination]`)를 빗썸 API 도구로 그대로 보내 **거절 사유가 "잘못된 파라미터"가 아닌지** 확인
 - [ ] **2단계 — 멀티체인 코인**: USDT를 **본인이 통제하는 TRX 지갑 주소**로 최소액. 출금 요청이 접수되고, 도착한 체인이 **TRX(TRC20)** 인지 익스플로러로 확인. ERC20으로 왔거나 다른 체인이면 **즉시 보고**(코드 `NET_LABEL`/`BINANCE_NET` 매핑이 빗썸 표기와 다른 것)
-**실패하면:** `lib/orders.ts` `bithumbWithdraw()`, `lib/execStep.ts` `withdraw` 케이스의 `net`(`NET_LABEL[chain]`), `lib/chains.ts` `BINANCE_NET`. 빗썸 net_type 표기가 바이낸스 코드와 다르면 **빗썸 전용 매핑**이 필요하다 — TODO.md P1 "업비트↔바이낸스 네트워크 코드 매핑"과 같은 종류의 일.
+**2026-09-17 추가:** 다른 거래소는 이제 스윕이 저장한 **그 거래소의 원문 코드**로 출금하지만, 빗썸은 체인별 상태 API가 없어 **여전히 바낸 코드(`BINANCE_NET`)를 net_type으로 넘긴다** (`lib/transfers.ts venueNetCode`의 bithumb 폴백). 그래서 이 항목이 유일한 검증 수단이다.
+- [ ] **0단계 (돈 안 나감, 빗썸 키):** 입금주소 조회가 같은 코드를 쓰므로 먼저 이걸로 코드 수용 여부를 본다 — `lib/deposits.ts bithumbDeposit()`이 보내는 `net_type`으로 USDT(`TRX`)·USDT(`ETH`)·XRP(`XRP`) 조회. 주소가 오면 그 코드는 빗썸이 받는 것. 오류/빈 응답이면 그 코드를 기록 (T22 보고서에 같이)
+**실패하면:** `lib/orders.ts` `bithumbWithdraw()`, `lib/execStep.ts` `withdraw` 케이스의 `netCodeFor()`, `lib/transfers.ts` `venueNetCode()` bithumb 분기, `lib/chains.ts` `BINANCE_NET`. 빗썸 표기가 다르면 `venueNetCode`에 **빗썸 전용 표**를 넣는다(업비트처럼 스윕에서 배울 데이터가 없으므로 정적 표).
 
 ---
 
@@ -220,9 +237,12 @@
 | T11 | `lib/listings.ts` `listingSlipGate()`, `autoBuy()` · `app/api/listing-buy/route.ts` |
 | T12 | `lib/wallet.ts` `WAIT_TIMEOUT_MS`, `sendEvm()`, `sendRawEvmTx()` |
 | T13 | `lib/runEngine.ts` `unwindRun()` · `lib/unwind.ts` `closeHedge()` |
-| T14 | `lib/orders.ts` `bithumbWithdraw()` · `lib/execStep.ts` `withdraw` |
+| T14 | `lib/orders.ts` `bithumbWithdraw()` · `lib/execStep.ts` `withdraw` `netCodeFor()` · `lib/transfers.ts` `venueNetCode()` |
 | T15 | `lib/execStep.ts` `sell` 케이스 끝 |
 | T17 | `lib/execStep.ts` `undoStep()` · `lib/unwind.ts` 시장가 폴백 |
 | T18 | `lib/execStep.ts` `walletArrival()` |
 | T19 | `lib/telegram.ts` `send()` |
 | T20 | `lib/runEngine.ts` 헷지 마진 워치(파일 끝) |
+| T22 | `lib/netcodes.ts` `canonChain`, `EXACT` · `lib/transfers.ts` `putNets()`, `unmappedNetCodes()` · `app/api/gate-networks/route.ts` |
+| T23 | `lib/netcodes.ts` `pickRoute()` · `lib/transfers.ts` `routeFor()` · `lib/strategies.ts` kimchi/cross-cex `route` |
+| T24 | `lib/transfers.ts` `fetchBinance()` `setLiveNetwork` · `lib/networks.ts` `coinNetwork()` · `lib/config.ts` `COIN_NETWORK_DEFAULT` |
