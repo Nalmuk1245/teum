@@ -156,10 +156,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // Memoized: this is the DEFAULT tab, and `positive`/`best` each walked the
   // whole list on every render — 600ms overlay ticks made that ~100×/min, twice.
   const positive = useMemo(() => live.filter((o) => liveNet(o) > 0).length, [live, liveNet]);
-  const best = useMemo(
-    () => (live.length ? [...live].reduce((top, o) => (liveNet(o) > liveNet(top) ? o : top)) : null),
-    [live, liveNet],
-  );
+  // 잠긴 갭(닫힘·정지 의심)은 "최고 순수익" 후보에서 뺀다 — 잡을 수 없는 47%가 KPI를 차지하면 안 된다.
+  const best = useMemo(() => {
+    const open = live.filter((o) => !isLocked(o.gate));
+    return open.length ? open.reduce((top, o) => (liveNet(o) > liveNet(top) ? o : top)) : null;
+  }, [live, liveNet]);
   const bestNet = best ? liveNet(best) : null;
   const pnl = risk?.realizedPnlUsd ?? 0;
 

@@ -205,7 +205,10 @@ export default function Cockpit() {
   // KPI는 실데이터만 — mock이 "최고 수익"을 오염시키면 보드를 못 믿게 된다.
   const livePool = useMemo(() => pool.filter((o) => !o.mock), [pool]);
   const positive = livePool.filter((o) => o.netPct > 0).length;
-  const bestEdge = livePool.length ? Math.max(...livePool.map((o) => o.netPct)) : null;
+  // "최고"는 지금 잡을 수 있는 것 중에서 — 입출금 닫힘/정지 의심(LSK 49% 같은)이 1등을 차지하면
+  // KPI가 거짓말이 된다. 잠긴 갭은 보드에 남되 최고값 집계에서는 뺀다.
+  const openPool = useMemo(() => livePool.filter((o) => !isLocked(o.gate)), [livePool]);
+  const bestEdge = openPool.length ? Math.max(...openPool.map((o) => o.netPct)) : null;
 
   // ── Spike alerts — live net crossing the threshold beeps + notifies + flashes.
   const [alertsOn, setAlertsOn] = useState(false);
@@ -271,7 +274,7 @@ export default function Cockpit() {
   const best = useMemo(() => {
     let top: { o: Opportunity; net: number } | null = null;
     for (const o of pool) {
-      if (o.mock) continue;
+      if (o.mock || isLocked(o.gate)) continue; // 잠긴 갭은 알림·하단 바의 "최고"가 아니다
       const net = liveOverlay[o.id]?.netPct ?? o.netPct;
       if (!top || net > top.net) top = { o, net };
     }
