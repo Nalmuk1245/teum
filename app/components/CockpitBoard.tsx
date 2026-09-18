@@ -8,6 +8,26 @@ import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrice
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
+import { isLocked } from "@/lib/gateState";
+
+// 게이트 배지 — 닫힌 갭은 지우지 않고 "왜 지금 못 잡나"를 붙인다. 열린 직후 5분은 열림 강조.
+const REOPEN_FLASH_MS = 5 * 60_000;
+function GateBadge({ o, compact }: { o: Opportunity; compact?: boolean }) {
+  const reopened = o.reopenedAt && Date.now() - o.reopenedAt < REOPEN_FLASH_MS;
+  const base: React.CSSProperties = { fontSize: compact ? 10.5 : 11, fontWeight: 700, borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap", flex: "0 0 auto" };
+  if (reopened) return <span className="spike-flash" title="닫혀 있던 입출금이 방금 열렸습니다 — 지속되던 갭이 있으면 지금이 기회" style={{ ...base, color: "var(--pos)", background: "var(--pos-soft)" }}>🔓 열림</span>;
+  if (o.gate === "closed") return <span title={`입출금 정지 확인 — ${o.transfer?.network?.reason ?? "매수 출금 또는 매도 입금이 막힘"}`} style={{ ...base, color: "var(--neg)", background: "var(--neg-soft)" }}>🔒 닫힘</span>;
+  if (o.gate === "suspect") return <span title="큰 갭이 30분 넘게 유지 — 대개 입출금 정지가 원인 (키가 있으면 확인됨)" style={{ ...base, color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 14%, transparent)" }}>🔒 정지 의심</span>;
+  return null;
+}
+
+/** 깊이 사다리 툴팁 문구 — ≥5% $a · ≥3% $b · ≥1% $c · >0% $d · 총 이익 $e */
+function ladderText(o: Opportunity): string {
+  const d = o.depth;
+  if (!d) return "최우선호가 한 칸 기준 한도 — 상위 기회는 호가를 걸어 내려간 사다리로 바뀝니다";
+  const parts = d.tiers.map((t) => `${t.minNet > 0 ? "≥" + t.minNet + "%" : ">0%"} ${usd(t.sizeUsd)}`);
+  return `구간별 규모: ${parts.join(" · ")} · 총 이익 ${usd(d.profitUsd)}`;
+}
 
 export function Board({
   rows, loading, onExecute, mobile, showExecute, live, flash, emptyText, onInspect, inspectedId, lastColLabel,
@@ -59,7 +79,7 @@ export function Board({
           <span style={{ textAlign: "right" }}>비용</span>
           <span style={{ textAlign: "right" }}>추이</span>
           <span style={{ textAlign: "right" }}>순수익</span>
-          <span style={{ textAlign: "right" }}>{lastColLabel ?? "한도"}</span>
+          <span style={{ textAlign: "right" }} title="상위 기회: 호가를 걸어 내려가 순수익>0인 규모와 그때의 총 이익. 나머지: 최우선호가 한 칸 한도">{lastColLabel ?? "규모 · 이익"}</span>
           {showExecute && <span />}
         </div>
       )}
@@ -144,8 +164,11 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
               전송 변동 ±{o.transferRisk.driftPct.toFixed(2)}% · 헷지 권장
             </span>
           )}
-          {o.transfer?.blocked && (
-            <span style={{ color: "var(--neg)", fontSize: 11, fontWeight: 600 }}>입출금 중단</span>
+          {(isLocked(o.gate) || o.reopenedAt) && <span><GateBadge o={o} compact /></span>}
+          {o.depth && (
+            <span className="tnum" title={ladderText(o)} style={{ color: "var(--text-mute)", fontSize: 11 }}>
+              규모 {usd(o.depth.maxSizeUsd)} · 이익 <b style={{ color: o.depth.profitUsd > 0 ? "var(--pos)" : "var(--text-mute)" }}>{usd(o.depth.profitUsd)}</b>
+            </span>
           )}
         </div>
         {showExecute && (
@@ -228,9 +251,7 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
             <b style={{ color: "var(--pos)", fontWeight: 600 }}>{isApr ? "롱" : "매수"}</b> {vlabel(buy.venue)}
             <span style={{ color: "var(--text-mute)", margin: "0 7px" }}>→</span>
             <b style={{ color: "var(--neg)", fontWeight: 600 }}>{isApr ? "숏" : "매도"}</b> {vlabel(sell.venue)}
-            {o.transfer?.blocked && (
-              <span style={{ color: "var(--neg)", marginLeft: 8, fontSize: 11, fontWeight: 600 }}>중단</span>
-            )}
+            {(isLocked(o.gate) || o.reopenedAt) && <span style={{ marginLeft: 8 }}><GateBadge o={o} /></span>}
           </>
         ) : "—"}
       </span>
@@ -251,10 +272,15 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
       >
         {pct(net)}
       </span>
-      <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+      <span className="tnum" title={isApr ? undefined : ladderText(o)} style={{ textAlign: "right", color: "var(--text-dim)", lineHeight: 1.2 }}>
         {isApr
           ? (o.fundingMeta ? <FundingCountdown meta={o.fundingMeta} /> : "—")
-          : usd(o.notionalCapUsd)}
+          : o.depth
+            ? <>
+                <div>{usd(o.depth.maxSizeUsd)}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: o.depth.profitUsd > 0 ? "var(--pos)" : "var(--text-mute)" }}>+{usd(o.depth.profitUsd)}</div>
+              </>
+            : usd(o.notionalCapUsd)}
       </span>
 
       {/* execute */}
@@ -306,6 +332,8 @@ const sameOpp = (a: Opportunity, b: Opportunity) =>
   a.costPct === b.costPct && a.notionalCapUsd === b.notionalCapUsd &&
   a.executable === b.executable && a.hasPerp === b.hasPerp &&
   a.transfer?.blocked === b.transfer?.blocked &&
+  a.gate === b.gate && a.reopenedAt === b.reopenedAt &&
+  a.depth?.ts === b.depth?.ts &&
   a.newListing?.opened === b.newListing?.opened &&
   a.persistence?.heldSec === b.persistence?.heldSec &&
   a.transferRisk?.hedgeAdvised === b.transferRisk?.hedgeAdvised &&

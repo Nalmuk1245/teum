@@ -4,7 +4,7 @@
 // depth-based size cap. This is the accurate counterpart to the board's
 // ticker-price estimate; the modal calls it before you confirm.
 
-import type { Opportunity, Quote, Venue } from "./types";
+import type { DepthLadder, Opportunity, Quote, Venue } from "./types";
 import {
   FEES,
   NETWORK_PCT,
@@ -57,7 +57,72 @@ async function cachedFx(venue: Venue, fresh: boolean): Promise<number | null> {
 // 지연이 곧 손실이다. maxAge를 주기보다 살짝 짧게 줘서 틱마다 실제로 갱신된다
 // (상위 5기회 ≤10심볼 / 2초 — 어느 거래소 공개 한도에도 한참 못 미친다).
 export const PREWARM_MS = 2000;
-const PREWARM_TOP = 5;
+const PREWARM_TOP = 6;
+
+// ── 깊이 사다리 ───────────────────────────────────────────────────────────────
+// "5% 갭"이 최우선호가 한 칸에 $100 있고 1%대에 $2,000이 깔려 있으면, 보드의
+// "순수익 5% · 한도 $100"은 반쪽 진실이다. 양쪽 호가를 같은 속도로 걸어 내려가며
+// 칸마다 순수익을 구하고, 0 위인 칸까지 규모·이익을 누적한다. 상위 기회만
+// (프리웜이 어차피 데워두는 오더북을 재사용 — 추가 요청 0건).
+export const LADDER_TIERS = [5, 3, 1, 0];
+
+/**
+ * 순수 함수. asks 오름차순 / bids 내림차순, 둘 다 USD 환산.
+ * costPct는 비례 비용으로 취급한다(출금 고정비는 보드 기준 규모로 이미 %화돼 있어
+ * 작은 규모에선 실제보다 후하고 큰 규모에선 박하다 — 사다리 용도로는 충분).
+ */
+export function ladderFromBooks(asks: LevelUsd[], bids: LevelUsd[], costPct: number, tiers: number[] = LADDER_TIERS): DepthLadder {
+  const tierSize = tiers.map(() => 0);
+  let i = 0, j = 0;
+  let ra = asks[0]?.size ?? 0, rb = bids[0]?.size ?? 0;
+  let maxSizeUsd = 0, profitUsd = 0;
+  while (i < asks.length && j < bids.length) {
+    const a = asks[i], b = bids[j];
+    const q = Math.min(ra, rb);
+    if (!(q > 0) || !(a.priceUsd > 0)) break;
+    const net = (b.priceUsd / a.priceUsd - 1) * 100 - costPct;
+    if (net <= 0) break; // 정렬돼 있으므로 이후 칸은 더 나쁘다
+    const usd = q * a.priceUsd;
+    maxSizeUsd += usd;
+    profitUsd += (usd * net) / 100;
+    for (let k = 0; k < tiers.length; k++) if (net >= tiers[k] && (tiers[k] > 0 || net > 0)) tierSize[k] += usd;
+    ra -= q; rb -= q;
+    if (ra <= 1e-12) { i++; ra = asks[i]?.size ?? 0; }
+    if (rb <= 1e-12) { j++; rb = bids[j]?.size ?? 0; }
+  }
+  return {
+    tiers: tiers.map((minNet, k) => ({ minNet, sizeUsd: Math.round(tierSize[k]) })),
+    maxSizeUsd: Math.round(maxSizeUsd), profitUsd: Math.round(profitUsd * 100) / 100, ts: Date.now(),
+  };
+}
+
+const gd = globalThis as unknown as { __arbDepth?: Map<string, DepthLadder> };
+gd.__arbDepth ??= new Map();
+const DEPTH_FRESH_MS = 15_000;
+/** 최근 프리웜이 계산한 사다리. 15초 넘게 낡았으면 없는 것으로. */
+export function depthOf(oppId: string): DepthLadder | undefined {
+  const d = gd.__arbDepth!.get(oppId);
+  return d && Date.now() - d.ts < DEPTH_FRESH_MS ? d : undefined;
+}
+
+async function computeDepth(o: Opportunity): Promise<void> {
+  const buyLeg = o.legs.find((l) => l.side === "buy");
+  const sellLeg = o.legs.find((l) => l.side === "sell");
+  if (!buyLeg || !sellLeg || buyLeg.venue === "dex" || sellLeg.venue === "dex") return;
+  const buyAd = getAdapter(buyLeg.venue), sellAd = getAdapter(sellLeg.venue);
+  if (!buyAd?.fetchOrderBook || !sellAd?.fetchOrderBook) return;
+  const krVenue: Venue | null = buyLeg.quote === "KRW" ? buyLeg.venue : sellLeg.quote === "KRW" ? sellLeg.venue : null;
+  const [usdKrw, buyBook, sellBook] = await Promise.all([
+    krVenue ? cachedFx(krVenue, false) : Promise.resolve(1),
+    cachedBook(buyAd.fetchOrderBook.bind(buyAd), buyLeg.venue, buyLeg.symbol, false, PREWARM_MS - 500),
+    cachedBook(sellAd.fetchOrderBook.bind(sellAd), sellLeg.venue, sellLeg.symbol, false, PREWARM_MS - 500),
+  ]);
+  if (!usdKrw) return;
+  const asks = buyBook.asks.map((l) => ({ priceUsd: toUsd(l.price, buyLeg.quote, usdKrw), size: l.size })).filter((l) => l.priceUsd > 0).sort((a, b) => a.priceUsd - b.priceUsd);
+  const bids = sellBook.bids.map((l) => ({ priceUsd: toUsd(l.price, sellLeg.quote, usdKrw), size: l.size })).filter((l) => l.priceUsd > 0).sort((a, b) => b.priceUsd - a.priceUsd);
+  if (!asks.length || !bids.length) return;
+  gd.__arbDepth!.set(o.id, ladderFromBooks(asks, bids, o.costPct));
+}
 
 export async function prewarmBooks(opps: Opportunity[]): Promise<void> {
   try {
@@ -68,6 +133,8 @@ export async function prewarmBooks(opps: Opportunity[]): Promise<void> {
     const jobs: Promise<unknown>[] = [];
     const seen = new Set<string>();
     for (const o of top) {
+      // 사다리 — 같은 캐시를 읽으므로 아래 개별 프리웜과 요청이 겹치지 않는다.
+      jobs.push(computeDepth(o).catch(() => undefined));
       for (const leg of o.legs) {
         if (leg.venue === "dex") continue;
         const ad = getAdapter(leg.venue);

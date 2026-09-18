@@ -98,6 +98,24 @@ export type Opportunity = {
   suspectApr?: boolean;
   /** cex-dex 동적 유니버스: 심볼만 일치, 컨트랙트 미검증 — 실행 금지·강등 */
   unverified?: boolean;
+  /** 깊이 사다리 — 양쪽 오더북을 걸어 내려가며 구간별로 모은 규모와 총 이익.
+   *  최우선호가 한 칸(notionalCapUsd)이 아니라 "이 갭에서 실제로 뽑을 수 있는 돈".
+   *  프리웜 캐시(상위 기회)에만 붙는다. */
+  depth?: DepthLadder;
+  /** 입출금 게이트 상태 (gateState.classifyGate). closed/suspect는 배지·강등·대기 목록. */
+  gate?: "open" | "closed" | "suspect" | "unknown";
+  /** 닫힘/의심이던 게이트가 확인된 열림으로 바뀐 시각 — 알림·행 깜빡임. */
+  reopenedAt?: number;
+  ts: number;
+};
+
+/** 깊이 사다리 한 벌. tiers는 순수익 하한별 누적 규모(USD). */
+export type DepthLadder = {
+  tiers: { minNet: number; sizeUsd: number }[];
+  /** 순수익 > 0 인 마지막 칸까지의 누적 규모 */
+  maxSizeUsd: number;
+  /** 그 규모를 다 먹었을 때의 기대 이익 (USD) */
+  profitUsd: number;
   ts: number;
 };
 

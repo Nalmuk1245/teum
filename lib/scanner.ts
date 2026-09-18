@@ -24,6 +24,12 @@ import { computeCalibrationPct } from "./calibration";
 // calibration — exactly the spikes that pushed the tick past its 3s cadence.
 // These inputs are minutes-scale; serving one stale generation costs nothing.
 import { swr as ttl } from "./ttlCache";
+import { classifyGate, isLocked } from "./gateState";
+import { depthOf } from "./quote";
+
+// 직전 스캔의 게이트 상태 — 닫힘/의심 → 확인된 열림 전환을 잡는다 (재개 알림).
+const gg = globalThis as unknown as { __arbPrevGate?: Map<string, "open" | "closed" | "suspect" | "unknown"> };
+gg.__arbPrevGate ??= new Map();
 
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");
@@ -122,10 +128,24 @@ export async function scanAll(): Promise<Opportunity[]> {
     }
   }
   pruneHistory(seen, ts);
+  // 게이트 상태·깊이 사다리·재개 감지. 닫힌 갭은 지우지 않고 상태를 붙여 아래로 내린다 —
+  // 입출금이 다시 열리는 순간이 가장 좋은 기회라, 그 전환을 잡아 알린다.
+  const prev = gg.__arbPrevGate!;
+  const nextGate = new Map<string, "open" | "closed" | "suspect" | "unknown">();
+  for (const o of opps) {
+    if (o.mock || o.kind === "funding-basis") continue;
+    o.gate = classifyGate(o);
+    nextGate.set(o.id, o.gate);
+    const was = prev.get(o.id);
+    if (o.gate === "open" && isLocked(was) && o.netPct > 0) o.reopenedAt = ts;
+    o.depth = depthOf(o.id);
+  }
+  gg.__arbPrevGate = nextGate;
   // Fresh listings float to the very top (+1000) — a spike you want to see NOW,
-  // ranked above any steady edge regardless of current net.
+  // ranked above any steady edge regardless of current net. Locked gates sink
+  // below every open row (−500) but stay on the board.
   const score = (o: Opportunity) =>
-    (o.newListing ? 1000 : 0) + (o.mock ? o.netPct : o.netPct * confidence(o.persistence));
+    (o.newListing ? 1000 : 0) + (isLocked(o.gate) ? -500 : 0) + (o.mock ? o.netPct : o.netPct * confidence(o.persistence));
   opps.sort((a, b) => score(b) - score(a));
   return opps;
 }

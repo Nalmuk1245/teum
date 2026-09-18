@@ -18,6 +18,7 @@ import { PremiumPanel } from "./components/PremiumPanel";
 import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 import { useIsMobile } from "./mobile";
+import { isLocked } from "@/lib/gateState";
 
 // 모바일 판정은 app/mobile.tsx의 단일 소스 (서버 UA로 첫 페인트부터 맞추고
 // 마운트 후 matchMedia가 정정 — 이유는 그 파일 주석 참고).
@@ -51,7 +52,8 @@ export default function Cockpit() {
   const [opps, setOpps] = useState<Opportunity[]>([]);
   const [meta, setMeta] = useState<{ dryRun: boolean; mock: boolean; calPct?: number; calSamples?: number } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<StrategyKind | "all">("all");
+  // "locked" = 입출금 닫힘/정지 의심 — 지우지 않고 따로 모아 본다 (열리면 기회).
+  const [filter, setFilter] = useState<StrategyKind | "all" | "locked">("all");
   // 수익만 — hide net≤0 rows (they're the honest-cost-model majority and mostly
   // noise; the toggle brings them back for gap-watching). Persisted.
   const [plusOnly, setPlusOnly] = useState(true);
@@ -163,7 +165,9 @@ export default function Cockpit() {
   const [orderFrozen, setOrderFrozen] = useState(false);
   const frozenRows = useRef<Opportunity[] | null>(null);
   const rows = useMemo(() => {
-    const base = funding || filter === "all" ? pool : pool.filter((o) => o.kind === filter);
+    const base = funding || filter === "all" ? pool
+      : filter === "locked" ? pool.filter((o) => isLocked(o.gate))
+      : pool.filter((o) => o.kind === filter);
     if (funding) return base;
     const rankNet = (o: Opportunity) => rankOverlay[o.id]?.netPct ?? o.netPct;
     const sorted = [...base].sort((a, b) => rankNet(b) - rankNet(a));
@@ -195,7 +199,7 @@ export default function Cockpit() {
   // What the 수익만 filter is hiding right now (for the empty-state message).
   const hiddenNeg = useMemo(() => {
     if (funding || !plusOnly) return 0;
-    const base = filter === "all" ? pool : pool.filter((o) => o.kind === filter);
+    const base = filter === "all" ? pool : filter === "locked" ? pool.filter((o) => isLocked(o.gate)) : pool.filter((o) => o.kind === filter);
     return base.filter((o) => (liveOverlay[o.id]?.netPct ?? o.netPct) <= 0).length;
   }, [pool, filter, funding, plusOnly, liveOverlay]);
   // KPI는 실데이터만 — mock이 "최고 수익"을 오염시키면 보드를 못 믿게 된다.
@@ -550,10 +554,10 @@ export default function Cockpit() {
             borderRadius: 9,
           }}
         >
-          {(["all", ...GAP_KINDS] as const).map((k) => {
+          {(["all", ...GAP_KINDS, "locked"] as const).map((k) => {
             const active = filter === k;
-            const label = k === "all" ? "전체" : k === "kimchi" ? "김프·역프" : KIND_META[k].label;
-            const n = k === "all" ? pool.length : pool.filter((o) => o.kind === k).length;
+            const label = k === "all" ? "전체" : k === "locked" ? "🔒 대기" : k === "kimchi" ? "김프·역프" : KIND_META[k].label;
+            const n = k === "all" ? pool.length : k === "locked" ? pool.filter((o) => isLocked(o.gate)).length : pool.filter((o) => o.kind === k).length;
             return (
               <button
                 key={k}

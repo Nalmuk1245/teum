@@ -380,7 +380,20 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
             </div>
           )}
           {line("순수익", pct(net), net > 0 ? "var(--pos)" : "var(--neg)")}
-          {opp.notionalCapUsd != null && line("호가 한도", usd(opp.notionalCapUsd))}
+          {opp.depth ? (
+            <>
+              {line("잡을 수 있는 규모", `${usd(opp.depth.maxSizeUsd)} · 이익 ${usd(opp.depth.profitUsd)}`, opp.depth.profitUsd > 0 ? "var(--pos)" : undefined)}
+              {/* 구간별 사다리 — 5%짜리가 $100뿐이고 1%대에 $2,000이 깔려 있으면 여기서 보인다 */}
+              <div style={{ display: "flex", gap: 6, padding: "2px 0 4px" }}>
+                {opp.depth.tiers.map((t) => (
+                  <span key={t.minNet} className="tnum" style={{ flex: 1, textAlign: "center", fontSize: 10.5, borderRadius: 7, padding: "3px 0", background: "var(--bg)", border: "1px solid var(--border)", color: t.sizeUsd > 0 ? "var(--text)" : "var(--text-mute)" }}>
+                    <div style={{ color: "var(--text-mute)" }}>{t.minNet > 0 ? `≥${t.minNet}%` : ">0%"}</div>
+                    <div style={{ fontWeight: 700 }}>{usd(t.sizeUsd)}</div>
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : opp.notionalCapUsd != null && line("호가 한도", usd(opp.notionalCapUsd))}
           {opp.persistence && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0" }}>
               <span style={{ fontSize: 12, color: "var(--text-mute)" }}>지속성</span>

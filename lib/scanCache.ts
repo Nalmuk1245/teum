@@ -219,6 +219,15 @@ async function alertOnScan(opps: Opportunity[]): Promise<void> {
     if (o.transfer?.blocked && o.netPct > 0) {
       void notify(`gate:${o.id}`, `⛔ <b>${o.base}</b> 입출금 중단 — 실행 불가 (net +${o.netPct.toFixed(2)}%)`);
     }
+    // 닫혀 있던 게이트가 확인된 열림으로 — 지속되던 갭이 있으면 지금이 그 기회다.
+    // 쿨다운 없이 즉시(notifyNow): 이 전환은 드물고, 놓치면 갭이 몇 분 안에 닫힌다.
+    if (o.reopenedAt && Date.now() - o.reopenedAt < 10_000) {
+      const [buy, sell] = o.legs;
+      const size = o.depth?.maxSizeUsd ?? o.notionalCapUsd;
+      void notifyNow(
+        `🔓 <b>${o.base}</b> 입출금 열림 — 갭 <b>+${o.netPct.toFixed(2)}%</b>${size ? ` · 규모 $${Math.round(size).toLocaleString()}` : ""}${o.depth ? ` · 기대이익 $${o.depth.profitUsd.toFixed(0)}` : ""}\n${buy?.venue} → ${sell?.venue} · ${o.kind}`,
+      );
+    }
   }
 }
 

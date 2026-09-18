@@ -14,6 +14,7 @@ import { inFlightUsd } from "@/lib/runStore";
 import { srcVerdict } from "@/lib/watchVerdict";
 import type { RiskState } from "./ControlPanel";
 import { EpisodeCard } from "./ControlPanel";
+import { isLocked } from "@/lib/gateState";
 
 const CAP: React.CSSProperties = { fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-mute)" };
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)"  }
@@ -297,10 +298,17 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // (스캔/히스토리는 마이너스도 계속 기록한다 — 지속성·σ·복기가 그걸 먹는다.
   //  전체 우주는 갭 보드에서 "수익만" 토글을 끄면 보인다.)
   const stream = useMemo(
-    () => [...live].filter((o) => liveNet(o) > 0).sort((a, b) => liveNet(b) - liveNet(a)).slice(0, mobile ? 6 : 10),
+    () => [...live].filter((o) => liveNet(o) > 0 && !isLocked(o.gate)).sort((a, b) => liveNet(b) - liveNet(a)).slice(0, mobile ? 6 : 10),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rankKey collapses live+overlay to display precision
     [rankKey, mobile],
   );
+  // 입출금 닫힘/정지 의심인데 갭은 살아 있는 것 — 지우지 않고 접어 둔다. 열리면 위로 올라온다.
+  const waiting = useMemo(
+    () => [...live].filter((o) => liveNet(o) > 0 && isLocked(o.gate)).sort((a, b) => liveNet(b) - liveNet(a)).slice(0, 8),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rankKey],
+  );
+  const [waitingOpen, setWaitingOpen] = useState(false);
 
   const secHd = (title: string, right?: React.ReactNode) => (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 16px", borderBottom: "1px solid var(--border)" }}>
@@ -381,7 +389,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
             const [buy, sell] = o.legs;
             return (
               <div key={o.id} onClick={onInspect ? () => onInspect(o) : undefined}
-                style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, cursor: onInspect ? "pointer" : undefined }}>
+                style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, cursor: onInspect ? "pointer" : undefined }}>
                 <span style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700 }}>{o.base}</div>
                   <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -391,6 +399,12 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
                 {/* 30분 추이 — 전폭 승격으로 생긴 자리 (모바일은 3열 유지) */}
                 {!mobile && <Spark data={o.spark} costPct={o.costPct} />}
                 <span className="tnum" style={{ fontWeight: 700, color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
+                {/* 잡을 수 있는 돈 — 사다리가 있으면 총 이익, 없으면 최우선호가 한도 */}
+                {!mobile && (
+                  <span className="tnum" title={o.depth ? `순수익>0 규모 ${usd(o.depth.maxSizeUsd)} · 총 이익 ${usd(o.depth.profitUsd)}` : "최우선호가 한 칸 한도"} style={{ fontSize: 11, color: o.depth ? "var(--text-dim)" : "var(--text-mute)", textAlign: "right" }}>
+                    {o.depth ? <>{usd(o.depth.maxSizeUsd)} · <b style={{ color: "var(--pos)" }}>+{usd(o.depth.profitUsd)}</b></> : o.notionalCapUsd != null ? usd(o.notionalCapUsd) : "—"}
+                  </span>
+                )}
                 {/* 지속 열은 모바일에서 접는다 — 3열 템플릿에 자식이 4개면
                     마지막이 다음 줄로 밀려 레이아웃이 어긋난다. */}
                 {!mobile && (
@@ -411,6 +425,33 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               </div>
             );
           })}
+        </div>
+      )}
+      {waiting.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--border)" }}>
+          <button type="button" onClick={() => setWaitingOpen((v) => !v)}
+            style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer", padding: "9px 16px", fontSize: 12, color: "var(--amber)", fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+            <span>🔒 입출금 열리면 기회 {waiting.length}건</span>
+            {!mobile && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}>— 닫힘·정지 의심 갭. 열리는 순간 위로 올라오고 알림이 갑니다</span>}
+            <span style={{ marginLeft: "auto", color: "var(--text-mute)" }}>{waitingOpen ? "접기" : "펼치기"}</span>
+          </button>
+          {waitingOpen && (
+            <div style={{ padding: "0 16px 8px" }}>
+              {waiting.map((o) => {
+                const [buy, sell] = o.legs;
+                return (
+                  <div key={o.id} onClick={onInspect ? () => onInspect(o) : undefined}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12, cursor: onInspect ? "pointer" : undefined, opacity: 0.85 }}>
+                    <span style={{ fontWeight: 700 }}>{o.base}</span>
+                    <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}</span>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: o.gate === "closed" ? "var(--neg)" : "var(--amber)" }}>{o.gate === "closed" ? "닫힘" : "정지 의심"}</span>
+                    <span style={{ flex: 1 }} />
+                    <span className="tnum" style={{ fontWeight: 700, color: "var(--text-dim)" }}>{pct(liveNet(o))}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
