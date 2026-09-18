@@ -46,7 +46,7 @@ if (!gp.__arbCrashHook) {
   }
 }
 import type { Opportunity } from "./types";
-import { notify, notifyNow, telegramConfigured } from "./telegram";
+import { notify, notifyNow } from "./telegram";
 import { startListingWatch, watchStatus } from "./listings";
 import { startWatchdog } from "./watchdog";
 import { loopLag } from "./loopLag"; // 프로세스 멈춤 상시 감시 (import만으로 시작)
@@ -119,7 +119,9 @@ async function refresh(): Promise<void> {
     (next) => {
       // A late zombie must not clobber a snapshot newer than itself.
       if (startedAt >= C.ts) {
-        if (telegramConfigured()) void alertOnScan(next);
+        // 텔레그램 유무와 무관하게 돈다 — 안에서 사건을 events.jsonl에 남기고, 텔레그램은
+        // notify()가 스스로 미설정을 처리한다. 예전엔 여기서 통째로 건너뛰어 기록도 안 남았다.
+        void alertOnScan(next);
         recordHourlyHeat(next);
         recordSrcHeat();
         C.opps = next;
@@ -221,7 +223,10 @@ async function alertOnScan(opps: Opportunity[]): Promise<void> {
     // Threshold crossing — cooldown keeps a hovering coin from spamming.
     const refUsd = Math.min(o.notionalCapUsd ?? 2000, 2000);
     const expUsd = (o.netPct / 100) * refUsd;
-    if (o.netPct >= ALERT_NET_PCT && expUsd >= ALERT_MIN_USD) {
+    // 잠긴 갭(닫힘·정지 의심)은 임계 알림 대상이 아니다 — LSK 55%가 5분마다 울리면
+    // 진짜 알림이 묻힌다. 닫힘은 gate_down이, 다시 열림은 reopen이 따로 알린다.
+    const locked = o.gate === "closed" || o.gate === "suspect";
+    if (!locked && o.netPct >= ALERT_NET_PCT && expUsd >= ALERT_MIN_USD) {
       const [buy, sell] = o.legs;
       // 사건 기록은 notify의 5분 쿨다운과 별개로 스캔마다 남기면 폭주하므로 같은 키로 5분에 한 번만.
       alertEvent(`net:${o.id}`, "alert.net", { base: o.base, id: o.id, netPct: +o.netPct.toFixed(3), expUsd: +expUsd.toFixed(2), route: `${buy?.venue}→${sell?.venue}`, sizeUsd: o.depth?.maxSizeUsd ?? o.notionalCapUsd ?? null, profitUsd: o.depth?.profitUsd ?? null });
