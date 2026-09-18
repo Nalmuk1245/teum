@@ -52,6 +52,7 @@ import { startWatchdog } from "./watchdog";
 import { loopLag } from "./loopLag"; // 프로세스 멈춤 상시 감시 (import만으로 시작)
 import { verdictSample } from "./watchVerdict";
 import { loadSection, saveSection } from "./persist";
+import { logEvent } from "./events";
 
 // 3s: a sweep costs ~0.8-1.2s once every venue fetch is timeout-bounded and the
 // Upbit/Bithumb calls run in parallel; per-venue call rates stay far below every
@@ -201,6 +202,18 @@ export function srcHeat(): SrcHeatMap {
   return loadSection<SrcHeatMap>("srcHeat") ?? {};
 }
 
+// 알림 사건 기록 — 같은 키는 5분에 한 번 (notify의 쿨다운과 같은 창).
+const ga = globalThis as unknown as { __arbAlertEv?: Map<string, number> };
+ga.__arbAlertEv ??= new Map();
+function alertEvent(key: string, type: "alert.net" | "alert.gate_down" | "alert.reopen", data: Record<string, unknown>) {
+  const now = Date.now();
+  const last = ga.__arbAlertEv!.get(key) ?? 0;
+  if (now - last < 5 * 60_000) return;
+  ga.__arbAlertEv!.set(key, now);
+  if (ga.__arbAlertEv!.size > 1000) for (const [k, t] of ga.__arbAlertEv!) if (now - t > 5 * 60_000) ga.__arbAlertEv!.delete(k);
+  logEvent(type, data);
+}
+
 // Phone alerts from the server loop — fires whether or not the site is open.
 async function alertOnScan(opps: Opportunity[]): Promise<void> {
   for (const o of opps) {
@@ -210,6 +223,8 @@ async function alertOnScan(opps: Opportunity[]): Promise<void> {
     const expUsd = (o.netPct / 100) * refUsd;
     if (o.netPct >= ALERT_NET_PCT && expUsd >= ALERT_MIN_USD) {
       const [buy, sell] = o.legs;
+      // 사건 기록은 notify의 5분 쿨다운과 별개로 스캔마다 남기면 폭주하므로 같은 키로 5분에 한 번만.
+      alertEvent(`net:${o.id}`, "alert.net", { base: o.base, id: o.id, netPct: +o.netPct.toFixed(3), expUsd: +expUsd.toFixed(2), route: `${buy?.venue}→${sell?.venue}`, sizeUsd: o.depth?.maxSizeUsd ?? o.notionalCapUsd ?? null, profitUsd: o.depth?.profitUsd ?? null });
       void notify(
         `net:${o.id}`,
         `🔔 <b>${o.base}</b> 갭 <b>+${o.netPct.toFixed(2)}%</b> (≈$${expUsd.toFixed(0)})\n${buy?.venue} → ${sell?.venue} · ${o.kind}${o.persistence?.heldSec ? ` · 지속 ${o.persistence.heldSec}s` : ""}`,
@@ -217,6 +232,7 @@ async function alertOnScan(opps: Opportunity[]): Promise<void> {
     }
     // Settlement gate went down while an edge exists.
     if (o.transfer?.blocked && o.netPct > 0) {
+      alertEvent(`gate:${o.id}`, "alert.gate_down", { base: o.base, id: o.id, netPct: +o.netPct.toFixed(3), reason: o.transfer.network?.reason });
       void notify(`gate:${o.id}`, `⛔ <b>${o.base}</b> 입출금 중단 — 실행 불가 (net +${o.netPct.toFixed(2)}%)`);
     }
     // 닫혀 있던 게이트가 확인된 열림으로 — 지속되던 갭이 있으면 지금이 그 기회다.
@@ -224,6 +240,7 @@ async function alertOnScan(opps: Opportunity[]): Promise<void> {
     if (o.reopenedAt && Date.now() - o.reopenedAt < 10_000) {
       const [buy, sell] = o.legs;
       const size = o.depth?.maxSizeUsd ?? o.notionalCapUsd;
+      alertEvent(`reopen:${o.id}:${o.reopenedAt}`, "alert.reopen", { base: o.base, id: o.id, netPct: +o.netPct.toFixed(3), sizeUsd: size ?? null, profitUsd: o.depth?.profitUsd ?? null, route: `${buy?.venue}→${sell?.venue}` });
       void notifyNow(
         `🔓 <b>${o.base}</b> 입출금 열림 — 갭 <b>+${o.netPct.toFixed(2)}%</b>${size ? ` · 규모 $${Math.round(size).toLocaleString()}` : ""}${o.depth ? ` · 기대이익 $${o.depth.profitUsd.toFixed(0)}` : ""}\n${buy?.venue} → ${sell?.venue} · ${o.kind}`,
       );

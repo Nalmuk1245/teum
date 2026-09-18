@@ -26,6 +26,7 @@ import { computeCalibrationPct } from "./calibration";
 import { swr as ttl } from "./ttlCache";
 import { classifyGate, isLocked } from "./gateState";
 import { depthOf } from "./quote";
+import { logEvent } from "./events";
 
 // 직전 스캔의 게이트 상태 — 닫힘/의심 → 확인된 열림 전환을 잡는다 (재개 알림).
 const gg = globalThis as unknown as { __arbPrevGate?: Map<string, "open" | "closed" | "suspect" | "unknown"> };
@@ -139,6 +140,14 @@ export async function scanAll(): Promise<Opportunity[]> {
     const was = prev.get(o.id);
     if (o.gate === "open" && isLocked(was) && o.netPct > 0) o.reopenedAt = ts;
     o.depth = depthOf(o.id);
+    // 잠금이 걸리거나 풀리는 전환만 기록한다 (unknown↔open 같은 키 유무 잡음은 제외).
+    if (was !== undefined && was !== o.gate && (isLocked(was) || isLocked(o.gate))) {
+      logEvent("gate.change", {
+        base: o.base, id: o.id, from: was, to: o.gate, netPct: +o.netPct.toFixed(3), grossPct: +o.grossPct.toFixed(3),
+        route: o.legs.map((l) => l.venue).join("→"), chain: o.transfer?.network?.chain, reason: o.transfer?.network?.reason,
+        sizeUsd: o.depth?.maxSizeUsd ?? o.notionalCapUsd ?? null, profitUsd: o.depth?.profitUsd ?? null,
+      });
+    }
   }
   gg.__arbPrevGate = nextGate;
   // Fresh listings float to the very top (+1000) — a spike you want to see NOW,

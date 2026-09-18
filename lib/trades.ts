@@ -14,8 +14,9 @@ export type TimelineEntry = {
   at: number;        // 시작 시각 (ms epoch)
   sec: number;       // 이 시도에 걸린 초
   ok: boolean;
-  /** wait = 정상 대기(입금 미확인 등, 실패가 아니다) · retry = 재시도 · rollback = 되돌림 */
-  kind?: "wait" | "retry" | "rollback";
+  /** wait = 정상 대기(입금 미확인 등, 실패가 아니다) · retry = 재시도 · rollback = 되돌림 ·
+   *  check = 되돌릴 수 없는 단계 직전 재검증(통과 시 그때 본 실호가 순수익을 남긴다) */
+  kind?: "wait" | "retry" | "rollback" | "check";
   /** 같은 단계의 연속 대기를 한 줄로 합쳤을 때의 횟수 (없으면 1회). */
   tries?: number;
   message?: string;
@@ -32,7 +33,10 @@ export type TradeRecord = {
   realizedPnlUsd: number | null;
   hedged: boolean;
   dryRun: boolean;
-  status: "done" | "error";
+  /** done = 정산/청산 완료 · error = 실패로 멈춤(재시도 가능 상태 포함) · cancelled = 사람이 삭제 */
+  status: "done" | "error" | "cancelled";
+  /** 거래소 주문·출금 ID (단계별) — 거래소 웹에서 대조할 때의 열쇠. */
+  orderIds?: Record<string, string>;
   /** Real per-step seconds (buy/withdraw/deposit/...) — actual transfer time vs
    *  ETA calibration data. */
   durationsSec?: Record<string, number>;

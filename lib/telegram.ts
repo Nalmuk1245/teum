@@ -5,6 +5,8 @@
 // deposit/withdraw gate going down, and execution errors. Per-key cooldown so
 // a coin hovering at the threshold doesn't spam.
 
+import { logEvent } from "./events";
+
 const COOLDOWN_MS = 5 * 60_000;
 
 function cfg() {
@@ -20,7 +22,8 @@ g.__arbTgSent ??= new Map();
 
 async function send(text: string): Promise<void> {
   const { token, chat } = cfg();
-  if (!token || !chat) return;
+  // 미설정이어도 알림 본문은 파일에 남긴다 — "그때 알림이 갔어야 했나"를 나중에 볼 수 있게.
+  if (!token || !chat) { logEvent("telegram.unconfigured", { text }); return; }
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
@@ -30,9 +33,11 @@ async function send(text: string): Promise<void> {
     });
     // best-effort지만 **무음은 아니다** — "결과 불명 출금" 같은 알림이 유실됐을 때
     // 로그에라도 남아야 나중에 "왜 몰랐나"를 추적할 수 있다.
-    if (!res.ok) console.error(`[telegram] 발송 실패 HTTP ${res.status}: ${text.slice(0, 80)}`);
+    if (!res.ok) { console.error(`[telegram] 발송 실패 HTTP ${res.status}: ${text.slice(0, 80)}`); logEvent("telegram.failed", { text, http: res.status }); }
+    else logEvent("telegram.sent", { text });
   } catch (e) {
     console.error(`[telegram] 발송 실패: ${e instanceof Error ? e.message : e} — ${text.slice(0, 80)}`);
+    logEvent("telegram.failed", { text, error: e instanceof Error ? e.message : String(e) });
   }
 }
 

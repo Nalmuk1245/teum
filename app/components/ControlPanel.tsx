@@ -788,7 +788,7 @@ export type TradeRec = {
   buyUsd?: number | null; sellUsd?: number | null; spotPnlUsd?: number | null; hedgePnlUsd?: number | null;
   durationsSec?: Record<string, number>; txs?: { step: string; hash: string; url: string | null }[]; note?: string;
   hedged?: boolean; status?: string;
-  timeline?: { step: string; label: string; at: number; sec: number; ok: boolean; kind?: "wait" | "retry" | "rollback"; tries?: number; message?: string }[];
+  timeline?: { step: string; label: string; at: number; sec: number; ok: boolean; kind?: "wait" | "retry" | "rollback" | "check"; tries?: number; message?: string }[];
 };
 
 export type TradeStats = { count: number; wins: number; hitRatePct: number; realizedPnlUsd: number; avgSlipPct: number; dryCount: number };
@@ -974,14 +974,14 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
                   {t.timeline.map((e, k) => {
                     const prev = k > 0 ? t.timeline![k - 1] : null;
                     const gapSec = prev ? Math.round((e.at - (prev.at + prev.sec * 1000)) / 1000) : 0;
-                    const tone = !e.ok ? (e.kind === "wait" ? "var(--amber)" : "var(--neg)") : e.kind === "rollback" ? "var(--amber)" : "var(--pos)";
+                    const tone = !e.ok ? (e.kind === "wait" ? "var(--amber)" : "var(--neg)") : e.kind === "rollback" ? "var(--amber)" : e.kind === "check" ? "var(--text-mute)" : "var(--pos)";
                     return (
                       <div key={k} style={{ display: "grid", gridTemplateColumns: "auto 10px 1fr auto", gap: 7, alignItems: "baseline", fontSize: 10.5, padding: "1.5px 0" }}>
                         <span className="tnum" style={{ color: "var(--text-mute)" }}>
                           {new Date(e.at).toLocaleTimeString("ko-KR", { hour12: false })}
                         </span>
                         <span style={{ color: tone, fontWeight: 700, textAlign: "center" }}>
-                          {e.ok ? "●" : e.kind === "wait" ? "◌" : "✕"}
+                          {e.kind === "check" ? "◇" : e.ok ? "●" : e.kind === "wait" ? "◌" : "✕"}
                         </span>
                         <span style={{ color: "var(--text-dim)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                           {e.label}

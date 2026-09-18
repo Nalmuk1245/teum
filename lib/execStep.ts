@@ -206,6 +206,8 @@ export async function runStep(
      *  hasPerp면 true로, 헷지를 켜고 돈 런도 hasPerp가 없으면 false로 기록됐다 —
      *  사후 분석에서 "헷지가 실제로 걸렸나"를 아예 가를 수 없었다. */
     hedged?: boolean;
+    /** 단계별 거래소 주문·출금 ID — settle이 거래 레코드에 싣는다. */
+    orderIds?: Record<string, string>;
   },
 ): Promise<StepResult> {
   const dry = CONFIG.DRY_RUN;
@@ -671,6 +673,7 @@ export async function runStep(
           durationsSec: opts.durations,
           timeline: opts.timeline?.length ? opts.timeline : undefined,
           txs: opts.txs?.length ? opts.txs : undefined,
+          orderIds: opts.orderIds && Object.keys(opts.orderIds).length ? opts.orderIds : undefined,
           ...detail,
         });
       // Prefer REAL fills threaded from the buy/sell steps; KRW legs convert at

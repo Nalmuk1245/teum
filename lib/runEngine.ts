@@ -26,6 +26,7 @@ import { notify, notifyNow } from "./telegram";
 import { recordPnl } from "./risk";
 import { recordTrade, type TimelineEntry } from "./trades";
 import { loadSection, flushSection } from "./persist";
+import { logEvent } from "./events";
 
 export type TxRef = { hash: string; url: string | null };
 
@@ -89,6 +90,10 @@ type Engine = {
   /** First attempt time per step index — the wait timeout for polling steps
    *  (recv / deposit) is measured from when THAT step started, not from entry. */
   stepFirstAt: Map<number, number>;
+  /** 단계별 거래소 주문·출금 ID — 거래 기록과 사후 대조용. */
+  orderIds: Record<string, string>;
+  /** 마지막으로 기록한 오류 문구 — 같은 오류로 두 번 남기지 않는다. */
+  lastRecordedError?: string;
   opp: Opportunity;
 };
 
@@ -154,7 +159,33 @@ function pushTimeline(eng: Engine, e: TimelineEntry): void {
     return;
   }
   eng.timeline.push(e);
-  if (eng.timeline.length > MAX_TIMELINE) eng.timeline.splice(0, eng.timeline.length - MAX_TIMELINE);
+  // 상한을 넘으면 **시작 20줄은 남기고** 그 다음부터 버린다. 앞을 통째로 버리면
+  // 90분 입금 폴링 뒤엔 매수·헷지 줄이 사라져 "얼마에 들어갔나"를 못 본다.
+  const KEEP_HEAD = 20;
+  if (eng.timeline.length > MAX_TIMELINE) eng.timeline.splice(KEEP_HEAD, eng.timeline.length - MAX_TIMELINE);
+}
+
+/** 정산까지 못 간 런도 거래 기록에 남긴다 — runs.json은 30건이 지나면 사라진다. */
+function recordIncomplete(id: string, status: "error" | "cancelled", reason: string) {
+  const run = E.runs[id];
+  const eng = E.engines.get(id);
+  if (!run) return;
+  if (eng && status === "error" && eng.lastRecordedError === reason) return;
+  if (eng) eng.lastRecordedError = reason;
+  const buy = run.opp.legs.find((l) => l.side === "buy");
+  const sell = run.opp.legs.find((l) => l.side === "sell");
+  void recordTrade({
+    ts: Date.now(), base: run.base, kind: run.kind,
+    route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
+    sizeUsd: run.sizeUsd, detectedNetPct: run.opp.netPct,
+    realizedNetPct: null, realizedPnlUsd: run.pnlUsd || null,
+    hedged: run.statuses.hedge === "done", dryRun: CONFIG.DRY_RUN, status,
+    note: reason, qty: run.remaining || eng?.qty || null,
+    durationsSec: eng?.durations, timeline: eng?.timeline?.length ? [...eng.timeline] : undefined,
+    txs: Object.entries(run.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url })),
+    orderIds: eng && Object.keys(eng.orderIds).length ? { ...eng.orderIds } : undefined,
+  });
+  logEvent(status === "error" ? "run.error" : "run.cancelled", { base: run.base, id, reason, step: run.plan[run.pauseAt]?.id, remaining: run.remaining });
 }
 function recordExecFailure(base: string, stepLabel: string) {
   const now = Date.now();
@@ -231,6 +262,9 @@ function patch(id: string, p: Partial<RunView>) {
   if (!cur) return;
   E.runs[id] = { ...cur, ...p };
   persistRuns();
+  // 오류로 멈추는 전환은 여기 한 곳에서 잡는다 — 오류 분기가 여섯 군데라 각각에 기록을
+  // 붙이면 하나는 빠진다. 재시도 후 정산되면 done 레코드가 한 줄 더 남는다(그게 사실).
+  if (p.phase === "error" && cur.phase !== "error") recordIncomplete(id, "error", p.error ?? cur.error ?? "단계 실패");
 }
 
 /** USD notional currently at risk. Counts errored/interrupted runs that still
@@ -295,6 +329,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     // 실제로 헷지가 열렸는가 — 켰다고 설정만 한 게 아니라 hedge 단계가 done인가.
     // 거래 기록의 hedged가 이 값을 쓴다(예전엔 opp.hasPerp를 썼다).
     hedged: stepId === "settle" ? run?.statuses?.hedge === "done" : undefined,
+    orderIds: stepId === "settle" ? eng.orderIds : undefined,
     txs: stepId === "settle"
       ? Object.entries(run?.txs ?? {}).map(([step, tx]) => ({ step, hash: tx.hash, url: tx.url }))
       : undefined,
@@ -306,6 +341,9 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
     if (stepId === "hedge") eng.hedgeQty = r.filledQty;
     else eng.qty = r.filledQty;
   }
+  // 거래소 주문·출금 ID — OrderResult.id가 spread로 실려 온다. 롤백 주문은 `step:rollback`.
+  const oid = (r as { id?: string | null }).id;
+  if (oid) eng.orderIds[opts?.rollback ? `${stepId}:rollback` : stepId] = String(oid);
   if (typeof r.walletBefore === "number") eng.walletBefore = r.walletBefore;
   // 정산이 실현한 손익을 런에 누적한다 — 청산(unwind) 경로만 채우던 값이라
   // 정산으로 끝난 런은 "실현 $" 배지가 0으로 떠 있었다. 롤백 중에는 더하지
@@ -336,7 +374,7 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
 }
 
 async function revalidate(eng: Engine, sizeUsd: number, hedged: boolean) {
-  if (eng.opp.mock) return { ok: true as const };
+  if (eng.opp.mock) return { ok: true as const, netPct: eng.opp.netPct, extraPct: 0, maxSizeUsd: 0 };
   try {
     // fresh: 돈이 움직이기 직전 — 캐시된 호가로 판단하지 않는다
     const q = await quoteOpportunity(eng.opp, sizeUsd, { fresh: true });
@@ -354,7 +392,7 @@ async function revalidate(eng: Engine, sizeUsd: number, hedged: boolean) {
         reason: `순수익 ${q.execNetPct.toFixed(2)}% ≤ 미반영 비용 ${extra.toFixed(2)}% (송금·헷지·누수 보정 포함)`,
       };
     }
-    return { ok: true as const };
+    return { ok: true as const, netPct: q.execNetPct, extraPct: extra, maxSizeUsd: q.maxSizeUsd };
   } catch {
     return { ok: false as const, reason: "재견적 요청 실패" };
   }
@@ -424,6 +462,11 @@ async function loop(id: string) {
     if (REVALIDATE_STEPS.has(step.id)) {
       const v = await revalidate(eng, run().sizeUsd, run().hedge);
       if (eng.cancelled) { eng.busy = false; return; }
+      if (v.ok) {
+        // 통과했을 때 본 값도 남긴다 — 실패는 메시지에 남는데 통과는 아무 흔적이 없었다.
+        pushTimeline(eng, { step: step.id, label: `${step.label} 직전 재검증`, at: Date.now(), sec: 0, ok: true, kind: "check",
+          message: `실호가 순수익 ${v.netPct.toFixed(2)}% (미반영 비용 ${v.extraPct.toFixed(2)}% · 뎁스 한도 $${Math.round(v.maxSizeUsd).toLocaleString()})` });
+      }
       if (!v.ok) {
         patch(id, {
           statuses: { ...run().statuses, [step.id]: "error" },
@@ -614,7 +657,7 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   };
   E.engines.set(id, {
     cancelled: false, killEpoch: E.killEpoch, busy: false, i: 0, confirmed: new Set(),
-    startTs: 0, fills: {}, durations: {}, timeline: [], done: new Map(), stepFirstAt: new Map(),
+    startTs: 0, fills: {}, durations: {}, timeline: [], orderIds: {}, done: new Map(), stepFirstAt: new Map(),
     rolledBack: false, unwindLock: false, opp: cfg.opp,
   });
   trimRuns();
@@ -687,6 +730,8 @@ export function cancelRun(id: string, force = false): CancelResult {
     }
   }
   if (eng) eng.cancelled = true;
+  // 정산 전에 삭제되는 런 — done이 아니면 "취소"로 남긴다 (done은 이미 정산 레코드가 있다).
+  if (run && run.phase !== "done") recordIncomplete(id, "cancelled", run.error ? `삭제 (직전 오류: ${run.error})` : `삭제 (${run.phase}, 단계 ${run.plan[run.pauseAt]?.id ?? "?"})`);
   delete E.runs[id];
   E.engines.delete(id);
   persistRuns();
@@ -735,8 +780,9 @@ export async function unwindRun(id: string, fraction: number): Promise<UnwindRun
     // from settle, so every loss realized through the UNWIND path — the path you
     // use precisely when a trade went wrong — never counted toward
     // maxDailyLossUsd, and calibration never saw the leak either.
-    if (!result.dryRun && result.soldQty > 0) {
-      if (Number.isFinite(result.pnlUsd) && result.pnlUsd !== 0) recordPnl(result.pnlUsd);
+    if (result.soldQty > 0) {
+      // 일손실 한도는 실돈만 센다. 기록은 페이퍼도 남긴다 — 청산 로직 검증 자료.
+      if (!result.dryRun && Number.isFinite(result.pnlUsd) && result.pnlUsd !== 0) recordPnl(result.pnlUsd);
       const buy = run.opp.legs.find((l) => l.side === "buy");
       const sell = run.opp.legs.find((l) => l.side === "sell");
       void recordTrade({
@@ -745,8 +791,9 @@ export async function unwindRun(id: string, fraction: number): Promise<UnwindRun
         sizeUsd: run.sizeUsd, detectedNetPct: run.opp.netPct,
         realizedNetPct: result.achievedNetPct, realizedPnlUsd: result.pnlUsd,
         qty: result.soldQty, hedged: result.hedgeClosedQty > 0,
-        dryRun: false, status: "done", note: "부분/전량 청산",
+        dryRun: !!result.dryRun, status: "done", note: "부분/전량 청산",
         timeline: eng?.timeline?.length ? eng.timeline : undefined,
+        orderIds: eng && Object.keys(eng.orderIds).length ? { ...eng.orderIds } : undefined,
       });
     }
     // 엔진의 헷지 수량도 같이 줄인다. 안 줄이면 이후 retry로 `close` 단계에 갔을 때

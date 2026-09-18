@@ -58,6 +58,8 @@ export type Episode = {
     blockReason?: string;
     etaMin?: number;
     hedgeCostPct?: number;
+    /** 피크 순간의 깊이 사다리 (있을 때만 — 상위 기회만 계산된다) */
+    depth?: { maxSizeUsd: number; profitUsd: number; tiers: { minNet: number; sizeUsd: number }[] };
   };
   /** 에피소드 중 실행이 시작됐으면 연결. */
   executed?: { runId: string; dry: boolean; ts: number };
@@ -128,6 +130,7 @@ function snapshotPeak(o: Opportunity): Episode["atPeak"] {
     blockReason: blockReasonOf(o),
     etaMin: o.transfer?.etaMin,
     hedgeCostPct: o.hedge ? Math.round(o.hedge.totalPct * 1000) / 1000 : undefined,
+    depth: o.depth ? { maxSizeUsd: o.depth.maxSizeUsd, profitUsd: o.depth.profitUsd, tiers: o.depth.tiers } : undefined,
   };
 }
 
