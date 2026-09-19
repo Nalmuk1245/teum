@@ -24,6 +24,7 @@ export interface Strategy {
 
 const now = () => Date.now();
 const id = (kind: string, base: string) => `${kind}:${base}`;
+const vlabelS = (v: string) => ({ binance: "Binance", upbit: "Upbit", bithumb: "Bithumb", bybit: "Bybit", okx: "OKX" } as Record<string, string>)[v] ?? v;
 
 // Top-of-book spread as % of mid — a freshness/thinness signal. A wide spread
 // means the last price is unreliable (stale/illiquid). 0 when book is missing
@@ -114,12 +115,11 @@ const kimchi: Strategy = {
     for (const base of bases) {
       if (CONFIG.EXCLUDE.has(base)) continue;
 
-      // Evaluate every KR × global combo; keep the best net edge. Prices are the
-      // EXECUTABLE top-of-book (buy at ask, sell at bid) — not the optimistic
-      // last trade — so the board net reflects what you'd actually capture.
-      let best:
-        | { kv: Venue; gv: Venue; krPrice: number; gPrice: number; premiumPct: number; cost: number; net: number; execGross: number }
-        | null = null;
+      // Evaluate every KR × global combo. Prices are the EXECUTABLE top-of-book
+      // (buy at ask, sell at bid) — not the optimistic last trade — so the board
+      // net reflects what you'd actually capture.
+      type Cand = { kv: Venue; gv: Venue; krPrice: number; gPrice: number; premiumPct: number; cost: number; net: number; execGross: number };
+      const cands: Cand[] = [];
       for (const kv of KR_VENUES) {
         const km = ctx.tickers[kv];
         const kr = km?.get(base);
@@ -145,85 +145,104 @@ const kimchi: Strategy = {
             ? ((kBid / fx - gAsk) / gAsk) * 100      // buy global ask → sell KR bid
             : ((gBid - kAsk / fx) / (kAsk / fx)) * 100; // buy KR ask → sell global bid
           const cost = kimchiCostPct(base, gv, kv, g.price);
-          const net = execGross - cost;
-          if (!best || net > best.net)
-            best = { kv, gv, krPrice: kr.price, gPrice: g.price, premiumPct: midPremium, cost, net, execGross };
+          cands.push({ kv, gv, krPrice: kr.price, gPrice: g.price, premiumPct: midPremium, cost, net: execGross - cost, execGross });
         }
       }
-      if (!best) continue;
-      const execGross = best.execGross;
+      if (!cands.length) continue;
 
-      const buyGlobal = best.premiumPct >= 0; // KR expensive → buy global, sell KR
-
-      // Settlement gate: you WITHDRAW the coin from the buy venue and DEPOSIT it
-      // to the sell venue. If either is disabled, the edge can't be captured.
-      const buyVenue: Venue = buyGlobal ? best.gv : best.kv;
-      const sellVenue: Venue = buyGlobal ? best.kv : best.gv;
-      // 체인은 기회마다 고른다 — 매수 거래소 출금·매도 거래소 입금이 **같은 체인**에서
-      // 둘 다 열린 후보 중 ETA 최단. 코인당 기본 체인 하나로 판단하던 때는 그 체인이
-      // 막히면 다른 열린 체인이 있어도 끝이었고, 반대로 표기가 안 맞으면 OR로 통과됐다.
-      const route = routeFor(base, buyVenue, sellVenue, ctx.transfers);
-      // 역프 (buy on KR, withdraw KR→overseas): Korean exchanges freeze crypto
-      // withdrawals for ~24-72h after a KRW deposit and enforce whitelist/limits,
-      // so a KR-buy leg is NOT a 1-minute settlement — reflect a realistic ETA
-      // and flag it so the operator doesn't treat it as a fast arb.
-      const isReverse = !buyGlobal; // buying on the KR venue
-      // 컨펌 시간 기반 실질 ETA — 라이브 컨펌 수(바낸 minConfirm)가 있으면 그 기반.
-      const baseEta = route.etaMin;
-      const transfer: TransferGate = {
-        withdraw: { venue: buyVenue, enabled: route.withdraw },
-        deposit: { venue: sellVenue, enabled: route.deposit },
-        // 역프 60분: 운영자 결정(2026-07-27) — KR 출금 동결(24~72h)은 **신규 원화
-        // 입금분**에 걸리고, 이 계좌는 기존 예치금으로 돌므로 해당 없음. 감사
-        // R3(역프 펀딩 과소)도 같은 이유로 기각. 신규 입금으로 운용을 바꾸면
-        // 이 가정이 깨진다 — 그때는 이 값과 hedgeCost 펀딩 창을 같이 늘릴 것.
-        etaMin: isReverse ? Math.max(baseEta, 60) : baseEta,
-        blocked: false,
-        network: { chain: route.label, confirms: route.confirms, chainKey: route.chainKey, alternatives: route.alternatives, reason: route.reason },
-      };
-      // FAIL-CLOSED: a persistent kimchi premium usually exists BECAUSE deposits
-      // are suspended on the KR side — so unknown (null) status must NOT pass as
-      // executable. Only an explicitly-confirmed-open pair on BOTH legs is
-      // settleable. (`blocked` distinguishes "known off" for the red badge;
-      // executable additionally requires both legs known-open.)
-      transfer.blocked =
-        transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
-      const settleable = transfer.withdraw.enabled === true && transfer.deposit.enabled === true;
-
-      const gLeg = { venue: best.gv, symbol: globalSymbol(best.gv, base), price: best.gPrice, quote: "USDT" as const };
-      const kLeg = { venue: best.kv, symbol: krSymbol(best.kv, base), price: best.krPrice, quote: "KRW" as const };
-      // 실거래 누수 자동 보정 — 탐지가 실현보다 후하게 나온 만큼 비용에 가산.
-      const cal = ctx.calPct ?? 0;
-      const calCost = best.cost + cal;
-      const calNet = best.net - cal;
-      out.push({
-        id: id("kimchi", base),
-        kind: "kimchi",
-        base,
-        legs: buyGlobal
-          ? [{ ...gLeg, side: "buy" }, { ...kLeg, side: "sell" }]
-          : [{ ...kLeg, side: "buy" }, { ...gLeg, side: "sell" }],
-        grossPct: execGross, // executable (spread-crossed), not mid-price
-        costPct: calCost,
-        netPct: calNet,
-        // 최우선호가 기준 보수적 한도 (모달 뎁스 견적이 정확한 상한을 낸다).
-        // KR 다리는 원화 호가라 그 거래소의 USDT/KRW로 환산한다.
-        notionalCapUsd: (() => {
-          const krT = ctx.tickers[best.kv]?.get(base);
-          const gT = ctx.tickers[best.gv]?.get(base);
-          const krFx = ctx.tickers[best.kv]?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : 0);
-          if (!krFx) return null;
-          return buyGlobal
-            ? topOfBookCapUsd(gT, krT, 1, krFx)   // 글로벌 ask 매수 → KR bid 매도
-            : topOfBookCapUsd(krT, gT, krFx, 1);  // KR ask 매수 → 글로벌 bid 매도
-        })(),
-        // Live: fail-closed (both gates must be CONFIRMED open). DRY keeps the
-        // demo usable without keys — the gate panel still shows "키 필요".
-        executable: calNet > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
-        transfer,
-        ...(isReverse ? { note: "역프 — KR 출금 정지(원화입금 후 24-72h)·화이트리스트·한도 확인 필요" } : {}),
-        ts: now(),
+      // ── 게이트를 먼저 보고 고른다 ──
+      // 예전엔 순수익 최대 조합 하나를 고른 뒤 게이트를 붙였다. 그러면 "빗썸 +4%인데
+      // 입금 닫힘 / 업비트 +1.2%는 열림"에서 빗썸이 뽑혀 🔒로 내려가고, 실제로 잡을
+      // 수 있는 업비트 경로는 코인당 한 줄 규칙에 밀려 보드 어디에도 안 나왔다.
+      // 이제 조합마다 경로를 평가해 열림 > 미확인 > 닫힘 순으로 메인을 고르고,
+      // 닫힌 조합이 메인보다 크면 별도 🔒 행으로 남긴다(열리면 그 행이 알림·승격).
+      const evald = cands.map((c) => {
+        const buyGlobal = c.premiumPct >= 0;
+        const buyVenue: Venue = buyGlobal ? c.gv : c.kv;
+        const sellVenue: Venue = buyGlobal ? c.kv : c.gv;
+        const route = routeFor(base, buyVenue, sellVenue, ctx.transfers);
+        const blocked = route.withdraw === false || route.deposit === false;
+        const open = route.withdraw === true && route.deposit === true;
+        const gate: "open" | "unknown" | "closed" = blocked ? "closed" : open ? "open" : "unknown";
+        return { c, buyGlobal, buyVenue, sellVenue, route, gate };
       });
+      const bestOf = (g: "open" | "unknown" | "closed") =>
+        evald.filter((e) => e.gate === g).sort((a, b) => b.c.net - a.c.net)[0];
+      const main = bestOf("open") ?? bestOf("unknown") ?? bestOf("closed")!;
+      const lockedBest = bestOf("closed");
+      const extra = lockedBest && lockedBest !== main && lockedBest.c.net > main.c.net ? lockedBest : undefined;
+
+      for (const pick of extra ? [main, extra] : [main]) {
+        const { c: best, buyGlobal, buyVenue, sellVenue, route } = pick;
+        const lockedRow = pick === extra;
+        const execGross = best.execGross;
+        // 역프 (buy on KR, withdraw KR→overseas): Korean exchanges freeze crypto
+        // withdrawals for ~24-72h after a KRW deposit and enforce whitelist/limits,
+        // so a KR-buy leg is NOT a 1-minute settlement — reflect a realistic ETA
+        // and flag it so the operator doesn't treat it as a fast arb.
+        const isReverse = !buyGlobal; // buying on the KR venue
+        const baseEta = route.etaMin;
+        const transfer: TransferGate = {
+          withdraw: { venue: buyVenue, enabled: route.withdraw },
+          deposit: { venue: sellVenue, enabled: route.deposit },
+          // 역프 60분: 운영자 결정(2026-07-27) — KR 출금 동결(24~72h)은 **신규 원화
+          // 입금분**에 걸리고, 이 계좌는 기존 예치금으로 돌므로 해당 없음. 감사
+          // R3(역프 펀딩 과소)도 같은 이유로 기각. 신규 입금으로 운용을 바꾸면
+          // 이 가정이 깨진다 — 그때는 이 값과 hedgeCost 펀딩 창을 같이 늘릴 것.
+          etaMin: isReverse ? Math.max(baseEta, 60) : baseEta,
+          blocked: false,
+          network: { chain: route.label, confirms: route.confirms, chainKey: route.chainKey, alternatives: route.alternatives, reason: route.reason },
+        };
+        // FAIL-CLOSED: a persistent kimchi premium usually exists BECAUSE deposits
+        // are suspended on the KR side — so unknown (null) status must NOT pass as
+        // executable. Only an explicitly-confirmed-open pair on BOTH legs is
+        // settleable. (`blocked` distinguishes "known off" for the red badge;
+        // executable additionally requires both legs known-open.)
+        transfer.blocked =
+          transfer.withdraw.enabled === false || transfer.deposit.enabled === false;
+        const settleable = transfer.withdraw.enabled === true && transfer.deposit.enabled === true;
+
+        const gLeg = { venue: best.gv, symbol: globalSymbol(best.gv, base), price: best.gPrice, quote: "USDT" as const };
+        const kLeg = { venue: best.kv, symbol: krSymbol(best.kv, base), price: best.krPrice, quote: "KRW" as const };
+        // 실거래 누수 자동 보정 — 탐지가 실현보다 후하게 나온 만큼 비용에 가산.
+        const cal = ctx.calPct ?? 0;
+        const calCost = best.cost + cal;
+        const calNet = best.net - cal;
+        const notes: string[] = [];
+        if (isReverse) notes.push("역프 — KR 출금 정지(원화입금 후 24-72h)·화이트리스트·한도 확인 필요");
+        if (lockedRow) notes.push(`입출금 닫힘 — 열리면 메인 경로(${vlabelS(main.buyVenue)}→${vlabelS(main.sellVenue)} ${main.c.net >= 0 ? "+" : ""}${main.c.net.toFixed(2)}%)보다 큼`);
+        else if (extra) notes.push(`${vlabelS(extra.c.kv)} 쪽은 ${extra.c.net >= 0 ? "+" : ""}${extra.c.net.toFixed(2)}%지만 입출금 닫힘 (🔒 대기 행 참고)`);
+        out.push({
+          // 닫힌 별도 행은 id를 분리한다 — 지속성·에피소드·알림 쿨다운이 전부 id 기준이라
+          // 메인과 섞이면 "열림 알림"이 메인 행의 전환에 묻힌다.
+          id: lockedRow ? `${id("kimchi", base)}:locked` : id("kimchi", base),
+          kind: "kimchi",
+          base,
+          legs: buyGlobal
+            ? [{ ...gLeg, side: "buy" }, { ...kLeg, side: "sell" }]
+            : [{ ...kLeg, side: "buy" }, { ...gLeg, side: "sell" }],
+          grossPct: execGross, // executable (spread-crossed), not mid-price
+          costPct: calCost,
+          netPct: calNet,
+          // 최우선호가 기준 보수적 한도 (모달 뎁스 견적이 정확한 상한을 낸다).
+          // KR 다리는 원화 호가라 그 거래소의 USDT/KRW로 환산한다.
+          notionalCapUsd: (() => {
+            const krT = ctx.tickers[best.kv]?.get(base);
+            const gT = ctx.tickers[best.gv]?.get(base);
+            const krFx = ctx.tickers[best.kv]?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : 0);
+            if (!krFx) return null;
+            return buyGlobal
+              ? topOfBookCapUsd(gT, krT, 1, krFx)   // 글로벌 ask 매수 → KR bid 매도
+              : topOfBookCapUsd(krT, gT, krFx, 1);  // KR ask 매수 → 글로벌 bid 매도
+          })(),
+          // Live: fail-closed (both gates must be CONFIRMED open). DRY keeps the
+          // demo usable without keys — the gate panel still shows "키 필요".
+          executable: calNet > 0 && !transfer.blocked && (CONFIG.DRY_RUN || settleable),
+          transfer,
+          ...(notes.length ? { note: notes.join(" · ") } : {}),
+          ts: now(),
+        });
+      }
     }
     return out;
   },
