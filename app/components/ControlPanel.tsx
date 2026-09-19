@@ -29,6 +29,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         <SectionLabel>안전장치</SectionLabel>
         <KillCard killed={killed} />
         {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
+        <ReopenCard killed={killed} />
         <SectionLabel>실행 현황</SectionLabel>
         <PnlCard />
         <ExecQualityCard />
@@ -56,6 +57,7 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
               한도는 자주 만지는 값이 아니라 탭 자리를 안 준다). 대시보드
               "한도 조정 →"이 설정 모달을 바로 연다. */}
           {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
+          <ReopenCard killed={killed} />
         </div>
         {/* ② 실행 현황·기록 */}
         <div style={col}>
@@ -1162,6 +1164,121 @@ export function TelegramCard() {
           : ".env.local에 TELEGRAM_BOT_TOKEN·TELEGRAM_CHAT_ID를 넣으면 켜집니다 (@BotFather로 봇 생성)."}
       </div>
       {msg && <div style={{ fontSize: 11, color: "var(--brand-2)", marginTop: 6 }}>{msg}</div>}
+    </div>
+  );
+}
+
+// ── 재개 대응 카드 — 잠긴 코인 고속 감시 · 재개 공지 · 사전 포지션 · 자동 실행 ────
+// 서버 루프(lib/reopen.ts)의 상태를 보여주고 설정을 바꾼다. 감시와 공지는 항상 돌고,
+// 돈이 나가는 둘(자동 실행·사전 포지션)은 켜야 돈다. 라이브에선 EXEC_TOKEN 필요.
+type ReopenCfg = { armed: boolean; sizeUsd: number; minNet: number; whitelist: string[]; preposition: boolean; prepositionLeadMin: number; prepositionMaxWaitMin: number };
+type ReopenSnap = {
+  targets: { id: string; base: string; buyVenue: string; sellVenue: string; netPct: number; reopenAt?: number; gate: string | null; streak: number }[];
+  schedule: Record<string, { venue: string; at: number; title: string }>;
+  prepos: Record<string, { runId: string; reopenAt: number; released?: boolean }>;
+  cfg: ReopenCfg; watch: { intervalMs: number; lastTickAt: number }; dryRun: boolean;
+};
+function ReopenCard({ killed }: { killed: boolean }) {
+  const [snap, setSnap] = useState<ReopenSnap | null>(null);
+  const [draft, setDraft] = useState<ReopenCfg | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => fetch("/api/reopen", { cache: "no-store" }).then((r) => r.json()).then((j: ReopenSnap) => { setSnap(j); setDraft((d) => d ?? j.cfg); }).catch(() => {});
+  useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, []);
+  useEffect(() => { if (!confirming) return; const id = setTimeout(() => setConfirming(false), 4000); return () => clearTimeout(id); }, [confirming]);
+  const save = async (p: Partial<ReopenCfg>) => {
+    setMsg(null);
+    const token = typeof window !== "undefined" ? (window.localStorage.getItem("ac.execToken") ?? "") : "";
+    const r = await fetch("/api/reopen", { method: "POST", headers: { "content-type": "application/json", ...(token ? { "x-exec-token": token } : {}) }, body: JSON.stringify({ cfg: p }) });
+    const j = await r.json();
+    if (!j.ok) { setMsg(j.message ?? "실패"); return; }
+    setDraft(j.cfg); load();
+  };
+  const toggleArm = () => {
+    if (!snap) return;
+    if (snap.cfg.armed) { void save({ armed: false }); setConfirming(false); return; }
+    if (!confirming) { setConfirming(true); return; }
+    setConfirming(false); void save({ armed: true, ...(draft ? { sizeUsd: draft.sizeUsd, minNet: draft.minNet, whitelist: draft.whitelist } : {}) });
+  };
+  const armed = snap?.cfg.armed ?? false;
+  const num = (v: string) => Number(v.replace(/[^\d.]/g, "")) || 0;
+  const field = (label: string, key: "sizeUsd" | "minNet" | "prepositionLeadMin" | "prepositionMaxWaitMin", suffix: string) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)" }}>
+        <input className="tnum" inputMode="decimal" value={String(draft?.[key] ?? "")} disabled={armed}
+          onChange={(e) => setDraft((d) => (d ? { ...d, [key]: num(e.target.value) } : d))}
+          onBlur={() => draft && void save({ [key]: draft[key] })}
+          style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: "var(--text)", fontSize: 13, outline: "none" }} />
+        <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{suffix}</span>
+      </div>
+    </label>
+  );
+  const kst = (t: number) => new Date(t).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div style={{ background: armed ? "color-mix(in srgb, var(--amber) 12%, transparent)" : "var(--card)", border: `1px solid ${armed ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>입출금 재개 대응</span>
+        <span style={{ width: 6, height: 6, borderRadius: 9, background: armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ fontSize: 11, fontWeight: armed ? 700 : 400, color: armed ? "var(--amber)" : "var(--text-mute)" }}>{armed ? "자동 실행 무장됨" : "감시만"}</span>
+        <span style={{ flex: 1 }} />
+        {confirming && !armed && <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 600 }}>재개 순간 자동 매수 — 한 번 더</span>}
+        <button type="button" disabled={killed || !snap} onClick={toggleArm}
+          style={{ borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
+            border: `1px solid ${armed ? "var(--border-strong)" : "var(--amber)"}`,
+            background: armed ? "transparent" : confirming ? "var(--amber)" : "color-mix(in srgb, var(--amber) 16%, transparent)",
+            color: armed ? "var(--text)" : confirming ? "var(--brand-ink)" : "var(--amber)" }}>
+          {armed ? "끄기" : confirming ? "확인 · 켜기" : "켜기"}
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-mute)", marginTop: 6, lineHeight: 1.5 }}>
+        잠긴 코인 {snap?.targets.length ?? 0}개를 {snap ? Math.round(snap.watch.intervalMs / 1000) : "-"}초마다 확인 중
+        {snap?.watch.lastTickAt ? ` · 마지막 ${Math.max(0, Math.round((Date.now() - snap.watch.lastTickAt) / 1000))}초 전` : ""}.
+        열림이 2회 연속 확인되면 즉시 알림{armed ? "과 자동 실행" : ""}.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginTop: 10 }}>
+        {field("규모", "sizeUsd", "$")}
+        {field("최소 순수익", "minNet", "%")}
+      </div>
+      <label style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 8 }}>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>화이트리스트 (비우면 전 코인, 콤마 구분)</span>
+        <input value={draft?.whitelist.join(",") ?? ""} disabled={armed}
+          onChange={(e) => setDraft((d) => (d ? { ...d, whitelist: e.target.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) } : d))}
+          onBlur={() => draft && void save({ whitelist: draft.whitelist })}
+          placeholder="예: XRP,SOL"
+          style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)", color: "var(--text)", fontSize: 12.5, outline: "none" }} />
+      </label>
+      {/* 사전 포지션 */}
+      <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700 }}>사전 포지션</span>
+          <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>재개 공지 시각 전에 매수+헷지, 출금은 열림 확인 후</span>
+          <span style={{ flex: 1 }} />
+          <button type="button" disabled={!armed} onClick={() => void save({ preposition: !(snap?.cfg.preposition) })}
+            title={armed ? undefined : "자동 실행을 먼저 켜야 합니다"}
+            style={{ border: "1px solid var(--border-strong)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", background: snap?.cfg.preposition ? "var(--amber)" : "transparent", color: snap?.cfg.preposition ? "var(--brand-ink)" : "var(--text-dim)" }}>
+            {snap?.cfg.preposition ? "켜짐" : "꺼짐"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+          {field("예정 몇 분 전", "prepositionLeadMin", "분")}
+          {field("미개방 시 철회", "prepositionMaxWaitMin", "분")}
+        </div>
+      </div>
+      {/* 재개 예정 · 사전 포지션 현황 */}
+      {snap && (Object.keys(snap.schedule).length > 0 || Object.keys(snap.prepos).length > 0) && (
+        <div style={{ marginTop: 10, fontSize: 11.5 }}>
+          {Object.entries(snap.schedule).map(([base, s]) => (
+            <div key={base} style={{ display: "flex", gap: 8, padding: "4px 0", borderTop: "1px solid var(--border)" }}>
+              <b>{base}</b><span style={{ color: "var(--text-mute)" }}>{s.venue} 재개 예정 {kst(s.at)}</span>
+              <span style={{ flex: 1 }} />
+              {snap.prepos[base] && <span style={{ color: snap.prepos[base].released ? "var(--pos)" : "var(--amber)", fontWeight: 700 }}>{snap.prepos[base].released ? "출금 승인됨" : "포지션 대기"}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {msg && <div style={{ fontSize: 11, color: "var(--neg)", marginTop: 6 }}>{msg}</div>}
+      {snap && !snap.dryRun && !armed && <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginTop: 6 }}>라이브 — 켜려면 ⚙ 설정의 EXEC_TOKEN이 브라우저에 저장돼 있어야 합니다.</div>}
     </div>
   );
 }

@@ -100,6 +100,21 @@
 - [ ] 큐레이션에 없는 KR 상장 알트 5개를 골라 같은 확인. 여전히 Ethereum인데 실제로는 다른 체인인 코인이 있으면 **보고** (바낸이 그 코인을 상장 안 했거나 networkList가 비어 있는 경우)
 **실패하면:** `lib/transfers.ts` `fetchBinance()`의 `setLiveNetwork`, `lib/networks.ts` `coinNetwork()`.
 
+### T25. 잠긴 코인 고속 감시가 재개를 5초 안에 잡는다 (돈 안 나감 · 키 필요)
+**바뀐 것 (2026-09-19):** 전체 게이트 스윕(60초)과 별개로, 잠긴(닫힘·정지 의심) 코인만 골라 5초마다 그 거래소 지갑 상태를 본다(`lib/reopen.ts`). 열림이 **2회 연속** 확인되면 즉시 재스캔·🔓 배지·알림. 재개 공지에 예정 시각이 있으면 5분 전부터 2초.
+- [ ] `curl -s localhost:3100/api/reopen | jq '.targets, .watch'` → 잠긴 코인 목록과 `intervalMs: 5000`, `lastTickAt`이 5초 안쪽으로 갱신
+- [ ] 실제 재개 사례 1건: `data/events.jsonl`의 `gate.watch`(from closed → to open) 시각과 거래소 공지/웹의 재개 시각 차이를 기록. 목표 10초 이내
+- [ ] 같은 사례에서 `alert.reopen`(source: "watch")이 `gate.change`보다 먼저 찍히는지
+- [ ] 거래소 rate 한도: 잠긴 코인이 10개 이상일 때 10분 돌려도 `telegram.failed`/429 흔적이 없는지 (`pm2 logs teum | grep -i 429`)
+**실패하면:** `lib/reopen.ts` `watchTick()`, `lib/transfers.ts` `fetchVenueStatus()`.
+
+### T26. 재개 공지 파싱 (돈 안 나감 · KR IP)
+**바뀐 것:** 업비트 `category=wallet` 공지와 빗썸 공지에서 "입출금 재개/정상화"와 예정 시각을 뽑아 `data/state/reopenSchedule.json`에 저장, 🔒 행에 "재개 N분 후" 카운트다운.
+- [ ] KR 박스에서 서버 기동 1분 뒤 `jq .schedule localhost:3100/api/reopen` → 최근 재개 공지가 있으면 코인·시각이 보임. 없으면 `events.jsonl`에 `reopen.notice`가 안 찍히는 게 정상
+- [ ] 실제 재개 공지 1건: 제목/본문의 시각과 저장된 `at`(KST)이 일치하는지. 틀리면 제목 원문을 기록 (정규식 `REOPEN_RE`·`parseOpenTimeKst` 보강 대상)
+- [ ] 빗썸 공지 URL이 응답하는지 (`BITHUMB_NOTICE_URL` env로 교체 가능). 404/HTML이면 기록만 — 실패해도 다른 기능엔 영향 없음
+**실패하면:** `lib/reopen.ts` `parseReopenNotice()`, `pollUpbit()`, `pollBithumb()`. 단위 테스트 `test/reopen.test.ts`.
+
 ## B. 라이브 항목 — `DRY_RUN=false`, 소액
 
 > B로 넘어가기 전: A 전부 통과, `EXEC_TOKEN` 설정, 리스크 한도 소액 잠금 확인. 항목 순서를 지킨다 — 뒤로 갈수록 위험하다.
@@ -188,6 +203,15 @@
 
 ---
 
+### T27. 재개 자동 실행 · 사전 포지션 ⚠️ 라이브 — 소액, 화이트리스트 1코인
+**바뀐 것:** 운영 탭 "입출금 재개 대응" 카드. 켜면(2단 확인, 라이브는 EXEC_TOKEN) 재개 확인 순간 전자동 런을 띄운다. "사전 포지션"을 추가로 켜면 재개 공지 시각 N분 전에 매수+헷지까지 하고 출금 직전에서 멈췄다가, 재개 확인 시 출금을 자동 승인. 예정 +M분에도 안 열리면 되팔고 헷지 해제.
+- [ ] 화이트리스트에 코인 1개, 규모 = 1회 한도 이하($60), 최소 순수익 1%로 켠다. 킬 스위치가 즉시 끄는지 먼저 확인 (킬 ON → `jq .cfg.armed`는 그대로지만 `reopen.decision` 이벤트가 "킬 스위치 활성"으로 찍혀야 함)
+- [ ] **DRY로 먼저**: 페이퍼 모드에서 재개 사례 1건을 기다려 `reopen.auto_start`(runId)와 런 타임라인이 끝까지 가는지
+- [ ] 라이브: 재개 사례 1건. 텔레그램 "🚀 재개 자동 실행 시작" → 런이 출금·입금·매도까지. 거래소 웹에서 주문 ID(`trades.jsonl` `orderIds`)로 대조
+- [ ] 사전 포지션: 재개 공지가 있는 코인으로 켜고, 예정 5분 전에 `prepos.start` → 런이 "출금 전 정지"에서 멈춰 있는지 → 재개 확인 시 `reopen.decision`이 release, 런이 이어지는지
+- [ ] 미개방 철회: 예정 시각을 지난 공지(또는 `prepositionMaxWaitMin`을 1로) → `prepos.abort`와 청산 런 기록
+**실패하면:** `lib/reopen.ts` `onConfirmedOpen()`, `prepositionTick()`, `decideOnOpen()`/`shouldPreposition()`(테스트 있음). 자금 경로는 기존 엔진(`startRun`/`confirmRun`/`unwindRun`) 그대로다.
+
 ## C. 관찰 항목 — 일부러 재현하기 어렵다. 실사용 중 **발생하면** 기록
 
 | ID | 무엇을 보나 | 기대 동작 | 실패 신호 |
@@ -246,3 +270,6 @@
 | T22 | `lib/netcodes.ts` `canonChain`, `EXACT` · `lib/transfers.ts` `putNets()`, `unmappedNetCodes()` · `app/api/gate-networks/route.ts` |
 | T23 | `lib/netcodes.ts` `pickRoute()` · `lib/transfers.ts` `routeFor()` · `lib/strategies.ts` kimchi/cross-cex `route` |
 | T24 | `lib/transfers.ts` `fetchBinance()` `setLiveNetwork` · `lib/networks.ts` `coinNetwork()` · `lib/config.ts` `COIN_NETWORK_DEFAULT` |
+| T25 | `lib/reopen.ts` `watchTick()` · `lib/transfers.ts` `fetchVenueStatus()` |
+| T26 | `lib/reopen.ts` `parseReopenNotice()`, `pollUpbit()`, `pollBithumb()` |
+| T27 | `lib/reopen.ts` `onConfirmedOpen()`, `prepositionTick()` · `app/api/reopen/route.ts` · `ControlPanel.tsx` `ReopenCard` |

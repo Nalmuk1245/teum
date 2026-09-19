@@ -37,6 +37,12 @@ function launch<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return p;
 }
 
+/** 캐시된 값(낡았어도) — 없으면 null. 고속 감시가 최신 사실을 밀어 넣을 때 쓴다. */
+export function getCached<T>(key: string): T | null {
+  const hit = M.get(key);
+  return hit ? (hit.v as T) : null;
+}
+
 export async function swr<T>(key: string, ms: number, fn: () => Promise<T>): Promise<T> {
   const hit = M.get(key);
   if (hit) {

@@ -16,8 +16,12 @@ function GateBadge({ o, compact }: { o: Opportunity; compact?: boolean }) {
   const reopened = o.reopenedAt && Date.now() - o.reopenedAt < REOPEN_FLASH_MS;
   const base: React.CSSProperties = { fontSize: compact ? 10.5 : 11, fontWeight: 700, borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap", flex: "0 0 auto" };
   if (reopened) return <span className="spike-flash" title="닫혀 있던 입출금이 방금 열렸습니다 — 지속되던 갭이 있으면 지금이 기회" style={{ ...base, color: "var(--pos)", background: "var(--pos-soft)" }}>🔓 열림</span>;
-  if (o.gate === "closed") return <span title={`입출금 정지 확인 — ${o.transfer?.network?.reason ?? "매수 출금 또는 매도 입금이 막힘"}`} style={{ ...base, color: "var(--neg)", background: "var(--neg-soft)" }}>🔒 닫힘</span>;
-  if (o.gate === "suspect") return <span title="큰 갭이 30분 넘게 유지 — 대개 입출금 정지가 원인 (키가 있으면 확인됨)" style={{ ...base, color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 14%, transparent)" }}>🔒 정지 의심</span>;
+  // 재개 예정 시각(공지)이 있으면 카운트다운을 배지에 붙인다 — 5분 전부터 감시가 2초로 당겨진다.
+  const eta = o.reopenAt ? Math.round((o.reopenAt - Date.now()) / 60_000) : null;
+  const etaTxt = eta == null ? "" : eta > 0 ? ` · 재개 ${eta}분 후` : eta > -60 ? ` · 재개 예정 ${-eta}분 지남` : "";
+  const etaTitle = o.reopenAt ? ` · 재개 공지 ${new Date(o.reopenAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}` : "";
+  if (o.gate === "closed") return <span title={`입출금 정지 확인 — ${o.transfer?.network?.reason ?? "매수 출금 또는 매도 입금이 막힘"}${etaTitle}`} style={{ ...base, color: "var(--neg)", background: "var(--neg-soft)" }}>🔒 닫힘{etaTxt}</span>;
+  if (o.gate === "suspect") return <span title={`큰 갭이 30분 넘게 유지 — 대개 입출금 정지가 원인 (키가 있으면 확인됨)${etaTitle}`} style={{ ...base, color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 14%, transparent)" }}>🔒 정지 의심{etaTxt}</span>;
   return null;
 }
 
@@ -332,7 +336,7 @@ const sameOpp = (a: Opportunity, b: Opportunity) =>
   a.costPct === b.costPct && a.notionalCapUsd === b.notionalCapUsd &&
   a.executable === b.executable && a.hasPerp === b.hasPerp &&
   a.transfer?.blocked === b.transfer?.blocked &&
-  a.gate === b.gate && a.reopenedAt === b.reopenedAt &&
+  a.gate === b.gate && a.reopenedAt === b.reopenedAt && a.reopenAt === b.reopenAt &&
   a.depth?.ts === b.depth?.ts &&
   a.newListing?.opened === b.newListing?.opened &&
   a.persistence?.heldSec === b.persistence?.heldSec &&

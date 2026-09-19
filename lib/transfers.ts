@@ -340,6 +340,16 @@ async function fetchOkx(): Promise<Map<string, WalletStatus> | null> {
   }
 }
 
+/** 거래소 하나의 코인별 입출금 상태 — 고속 감시가 필요한 거래소만 골라 부른다. */
+export async function fetchVenueStatus(venue: Venue): Promise<Map<string, WalletStatus> | null> {
+  if (venue === "bithumb") return fetchBithumb();
+  if (venue === "upbit") return fetchUpbit();
+  if (venue === "binance") return fetchBinance();
+  if (venue === "bybit") return fetchBybit();
+  if (venue === "okx") return fetchOkx();
+  return null;
+}
+
 // ── Aggregate ─────────────────────────────────────────────────────────────────
 export async function fetchTransferStatus(): Promise<TransferStatus> {
   const [bithumb, upbit, binance, bybit, okx] = await Promise.all([

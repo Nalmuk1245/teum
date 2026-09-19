@@ -106,6 +106,8 @@ export type Opportunity = {
   gate?: "open" | "closed" | "suspect" | "unknown";
   /** 닫힘/의심이던 게이트가 확인된 열림으로 바뀐 시각 — 알림·행 깜빡임. */
   reopenedAt?: number;
+  /** 공지로 파악한 입출금 재개 예정 시각 (reopen.ts) — 🔒 행에 카운트다운. */
+  reopenAt?: number;
   ts: number;
 };
 

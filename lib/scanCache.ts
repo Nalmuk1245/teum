@@ -121,6 +121,8 @@ async function refresh(): Promise<void> {
       if (startedAt >= C.ts) {
         // 텔레그램 유무와 무관하게 돈다 — 안에서 사건을 events.jsonl에 남기고, 텔레그램은
         // notify()가 스스로 미설정을 처리한다. 예전엔 여기서 통째로 건너뛰어 기록도 안 남았다.
+        // 재개 감시 대상 갱신 + 예정 시각 부착 (알림보다 먼저 — 알림이 reopenAt을 쓴다)
+        import("./reopen").then((m) => m.updateReopenTargets(next)).catch(() => {});
         void alertOnScan(next);
         recordHourlyHeat(next);
         recordSrcHeat();
@@ -271,6 +273,8 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
     // 로드돼서, 탭을 닫아둔 채 pm2가 재시작하면 health 크론이 돌아도 "런 N건
     // 중단됨" 알림이 UI를 열 때까지 안 왔다. 여기 얹어 health가 엔진도 깨운다.
     void import("./runEngine").catch(() => {});
+    // 재개 대응 루프 — 잠긴 코인 고속 감시·재개 공지·사전 포지션 (기본 꺼짐, 감시만 돈다)
+    void import("./reopen").then((m) => m.startReopenLoops()).catch(() => {});
     // 경로 DB 워머 — KR 유니버스의 공식 컨트랙트를 미리 검증·적재해 둔다.
     // 런타임 해석(recv/transfer)이 콜드 구축을 밟는 일이 없어진다.
     void import("./tokenRoutes").then(({ startRouteWarmer }) =>

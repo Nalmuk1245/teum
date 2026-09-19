@@ -18,7 +18,13 @@ export type EventType =
   | "alert.gate_down"    // 갭이 있는데 입출금 정지
   | "alert.reopen"       // 닫혀 있던 입출금 열림
   | "telegram.sent" | "telegram.failed" | "telegram.unconfigured"
-  | "run.error" | "run.cancelled";
+  | "run.error" | "run.cancelled"
+  | "gate.watch"         // 고속 감시가 본 전환 (5초 단위)
+  | "reopen.notice"      // 재개 공지 감지 (예정 시각)
+  | "reopen.decision"    // 열림 확인 시 판단 (release/start/none + 사유)
+  | "reopen.auto_start"  // 재개 자동 실행 시작/거부
+  | "reopen.cfg"         // 설정 변경
+  | "prepos.start" | "prepos.abort"; // 사전 포지션 시작/철회
 
 export type EventRecord = { ts: number; type: EventType; base?: string; [k: string]: unknown };
 
