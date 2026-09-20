@@ -29,8 +29,14 @@ import { depthOf } from "./quote";
 import { logEvent } from "./events";
 
 // 직전 스캔의 게이트 상태 — 닫힘/의심 → 확인된 열림 전환을 잡는다 (재개 알림).
-const gg = globalThis as unknown as { __arbPrevGate?: Map<string, "open" | "closed" | "suspect" | "unknown"> };
+const gg = globalThis as unknown as {
+  __arbPrevGate?: Map<string, "open" | "closed" | "suspect" | "unknown">;
+  /** 열림 전환 시각 — 전환은 한 스캔에서만 관측되므로 여기 남겨 5분간 배지·알림 창을 유지한다. */
+  __arbReopenedAt?: Map<string, number>;
+};
 gg.__arbPrevGate ??= new Map();
+gg.__arbReopenedAt ??= new Map();
+const REOPEN_FLASH_MS = 5 * 60_000;
 
 async function buildContext(): Promise<ScanContext> {
   const cexAdapters = Object.values(EXCHANGES).filter((a) => a.kind === "cex");
@@ -138,7 +144,12 @@ export async function scanAll(): Promise<Opportunity[]> {
     o.gate = classifyGate(o);
     nextGate.set(o.id, o.gate);
     const was = prev.get(o.id);
-    if (o.gate === "open" && isLocked(was) && o.netPct > 0) o.reopenedAt = ts;
+    if (o.gate === "open" && isLocked(was) && o.netPct > 0) gg.__arbReopenedAt!.set(o.id, ts);
+    const ra = gg.__arbReopenedAt!.get(o.id);
+    if (ra != null) {
+      if (ts - ra < REOPEN_FLASH_MS && o.gate === "open") o.reopenedAt = ra;
+      else gg.__arbReopenedAt!.delete(o.id);
+    }
     o.depth = depthOf(o.id);
     // 잠금이 걸리거나 풀리는 전환만 기록한다 (unknown↔open 같은 키 유무 잡음은 제외).
     if (was !== undefined && was !== o.gate && (isLocked(was) || isLocked(o.gate))) {

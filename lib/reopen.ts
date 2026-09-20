@@ -258,7 +258,8 @@ async function onConfirmedOpen(t: Target, chainLabel: string): Promise<void> {
       ...opp, executable: opp.netPct > 0,
       transfer: opp.transfer ? { ...opp.transfer, blocked: false, withdraw: { ...opp.transfer.withdraw, enabled: true }, deposit: { ...opp.transfer.deposit, enabled: true } } : opp.transfer,
     };
-    const res = eng.startRun({ opp: fresh, sizeUsd: decision.sizeUsd, hedge: true, autoLevel: "auto" });
+    // 퍼프가 없는 코인은 헷지 없이 간다 — hedge:true를 강제하면 hedge 단계에서 실패해 런이 죽는다.
+    const res = eng.startRun({ opp: fresh, sizeUsd: decision.sizeUsd, hedge: !!fresh.hasPerp, autoLevel: "auto" });
     logEvent("reopen.auto_start", { base: t.base, sizeUsd: decision.sizeUsd, ...("id" in res ? { runId: res.id } : { error: res.error }) });
     void notifyNow("id" in res
       ? `🚀 <b>${t.base}</b> 재개 자동 실행 시작 — $${decision.sizeUsd} · net +${t.netPct.toFixed(2)}%${CONFIG.DRY_RUN ? " (페이퍼)" : ""}`
@@ -337,6 +338,8 @@ async function prepositionTick(): Promise<void> {
       ?? S.opps.find((o) => o.base === base && o.kind === "kimchi" && !o.mock);
     if (!opp) continue;
     const buyGlobal = opp.legs.find((l) => l.side === "buy")?.quote === "USDT";
+    // 사전 포지션은 헷지가 전제다(예정 시각까지 방향 노출을 지우는 게 목적) — 퍼프 없으면 하지 않는다.
+    if (!opp.hasPerp) continue;
     const already = !!S.prepos[base] || !!Object.values(eng.snapshot().runs).find((r) => r.base === base && (r.phase === "running" || r.phase === "paused"));
     const d = shouldPreposition({ base, netPct: opp.netPct, buyGlobal, cfg: S.cfg, reopenAt: sch.at, now, already, killed: isKilled() });
     if (!d.ok) continue;

@@ -290,7 +290,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // 스트림 — 상위 6개. `liveOverlay`가 의존성이라 600ms마다 무조건 재정렬됐다.
   // 표시는 소수 2자리이므로 그 해상도로 스냅샷을 떠서 정렬 빈도를 낮춘다.
   const rankKey = useMemo(
-    () => live.map((o) => `${o.id}:${Math.round(liveNet(o) * 100)}`).join("|"),
+    () => live.map((o) => `${o.id}:${Math.round(liveNet(o) * 100)}:${o.gate ?? ""}`).join("|"),
     [live, liveNet],
   );
   // PC는 전폭 카드라 10행 — 모바일은 첫 화면 카드여서 6행 유지.

@@ -246,6 +246,8 @@ function boot() {
         interrupted++;
       }
       E.runs[id] = rv;
+      // 재시작으로 끊긴 런도 거래 기록에 남긴다 — runs.json은 30건이 지나면 사라진다.
+      if (rv.phase === "error" && rv.error?.includes("재시작")) recordIncomplete(id, "error", rv.error);
       // seq가 복원 런 id와 충돌하지 않게 전진
       const m = /^run_(\d+)_/.exec(id);
       if (m) E.seq = Math.max(E.seq, Number(m[1]));
