@@ -169,12 +169,16 @@ const kimchi: Strategy = {
       const bestOf = (g: "open" | "unknown" | "closed") =>
         evald.filter((e) => e.gate === g).sort((a, b) => b.c.net - a.c.net)[0];
       const main = bestOf("open") ?? bestOf("unknown") ?? bestOf("closed")!;
-      const lockedBest = bestOf("closed");
-      const extra = lockedBest && lockedBest !== main && lockedBest.c.net > main.c.net ? lockedBest : undefined;
+      // 메인보다 큰 다른 조합은 별도 행으로 남긴다 — 닫힘이면 🔒 행, 미확인(키 없음)이면
+      // "미확인" 행. 미확인을 버리면 키 없는 거래소의 큰 갭이 보드에서 통째로 사라진다(회귀).
+      const extra = evald
+        .filter((e) => e !== main && e.gate !== "open" && e.c.net > main.c.net)
+        .sort((a, b) => b.c.net - a.c.net)[0];
 
       for (const pick of extra ? [main, extra] : [main]) {
         const { c: best, buyGlobal, buyVenue, sellVenue, route } = pick;
-        const lockedRow = pick === extra;
+        const extraRow = pick === extra;
+        const lockedRow = extraRow && pick.gate === "closed";
         const execGross = best.execGross;
         // 역프 (buy on KR, withdraw KR→overseas): Korean exchanges freeze crypto
         // withdrawals for ~24-72h after a KRW deposit and enforce whitelist/limits,
@@ -211,11 +215,12 @@ const kimchi: Strategy = {
         const notes: string[] = [];
         if (isReverse) notes.push("역프 — KR 출금 정지(원화입금 후 24-72h)·화이트리스트·한도 확인 필요");
         if (lockedRow) notes.push(`입출금 닫힘 — 열리면 메인 경로(${vlabelS(main.buyVenue)}→${vlabelS(main.sellVenue)} ${main.c.net >= 0 ? "+" : ""}${main.c.net.toFixed(2)}%)보다 큼`);
-        else if (extra) notes.push(`${vlabelS(extra.c.kv)} 쪽은 ${extra.c.net >= 0 ? "+" : ""}${extra.c.net.toFixed(2)}%지만 입출금 닫힘 (🔒 대기 행 참고)`);
+        else if (extraRow) notes.push(`입출금 미확인(키 없음) — 확인된 메인 경로(${vlabelS(main.buyVenue)}→${vlabelS(main.sellVenue)} ${main.c.net >= 0 ? "+" : ""}${main.c.net.toFixed(2)}%)보다 큼`);
+        else if (extra) notes.push(`${vlabelS(extra.c.kv)} 쪽은 ${extra.c.net >= 0 ? "+" : ""}${extra.c.net.toFixed(2)}%지만 입출금 ${extra.gate === "closed" ? "닫힘 (🔒 대기 행 참고)" : "미확인 (별도 행 참고)"}`);
         out.push({
           // 닫힌 별도 행은 id를 분리한다 — 지속성·에피소드·알림 쿨다운이 전부 id 기준이라
           // 메인과 섞이면 "열림 알림"이 메인 행의 전환에 묻힌다.
-          id: lockedRow ? `${id("kimchi", base)}:locked` : id("kimchi", base),
+          id: extraRow ? `${id("kimchi", base)}:${lockedRow ? "locked" : "alt"}` : id("kimchi", base),
           kind: "kimchi",
           base,
           legs: buyGlobal

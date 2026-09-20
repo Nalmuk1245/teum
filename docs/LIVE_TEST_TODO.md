@@ -101,8 +101,8 @@
 **실패하면:** `lib/transfers.ts` `fetchBinance()`의 `setLiveNetwork`, `lib/networks.ts` `coinNetwork()`.
 
 ### T25. 잠긴 코인 고속 감시가 재개를 5초 안에 잡는다 (돈 안 나감 · 키 필요)
-**바뀐 것 (2026-09-19):** 전체 게이트 스윕(60초)과 별개로, 잠긴(닫힘·정지 의심) 코인만 골라 5초마다 그 거래소 지갑 상태를 본다(`lib/reopen.ts`). 열림이 **2회 연속** 확인되면 즉시 재스캔·🔓 배지·알림. 재개 공지에 예정 시각이 있으면 5분 전부터 2초.
-- [ ] `curl -s localhost:3100/api/reopen | jq '.targets, .watch'` → 잠긴 코인 목록과 `intervalMs: 5000`, `lastTickAt`이 5초 안쪽으로 갱신
+**바뀐 것 (2026-09-19):** 전체 게이트 스윕(60초)과 별개로, 잠긴(닫힘·정지 의심) 코인만 골라 10초마다 그 거래소 지갑 상태를 본다(`lib/reopen.ts`, `GATE_WATCH_MS`). 열림이 **2회 연속** 확인되면 즉시 재스캔·🔓 배지·알림. 재개 공지에 예정 시각이 있으면 5분 전부터 3초.
+- [ ] `curl -s localhost:3100/api/reopen | jq '.targets, .watch'` → 잠긴 코인 목록과 `intervalMs: 10000`, `lastTickAt`이 10초 안쪽으로 갱신
 - [ ] 실제 재개 사례 1건: `data/events.jsonl`의 `gate.watch`(from closed → to open) 시각과 거래소 공지/웹의 재개 시각 차이를 기록. 목표 10초 이내
 - [ ] 같은 사례에서 `alert.reopen`(source: "watch")이 `gate.change`보다 먼저 찍히는지
 - [ ] 거래소 rate 한도: 잠긴 코인이 10개 이상일 때 10분 돌려도 `telegram.failed`/429 흔적이 없는지 (`pm2 logs teum | grep -i 429`)

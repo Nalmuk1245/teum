@@ -76,3 +76,20 @@ describe("kimchi — 게이트 우선 조합 선택", () => {
     expect(opps.length).toBeGreaterThan(0);
   });
 });
+
+describe("kimchi — 미확인 조합이 메인보다 크면 별도 행 (키 없는 거래소의 갭이 사라지지 않게)", () => {
+  it("업비트 열림 +3% / 빗썸 미확인 +6% → 메인 업비트, 빗썸은 :alt 행", async () => {
+    const ctx = ctxWith({ bithumb: open, upbit: open, binance: open });
+    delete ctx.transfers!.byVenue.bithumb; // 빗썸 게이트를 모른다
+    const opps = await kimchi.scan(ctx);
+    const rows = opps.filter((o) => o.base === "XYZ");
+    expect(rows.map((o) => o.id).sort()).toEqual(["kimchi:XYZ", "kimchi:XYZ:alt"]);
+    const main = rows.find((o) => o.id === "kimchi:XYZ")!;
+    const alt = rows.find((o) => o.id === "kimchi:XYZ:alt")!;
+    expect(main.legs.find((l) => l.side === "sell")!.venue).toBe("upbit");
+    expect(alt.legs.find((l) => l.side === "sell")!.venue).toBe("bithumb");
+    expect(alt.transfer!.blocked).toBe(false);
+    expect(alt.transfer!.deposit.enabled).toBeNull();
+    expect(alt.note).toMatch(/미확인/);
+  });
+});

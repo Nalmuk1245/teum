@@ -46,8 +46,10 @@ const DEFAULT_CFG: ReopenAutoCfg = {
   preposition: false, prepositionLeadMin: 5, prepositionMaxWaitMin: 30,
 };
 
-export const GATE_WATCH_MS = Number(process.env.GATE_WATCH_MS ?? 5000);
-export const GATE_WATCH_FAST_MS = Number(process.env.GATE_WATCH_FAST_MS ?? 2000);
+// 거래소 지갑 상태 API는 코인 지정 조회가 없어 전 종목 스윕이다(바낸 getall ~1MB). 5초는 1CPU
+// 박스에서 파싱·GC 부담이 컸다 → 기본 10초, 예정 5분 전 3초. 필요하면 env로 조인다.
+export const GATE_WATCH_MS = Number(process.env.GATE_WATCH_MS ?? 10_000);
+export const GATE_WATCH_FAST_MS = Number(process.env.GATE_WATCH_FAST_MS ?? 3000);
 const NOTICE_POLL_MS = 30_000;
 const PREPOS_TICK_MS = 15_000;
 const MAX_TARGETS = 20;
@@ -72,6 +74,10 @@ type State = {
   lastTickAt: number;
   lastIntervalMs: number;
   noticeSeen: Set<string>;
+  /** 첫 폴은 보이는 공지를 baseline으로 삼는다(재시작마다 옛 공지 재처리 방지). 발행 10분 이내만 예외. */
+  noticePrimed: boolean;
+  /** 사전 포지션 거부 메모 — 같은 사유로 15초마다 알림이 나가지 않게 (base → ts). */
+  preposDenied: Map<string, number>;
   opps: Opportunity[];
 };
 const g = globalThis as unknown as { __arbReopen?: State };
@@ -80,7 +86,8 @@ g.__arbReopen ??= {
   schedule: loadSection<Record<string, ScheduleEntry>>("reopenSchedule") ?? {},
   prepos: loadSection<Record<string, PrepositionEntry>>("prepos") ?? {},
   cfg: { ...DEFAULT_CFG, ...(loadSection<Partial<ReopenAutoCfg>>("reopenAuto") ?? {}), armed: false }, // armed는 세션마다 직접
-  watch: null, notice: null, prep: null, lastTickAt: 0, lastIntervalMs: 0, noticeSeen: new Set(), opps: [],
+  watch: null, notice: null, prep: null, lastTickAt: 0, lastIntervalMs: 0,
+  noticeSeen: new Set(loadSection<string[]>("reopenNoticeSeen") ?? []), noticePrimed: false, preposDenied: new Map(), opps: [],
 };
 const S = g.__arbReopen;
 // 핫리로드 — 이전 타이머 정리
@@ -105,11 +112,12 @@ export function pickTargets(opps: Opportunity[], schedule: Record<string, Schedu
 
 /** 재개 공지 제목/본문 → 코인들 + 예정 시각. 재개가 아니면 null. */
 export const REOPEN_RE = /(입출금|입금|출금|네트워크|지갑)[^\n]{0,24}(재개|정상화|정상\s*운영|점검\s*완료|서비스\s*재개)/;
-const NOT_REOPEN_RE = /(일시\s*중단|중단\s*안내|지연\s*안내|중단\s*예정)/;
+// 재개가 아닌 것: 중단·지연·연기 공지. "재개 지연 안내"는 제목에 재개가 있어도 재개가 아니다.
+const NOT_REOPEN_RE = /(지연|연기|중단\s*예정|일시\s*중단\s*안내|중단\s*안내)/;
 const TICKER_RE = /\(([A-Z0-9]{2,10})\)/g;
 export function parseReopenNotice(title: string, body?: string): { bases: string[]; at: number | null } | null {
   if (!REOPEN_RE.test(title)) return null;
-  if (NOT_REOPEN_RE.test(title) && !/(재개|정상화)/.test(title)) return null;
+  if (NOT_REOPEN_RE.test(title)) return null;
   const bases = new Set<string>();
   let m: RegExpExecArray | null;
   TICKER_RE.lastIndex = 0;
@@ -244,10 +252,18 @@ async function onConfirmedOpen(t: Target, chainLabel: string): Promise<void> {
   });
   logEvent("reopen.decision", { base: t.base, ...decision });
   if (decision.action === "release") {
-    eng.confirmRun(decision.runId);
-    S.prepos[t.base] = { ...prepos!, released: true };
-    flushSection("prepos", S.prepos);
-    void notifyNow(`🔓 <b>${t.base}</b> 입출금 열림 확인 — 사전 포지션 출금 승인 (${chainLabel})`);
+    // confirmRun은 엔진이 없거나(재시작) 정지 상태가 아니면 아무것도 안 한다 — 그때 "승인됨"으로
+    // 표시하면 사 둔 코인이 아무도 안 건드리는 채로 남는다. 승인이 실제로 된 경우만 released.
+    const ok = eng.confirmRun(decision.runId);
+    if (ok) {
+      S.prepos[t.base] = { ...prepos!, released: true };
+      flushSection("prepos", S.prepos);
+      void notifyNow(`🔓 <b>${t.base}</b> 입출금 열림 확인 — 사전 포지션 출금 승인 (${chainLabel})`);
+    } else {
+      const run = eng.snapshot().runs[decision.runId];
+      logEvent("reopen.decision", { base: t.base, action: "release_failed", runId: decision.runId, phase: run?.phase ?? "missing", error: run?.error ?? null });
+      void notifyNow(`⚠️ <b>${t.base}</b> 입출금 열렸는데 사전 포지션 승인 불가 — 런 ${run?.phase ?? "없음"}${run?.error ? ` (${run.error})` : ""}. 수동 확인 필요`);
+    }
     return;
   }
   if (decision.action === "start") {
@@ -280,21 +296,21 @@ async function pollUpbit(): Promise<void> {
   const d = j?.data as { notices?: unknown[]; list?: unknown[] } | unknown[] | undefined;
   const list = (Array.isArray(d) ? d : d?.notices ?? d?.list ?? []) as Array<Record<string, unknown>>;
   for (const x of list) {
-    const id = String(x.id ?? ""); const title = String(x.title ?? "");
-    if (!id || !title || S.noticeSeen.has(`upbit:${id}`)) continue;
-    S.noticeSeen.add(`upbit:${id}`);
-    const parsed = parseReopenNotice(title);
-    if (!parsed) continue;
-    let at = parsed.at;
-    if (at == null) {
-      try {
-        const b = await fetch(`https://api-manager.upbit.com/api/v1/announcements/${id}?os=web`, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(4000) });
-        const bj = await b.json() as { data?: { content?: string } };
-        at = parseReopenNotice(title, (bj.data?.content ?? "").replace(/<[^>]+>/g, " "))?.at ?? null;
-      } catch { /* 본문 없이 */ }
-    }
-    for (const base of parsed.bases) recordSchedule(base, "upbit", at ?? Date.now(), id, title);
+    const id = String(x.id ?? "");
+    await handleNotice("upbit", id, String(x.title ?? ""), publishedAtOf(x), async () => {
+      const b = await fetch(`https://api-manager.upbit.com/api/v1/announcements/${id}?os=web`, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(4000) });
+      const bj = await b.json() as { data?: { content?: string } };
+      return (bj.data?.content ?? "").replace(/<[^>]+>/g, " ") || null;
+    });
   }
+}
+function publishedAtOf(raw: Record<string, unknown>): number | undefined {
+  for (const k of ["listed_at", "first_listed_at", "created_at", "published_at", "updated_at", "regDate", "reg_date"]) {
+    const v = raw[k];
+    if (typeof v === "number" && v > 1e12) return v;
+    if (typeof v === "string") { const t = Date.parse(v); if (Number.isFinite(t) && t > 0) return t; }
+  }
+  return undefined;
 }
 async function pollBithumb(): Promise<void> {
   // 빗썸 공지 API는 문서가 얇다 — 실패해도 조용히. 응답 모양은 관대하게 읽는다.
@@ -304,13 +320,32 @@ async function pollBithumb(): Promise<void> {
   const j = await r.json() as unknown;
   const list = (Array.isArray(j) ? j : (j as { data?: unknown[] })?.data ?? []) as Array<Record<string, unknown>>;
   for (const x of list) {
-    const id = String(x.id ?? x.notice_id ?? x.seq ?? ""); const title = String(x.title ?? "");
-    if (!id || !title || S.noticeSeen.has(`bithumb:${id}`)) continue;
-    S.noticeSeen.add(`bithumb:${id}`);
-    const parsed = parseReopenNotice(title, typeof x.content === "string" ? x.content : undefined);
-    if (!parsed) continue;
-    for (const base of parsed.bases) recordSchedule(base, "bithumb", parsed.at ?? Date.now(), id, title);
+    const id = String(x.id ?? x.notice_id ?? x.seq ?? "");
+    await handleNotice("bithumb", id, String(x.title ?? ""), publishedAtOf(x), async () => (typeof x.content === "string" ? x.content : null));
   }
+}
+const NOTICE_FRESH_MS = 10 * 60_000;
+const NOTICE_MAX_AGE_MS = 6 * 3600_000;
+/** 공지 한 건 처리 — 이미 본 것·baseline·오래된 것은 건너뛴다. 시각을 못 읽으면 발행 시각(=지금 재개)로. */
+function handleNotice(venue: "upbit" | "bithumb", id: string, title: string, publishedAt: number | undefined, bodyFetch?: () => Promise<string | null>): Promise<void> {
+  const key = `${venue}:${id}`;
+  if (!id || !title || S.noticeSeen.has(key)) return Promise.resolve();
+  S.noticeSeen.add(key);
+  if (S.noticeSeen.size > 500) S.noticeSeen = new Set([...S.noticeSeen].slice(-300));
+  flushSection("reopenNoticeSeen", [...S.noticeSeen]);
+  const now = Date.now();
+  // 부팅 직후 첫 폴: 발행 10분 이내가 아니면 baseline으로만 삼는다 (listings.ts와 같은 규칙).
+  if (!S.noticePrimed && !(publishedAt && now - publishedAt < NOTICE_FRESH_MS)) return Promise.resolve();
+  if (publishedAt && now - publishedAt > NOTICE_MAX_AGE_MS) return Promise.resolve(); // 오래된 재개는 이미 지난 일
+  const parsed = parseReopenNotice(title);
+  if (!parsed) return Promise.resolve();
+  return (async () => {
+    let at = parsed.at;
+    if (at == null && bodyFetch) { try { const body = await bodyFetch(); if (body) at = parseReopenNotice(title, body)?.at ?? null; } catch { /* 본문 없이 */ } }
+    // 시각을 못 읽으면 "공지 시점에 재개됨"으로 본다 — 발행 시각을 모르면 감시 대상 표시만 하고 스케줄은 잡지 않는다.
+    if (at == null) { if (!publishedAt) { logEvent("reopen.notice", { base: parsed.bases.join(","), venue, noticeId: id, title: title.slice(0, 80), note: "시각 미상 — 스케줄 없음" }); return; } at = publishedAt; }
+    for (const base of parsed.bases) recordSchedule(base, venue, at, id, title);
+  })();
 }
 function recordSchedule(base: string, venue: string, at: number, noticeId: string, title: string): void {
   const prev = S.schedule[base];
@@ -322,6 +357,7 @@ function recordSchedule(base: string, venue: string, at: number, noticeId: strin
 }
 async function noticeTick(): Promise<void> {
   await Promise.all([pollUpbit().catch(() => {}), pollBithumb().catch(() => {})]);
+  S.noticePrimed = true; // 첫 폴 이후부터 새 공지를 처리한다
   // 지난 지 6시간 넘은 예정은 정리
   let changed = false;
   for (const [base, e] of Object.entries(S.schedule)) if (Date.now() - e.at > 6 * 3600_000) { delete S.schedule[base]; changed = true; }
@@ -343,14 +379,20 @@ async function prepositionTick(): Promise<void> {
     const already = !!S.prepos[base] || !!Object.values(eng.snapshot().runs).find((r) => r.base === base && (r.phase === "running" || r.phase === "paused"));
     const d = shouldPreposition({ base, netPct: opp.netPct, buyGlobal, cfg: S.cfg, reopenAt: sch.at, now, already, killed: isKilled() });
     if (!d.ok) continue;
+    // 방금 거부된 코인은 1분 쉬었다 다시 — 한도 초과 같은 사유는 15초 만에 안 바뀐다.
+    const deniedAt = S.preposDenied.get(base);
+    if (deniedAt && now - deniedAt < 60_000) continue;
     const res = eng.startRun({ opp: { ...opp, executable: true }, sizeUsd: S.cfg.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" });
     logEvent("prepos.start", { base, reopenAt: sch.at, sizeUsd: S.cfg.sizeUsd, ...("id" in res ? { runId: res.id } : { error: res.error }) });
     if ("id" in res) {
+      S.preposDenied.delete(base);
       S.prepos[base] = { runId: res.id, base, startedAt: now, reopenAt: sch.at };
       flushSection("prepos", S.prepos);
       void notifyNow(`🧷 <b>${base}</b> 사전 포지션 — 재개 예정 ${new Date(sch.at).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul" })} · $${S.cfg.sizeUsd} 매수+헷지, 출금 대기${CONFIG.DRY_RUN ? " (페이퍼)" : ""}`);
     } else {
-      void notifyNow(`⚠️ <b>${base}</b> 사전 포지션 거부 — ${res.error}`);
+      // 같은 거부가 15초마다 반복돼도 알림은 5분에 한 번
+      const last = S.preposDenied.get(base) ?? 0;
+      if (now - last > 5 * 60_000) { S.preposDenied.set(base, now); void notifyNow(`⚠️ <b>${base}</b> 사전 포지션 거부 — ${res.error}`); }
     }
   }
   // (b) 최대 대기 초과 → 되팔고 헷지 해제
@@ -380,5 +422,5 @@ export function startReopenLoops(): void {
 
 // 테스트용 — 상태 초기화
 export function _resetReopenForTest(): void {
-  S.targets.clear(); S.lastGate.clear(); S.openStreak.clear(); S.schedule = {}; S.prepos = {}; S.cfg = { ...DEFAULT_CFG }; S.opps = [];
+  S.targets.clear(); S.lastGate.clear(); S.openStreak.clear(); S.schedule = {}; S.prepos = {}; S.cfg = { ...DEFAULT_CFG }; S.opps = []; S.preposDenied.clear();
 }

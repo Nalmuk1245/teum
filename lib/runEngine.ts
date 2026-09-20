@@ -178,7 +178,9 @@ function recordIncomplete(id: string, status: "error" | "cancelled", reason: str
     ts: Date.now(), base: run.base, kind: run.kind,
     route: `${buy?.venue ?? "?"} → ${sell?.venue ?? "?"}`,
     sizeUsd: run.sizeUsd, detectedNetPct: run.opp.netPct,
-    realizedNetPct: null, realizedPnlUsd: run.pnlUsd || null,
+    // 손익은 적지 않는다 — 청산·정산이 실현한 돈은 그 경로가 이미 자기 레코드로 남겼다.
+    // 여기 run.pnlUsd를 또 적으면 일별 집계가 두 번 센다.
+    realizedNetPct: null, realizedPnlUsd: null,
     hedged: run.statuses.hedge === "done", dryRun: CONFIG.DRY_RUN, status,
     note: reason, qty: run.remaining || eng?.qty || null,
     durationsSec: eng?.durations, timeline: eng?.timeline?.length ? [...eng.timeline] : undefined,
@@ -240,14 +242,16 @@ function boot() {
     let interrupted = 0;
     for (const [id, rv] of Object.entries(saved)) {
       if (E.runs[id]) continue;
-      if (rv.phase === "running" || rv.phase === "paused") {
+      const cutNow = rv.phase === "running" || rv.phase === "paused";
+      if (cutNow) {
         rv.phase = "error";
         rv.error = "⚠ 서버 재시작으로 실행 루프 중단 — 거래소 실포지션·헷지 수동 확인 필요";
         interrupted++;
       }
       E.runs[id] = rv;
-      // 재시작으로 끊긴 런도 거래 기록에 남긴다 — runs.json은 30건이 지나면 사라진다.
-      if (rv.phase === "error" && rv.error?.includes("재시작")) recordIncomplete(id, "error", rv.error);
+      // **이번 부팅이 끊은** 런만 기록한다 — 이전 재시작이 이미 error로 만든 런을 매 부팅마다
+      // 다시 적으면 같은 런의 error 레코드가 재시작 횟수만큼 쌓인다.
+      if (cutNow) recordIncomplete(id, "error", rv.error!);
       // seq가 복원 런 id와 충돌하지 않게 전진
       const m = /^run_(\d+)_/.exec(id);
       if (m) E.seq = Math.max(E.seq, Number(m[1]));
@@ -676,12 +680,16 @@ export function startRun(cfg: { opp: Opportunity; sizeUsd: number; hedge: boolea
   return { id };
 }
 
-export function confirmRun(id: string) {
+/** 정지 중인 단계를 승인해 루프를 재개한다. 실제로 재개했는지 돌려준다 —
+ *  엔진이 없거나(재시작) 바쁘거나 정지 상태가 아니면 false (호출부가 "승인됨"으로 오인하지 않게). */
+export function confirmRun(id: string): boolean {
   const eng = E.engines.get(id);
-  if (!eng || eng.busy) return;
+  const run = E.runs[id];
+  if (!eng || eng.busy || !run || run.phase !== "paused") return false;
   eng.confirmed.add(eng.i);
   patch(id, { pauseAt: -1 });
   void loop(id);
+  return true;
 }
 
 export type RetryResult = { ok: true } | { error: string };

@@ -110,6 +110,15 @@ export function unmappedNetCodes(base: string): { venue: Venue; net: string }[] 
   return out;
 }
 
+
+/** 코인 요약용 행 선택 — 기본 체인 행 > 코인 자기 체인(native) 행 > 유일한 행. 없으면 undefined(미확인).
+ *  OR로 접지 않는다: 여러 체인 중 하나만 열려 있는데 열림으로 요약하면 게이트가 완화된다. */
+function summaryRow<T>(rows: T[], keyOf: (r: T) => string, coin: string, want: string): T | undefined {
+  return rows.find((r) => keyOf(r) === want)
+    ?? rows.find((r) => keyOf(r) === `native:${coin.toUpperCase()}`)
+    ?? (rows.length === 1 ? rows[0] : undefined);
+}
+
 // ── Bithumb (public) ──────────────────────────────────────────────────────────
 async function fetchBithumb(): Promise<Map<string, WalletStatus>> {
   const m = new Map<string, WalletStatus>();
@@ -185,8 +194,7 @@ async function fetchUpbit(): Promise<Map<string, WalletStatus> | null> {
       // 코인 요약은 기본 체인 행. 없으면 요약을 비운다(=미확인) — 예전 OR 완화는
       // "다른 체인이 열렸으니 통과"였고, 그 뒤 우리 체인으로 보내 좌초할 수 있었다.
       // 체인 단위 판단은 routeFor/venueChainStatus가 저장된 행으로 직접 한다.
-      const want = wantedChainKey(base);
-      const hit = list.find((n) => canonChain(n.net, base) === want);
+      const hit = summaryRow(list, (n) => canonChain(n.net, base), base, wantedChainKey(base));
       if (hit) m.set(base, { deposit: hit.deposit, withdraw: hit.withdraw });
     }
     return m;
@@ -277,8 +285,7 @@ async function fetchBybit(): Promise<Map<string, WalletStatus> | null> {
     for (const r of j.result.rows) {
       const chains = r.chains ?? [];
       if (!chains.length) continue;
-      const want = wantedChainKey(r.coin);
-      const net = chains.find((c) => canonChain(c.chain, r.coin) === want);
+      const net = summaryRow(chains, (c) => canonChain(c.chain, r.coin), r.coin, wantedChainKey(r.coin));
       if (net) m.set(r.coin, { deposit: net.chainDeposit === "1", withdraw: net.chainWithdraw === "1" });
       putNets("bybit", r.coin, chains.map((c) => ({
         net: c.chain, deposit: c.chainDeposit === "1", withdraw: c.chainWithdraw === "1",
@@ -325,8 +332,7 @@ async function fetchOkx(): Promise<Map<string, WalletStatus> | null> {
     }
     const m = new Map<string, WalletStatus>();
     for (const [coin, rows] of byCoin) {
-      const want = wantedChainKey(coin);
-      const net = rows.find((r) => canonChain(r.chain ? r.chain.replace(`${coin}-`, "") : coin, coin) === want);
+      const net = summaryRow(rows, (r) => canonChain(r.chain ? r.chain.replace(`${coin}-`, "") : coin, coin), coin, wantedChainKey(coin));
       if (net) m.set(coin, { deposit: !!net.canDep, withdraw: !!net.canWd });
       putNets("okx", coin, rows.map((r) => ({
         // OKX 체인명은 "USDT-ERC20" 꼴 — 코인 접두는 떼고 네트워크만 남긴다.

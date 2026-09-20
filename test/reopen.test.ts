@@ -37,6 +37,9 @@ describe("parseReopenNotice — 재개 공지 인식 + 시각", () => {
   });
   it("중단 공지는 재개가 아니다 / 티커 없으면 null / 상장 공지는 null", () => {
     expect(parseReopenNotice("이더리움(ETH) 입출금 일시 중단 안내")).toBeNull();
+    // 제목에 "재개"가 있어도 지연·연기는 재개가 아니다 (리뷰 지적)
+    expect(parseReopenNotice("이더리움(ETH) 입출금 재개 지연 안내")).toBeNull();
+    expect(parseReopenNotice("솔라나(SOL) 입출금 재개 연기 안내 (2026년 9월 20일 14:00)")).toBeNull();
     expect(parseReopenNotice("입출금 재개 안내")).toBeNull();
     expect(parseReopenNotice("디지털 자산 추가 — 미나(MINA) KRW 마켓")).toBeNull();
   });

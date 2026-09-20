@@ -139,16 +139,20 @@ export async function scanAll(): Promise<Opportunity[]> {
   // 입출금이 다시 열리는 순간이 가장 좋은 기회라, 그 전환을 잡아 알린다.
   const prev = gg.__arbPrevGate!;
   const nextGate = new Map<string, "open" | "closed" | "suspect" | "unknown">();
+  // 전환 키는 id가 아니라 **경로**(코인·매수→매도)다. 닫혀 있던 빗썸 행(kimchi:X:locked)이
+  // 열리면 그 경로가 메인(kimchi:X)이 되며 id가 바뀌므로, id로 보면 열림 전환을 놓친다.
+  const routeKey = (o: Opportunity) => `${o.kind}:${o.base}:${o.legs.map((l) => l.venue).join(">")}`;
   for (const o of opps) {
     if (o.mock || o.kind === "funding-basis") continue;
     o.gate = classifyGate(o);
-    nextGate.set(o.id, o.gate);
-    const was = prev.get(o.id);
-    if (o.gate === "open" && isLocked(was) && o.netPct > 0) gg.__arbReopenedAt!.set(o.id, ts);
-    const ra = gg.__arbReopenedAt!.get(o.id);
+    const rk = routeKey(o);
+    nextGate.set(rk, o.gate);
+    const was = prev.get(rk);
+    if (o.gate === "open" && isLocked(was) && o.netPct > 0) gg.__arbReopenedAt!.set(rk, ts);
+    const ra = gg.__arbReopenedAt!.get(rk);
     if (ra != null) {
       if (ts - ra < REOPEN_FLASH_MS && o.gate === "open") o.reopenedAt = ra;
-      else gg.__arbReopenedAt!.delete(o.id);
+      else gg.__arbReopenedAt!.delete(rk);
     }
     o.depth = depthOf(o.id);
     // 잠금이 걸리거나 풀리는 전환만 기록한다 (unknown↔open 같은 키 유무 잡음은 제외).
