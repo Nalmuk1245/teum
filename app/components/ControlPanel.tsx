@@ -14,8 +14,7 @@ import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON,
 
 export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number };
 
-export type AutoEntryCfg = { armed: boolean; minNet: number; minHeld: number; sizeUsd: number };
-export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wide }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; autoEntry?: AutoEntryCfg; onAutoEntry?: (v: AutoEntryCfg) => void; wide?: boolean }) {
+export function ControlPanel({ runs, killed, onOpen, wide }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; wide?: boolean }) {
   const inFlight = inFlightUsd();
   const runsBlock = runs.length > 0
     ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
@@ -28,11 +27,9 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
         {runsBlock}
         <SectionLabel>안전장치</SectionLabel>
         <KillCard killed={killed} />
-        {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
         <ReopenCard killed={killed} />
         <SectionLabel>실행 현황</SectionLabel>
         <PnlCard />
-        <ExecQualityCard />
         <SectionLabel>실행 도구</SectionLabel>
         <SellTriggerCard />
         <GatesCard />
@@ -56,7 +53,6 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
           {/* 리스크 한도 편집은 ⚙ 설정 모달에 있다 (운영자 결정 2026-08-22 —
               한도는 자주 만지는 값이 아니라 탭 자리를 안 준다). 대시보드
               "한도 조정 →"이 설정 모달을 바로 연다. */}
-          {autoEntry && onAutoEntry && <AutoEntryCard cfg={autoEntry} onChange={onAutoEntry} killed={killed} />}
           <ReopenCard killed={killed} />
         </div>
         {/* ② 실행 현황·기록 */}
@@ -64,7 +60,6 @@ export function ControlPanel({ runs, killed, onOpen, autoEntry, onAutoEntry, wid
           <SectionLabel>실행 현황</SectionLabel>
           {runs.length === 0 && runsBlock}
           <PnlCard />
-          <ExecQualityCard />
         </div>
         {/* ③ 실행 도구 — 자동매도·입출금 게이트·핫월렛 */}
         <div style={col}>
@@ -109,7 +104,7 @@ function StatusCard({ runs, killed, inFlight }: { runs: RunView[]; killed: boole
   return (
     <div style={{ border: `1px solid ${killed ? "var(--neg)" : "var(--border)"}`, borderRadius: "var(--radius)", overflow: "hidden" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" }}>
-        {/* 셀은 4개로 끝낸다 — "자동 진입"은 바로 아래 AutoEntryCard가, "상장
+        {/* 셀은 4개로 끝낸다 — "재개 자동 실행"은 아래 ReopenCard가, "상장
             감시"는 대시보드 감시 카드가 담당한다. 같은 상태를 두 번 찍는 셀은
             밀도만 높이고 정보를 안 늘린다. */}
         {cell("상태", killed ? "중단됨" : errored > 0 ? "오류" : running > 0 ? "실행 중" : "대기", killed ? "var(--neg)" : errored > 0 ? "var(--amber)" : running > 0 ? "var(--pos)" : undefined)}
@@ -1038,66 +1033,6 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
   );
 }
 
-
-// ── 실행 품질 — 거래소별 Order-to-Ack · 슬리피지 (DRY 포함: 페이퍼 트레이딩 데이터) ──
-// 페이퍼와 실전이 같은 스키마로 쌓여, 실전 전환 후 "모의가 얼마나 정확했나"를
-// 같은 표에서 비교한다. 데이터는 execStep이 주문마다 남긴다 (exec-metrics.jsonl).
-export function ExecQualityCard() {
-  type Ack = { venue: string; op: string; n: number; dryN: number; okPct: number; p50Ms: number | null; p95Ms: number | null };
-  type Slip = { venue: string; n: number; meanPct: number; p90Pct: number; worstPct: number };
-  const [data, setData] = useState<{ total: number; dryN: number; ack: Ack[]; slip: Slip[] } | null>(null);
-  useEffect(() => {
-    const load = () => fetch("/api/exec-metrics", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
-    void load();
-    const id = setInterval(load, 30_000);
-    return () => clearInterval(id);
-  }, []);
-  const ms = (v: number | null) => (v == null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`);
-  const OP_KO: Record<string, string> = { buy: "매수", sell: "매도", hedge: "헷지", close: "청산", withdraw: "출금" };
-  return (
-    <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700 }}>실행 품질</span>
-        {data && data.total > 0 && <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{data.total}주문{data.dryN > 0 ? ` · 페이퍼 ${data.dryN}` : ""}</span>}
-      </div>
-      {!data || data.total === 0 ? (
-        <div style={{ color: "var(--text-mute)", fontSize: 12 }}>기록 없음 — 주문(모의 포함)이 나가면 Order-to-Ack·슬리피지가 여기 쌓입니다</div>
-      ) : (
-        <>
-          <div style={{ ...({ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" } as React.CSSProperties), marginBottom: 4 }}>Order-to-Ack (거래소 × 단계)</div>
-          <div style={{ marginBottom: 10 }}>
-            {data.ack.slice(0, 8).map((a) => (
-              <div key={`${a.venue}:${a.op}`} className="tnum" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11.5 }}>
-                <span style={{ color: "var(--text-dim)", minWidth: 0 }}>{vlabel(a.venue)} {OP_KO[a.op] ?? a.op}</span>
-                {a.okPct < 100 && <span style={{ color: "var(--amber)", fontSize: 10 }}>성공 {a.okPct}%</span>}
-                <span style={{ flex: 1 }} />
-                <span style={{ color: "var(--text-mute)", fontSize: 10.5 }}>{a.n}건</span>
-                <span>p50 <b>{ms(a.p50Ms)}</b></span>
-                <span style={{ color: "var(--text-dim)" }}>p95 {ms(a.p95Ms)}</span>
-              </div>
-            ))}
-          </div>
-          {data.slip.length > 0 && (
-            <>
-              <div style={{ ...({ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" } as React.CSSProperties), marginBottom: 4 }}>슬리피지 (스냅샷가 대비 · +가 불리)</div>
-              {data.slip.map((sl) => (
-                <div key={sl.venue} className="tnum" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11.5 }}>
-                  <span style={{ color: "var(--text-dim)" }}>{vlabel(sl.venue)}</span>
-                  <span style={{ flex: 1 }} />
-                  <span style={{ color: "var(--text-mute)", fontSize: 10.5 }}>{sl.n}건</span>
-                  <span>평균 <b style={{ color: Math.abs(sl.meanPct) > 0.3 ? "var(--amber)" : "var(--text)" }}>{sl.meanPct >= 0 ? "+" : ""}{sl.meanPct.toFixed(2)}%</b></span>
-                  <span style={{ color: "var(--text-dim)" }}>p90 {sl.p90Pct >= 0 ? "+" : ""}{sl.p90Pct.toFixed(2)}%</span>
-                  <span style={{ color: Math.abs(sl.worstPct) > 1 ? "var(--neg)" : "var(--text-mute)" }}>최악 {sl.worstPct >= 0 ? "+" : ""}{sl.worstPct.toFixed(2)}%</span>
-                </div>
-              ))}
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 export function PnlCard() {
   const [data, setData] = useState<{ trades: TradeRec[]; stats: TradeStats } | null>(null);
   useEffect(() => {
@@ -1282,67 +1217,6 @@ function ReopenCard({ killed }: { killed: boolean }) {
     </div>
   );
 }
-
-function AutoEntryCard({ cfg, onChange, killed }: { cfg: AutoEntryCfg; onChange: (v: AutoEntryCfg) => void; killed: boolean }) {
-  const num = (v: string) => Number(v.replace(/[^\d.]/g, "")) || 0;
-  // 켜기는 "자동 매수를 무장"하는 행동이라 두 번 눌러야 한다 — 첫 클릭은 확인 요청,
-  // 4초 안에 다시 누르면 켜짐. 끄기는 즉시(안전한 방향은 마찰이 없어야 한다).
-  const [confirming, setConfirming] = useState(false);
-  useEffect(() => {
-    if (!confirming) return;
-    const id = setTimeout(() => setConfirming(false), 4000);
-    return () => clearTimeout(id);
-  }, [confirming]);
-  const toggle = () => {
-    if (cfg.armed) { onChange({ ...cfg, armed: false }); setConfirming(false); return; }
-    if (!confirming) { setConfirming(true); return; }
-    setConfirming(false); onChange({ ...cfg, armed: true });
-  };
-  const field = (label: string, key: "minNet" | "minHeld" | "sizeUsd", suffix: string) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)" }}>
-        <input className="tnum" inputMode="decimal" value={String(cfg[key])} disabled={cfg.armed}
-          onChange={(e) => onChange({ ...cfg, [key]: num(e.target.value) })}
-          style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: "var(--text)", fontSize: 13, outline: "none" }} />
-        <span style={{ color: "var(--text-mute)", fontSize: 11 }}>{suffix}</span>
-      </div>
-    </label>
-  );
-  return (
-    // 무장 상태는 앰버(주의)다 — 파랑은 "실행 가능한 것"의 색이지 "위험이 켜진 것"의 색이 아니다.
-    <div style={{ background: cfg.armed ? "color-mix(in srgb, var(--amber) 12%, transparent)" : "var(--card)", border: `1px solid ${cfg.armed ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700 }}>조건부 자동 진입</span>
-        <span style={{ width: 6, height: 6, borderRadius: 9, background: cfg.armed ? "var(--amber)" : "var(--text-mute)" }} />
-        <span style={{ fontSize: 11, fontWeight: cfg.armed ? 700 : 400, color: cfg.armed ? "var(--amber)" : "var(--text-mute)" }}>{cfg.armed ? "무장됨" : "꺼짐"}</span>
-        <span style={{ flex: 1 }} />
-        {confirming && !cfg.armed && (
-          <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 600 }}>자동 매수가 켜집니다 — 한 번 더</span>
-        )}
-        <button type="button" disabled={killed} onClick={toggle}
-          title={cfg.armed ? "자동 진입 끄기" : "조건 충족 시 자동으로 매수+헷지 — 두 번 눌러 켭니다"}
-          style={{ borderRadius: "var(--radius-sm)", padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer",
-            border: `1px solid ${cfg.armed ? "var(--border-strong)" : "var(--amber)"}`,
-            background: cfg.armed ? "transparent" : confirming ? "var(--amber)" : "color-mix(in srgb, var(--amber) 16%, transparent)",
-            color: cfg.armed ? "var(--text)" : confirming ? "var(--brand-ink)" : "var(--amber)",
-            transition: "background 120ms, color 120ms" }}>
-          {cfg.armed ? "끄기" : confirming ? "확인 · 켜기" : "켜기"}
-        </button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginTop: 10 }}>
-        {field("최소 순수익", "minNet", "%")}
-        {field("최소 지속", "minHeld", "s")}
-        {field("규모", "sizeUsd", "$")}
-      </div>
-      <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginTop: 8, lineHeight: 1.5 }}>
-        조건 충족 시 자동으로 매수+헷지까지 진입하고 <b>출금 직전에 멈춥니다</b>(승인 필요). 동시 1건 ·
-        코인당 30분 쿨다운 · 킬스위치 하위 · 브라우저가 열려 있어야 동작. 켜짐 상태는 저장되지 않음(세션마다 직접 켜기).
-      </div>
-    </div>
-  );
-}
-
 
 // ── 거래소 온체인 보유량 (상장따리 물량 신호) ─────────────────────────────────
 type HoldingsData = {

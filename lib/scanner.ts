@@ -74,7 +74,7 @@ export async function scanAll(): Promise<Opportunity[]> {
   // 목업은 "라이브 데이터가 없는 전략"의 빈자리만 채운다 — 실측 행과 가짜
   // 행이 같은 보드에 섞이면(예: 목업 PEPE +6.9% vs 실측 PEPE −0.4%) 보드
   // 전체의 신뢰가 무너진다.
-  if (CONFIG.USE_MOCK) {
+  if (CONFIG.MOCK_OPPS) {
     const liveKinds = new Set(opps.map((o) => o.kind));
     opps.push(...MOCK_OPPS().filter((m) => !liveKinds.has(m.kind)));
   }

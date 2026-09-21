@@ -6,6 +6,9 @@ export const CONFIG = {
   DRY_RUN: (process.env.PAPER ?? process.env.DRY_RUN) !== "false",
   /** Inject sample opportunities so the board renders without live/KR data. */
   USE_MOCK: process.env.USE_MOCK !== "false",
+  /** 목업 **기회 행**(가짜 XRP/SOL/PEPE). 키 없이도 실데이터 김프가 뜨니 기본 꺼짐 —
+   *  빈 전략 탭을 채우고 싶을 때만 MOCK_OPPS=true. 잔고 데모(USE_MOCK)와는 별개. */
+  MOCK_OPPS: process.env.MOCK_OPPS === "true",
   /** USD/KRW fallback when no live FX source is wired. */
   USD_KRW: Number(process.env.USD_KRW ?? 1390),
   /** Assets excluded from premium-based strategies (stables / wrapped). */

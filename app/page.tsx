@@ -83,23 +83,7 @@ export default function Cockpit() {
   const [inspectId, setInspectId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null); // 딥링크용 초기 탭
-  // 테마 — 다크 기본(상시 감시 화면), 라이트는 수동 토글 (persisted).
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  useEffect(() => {
-    try {
-      if (localStorage.getItem("ac.theme") === "light") {
-        setTheme("light");
-        document.documentElement.dataset.theme = "light";
-      }
-    } catch { /* private mode */ }
-  }, []);
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    if (next === "light") document.documentElement.dataset.theme = "light";
-    else delete document.documentElement.dataset.theme;
-    try { localStorage.setItem("ac.theme", next); } catch { /* */ }
-  };
+  // 테마는 다크 고정 — 상시 트레이딩 화면이라 라이트 토글은 2026-09-21 제거.
 
   // Ordering guard — a stale /api/scan response must never overwrite a newer
   // one. Compare against the last APPLIED seq (not the last issued): requiring
@@ -293,43 +277,7 @@ export default function Cockpit() {
 
   // ── 조건부 자동 진입 (opt-in) — browser must be open (engine is client-side).
   // Enters automatically when a gap meets ALL of: executable (live gates),
-  // hedgeable, live net ≥ minNet, held ≥ minHeld. Entry runs to beforeWithdraw
-  // (buy+hedge auto, the irreversible withdraw still needs a human tap).
-  const [autoEntry, setAutoEntryState] = useState({ armed: false, minNet: 0.8, minHeld: 60, sizeUsd: 300 });
-  useEffect(() => {
-    try { const v = JSON.parse(localStorage.getItem("ac.autoentry") || "null"); if (v) setAutoEntryState((p) => ({ ...p, ...v, armed: false })); } catch { /* */ }
-  }, []); // armed never persists — re-arm each session deliberately
-  const setAutoEntry = (v: typeof autoEntry) => {
-    setAutoEntryState(v);
-    localStorage.setItem("ac.autoentry", JSON.stringify({ ...v, armed: false }));
-  };
-  const autoCooldown = useRef(new Map<string, number>());
-  // Driven by its OWN interval reading refs, not by the 600ms overlay dependency.
-  // As a render-cadence effect it re-scanned the whole board ~100×/min to
-  // (usually) do nothing, and re-ran on every unrelated re-render.
-  const autoRefs = useRef({ autoEntry, gapOpps, liveOverlay, killed: runsStore.killed, activeRuns });
-  autoRefs.current = { autoEntry, gapOpps, liveOverlay, killed: runsStore.killed, activeRuns };
-  useEffect(() => {
-    const tick = () => {
-      const { autoEntry: cfg, gapOpps: rows2, liveOverlay: ov, killed, activeRuns: active } = autoRefs.current;
-      if (!cfg.armed || killed) return;
-      if (active > 0) return; // one position at a time
-      for (const o of rows2) {
-        if (o.mock || !o.executable || !o.hasPerp) continue;
-        const net = ov[o.id]?.netPct ?? o.netPct;
-        if (net < cfg.minNet) continue;
-        if ((o.persistence?.heldSec ?? 0) < cfg.minHeld) continue;
-        const last = autoCooldown.current.get(o.base) ?? 0;
-        if (Date.now() - last < 30 * 60_000) continue; // per-coin cooldown
-        autoCooldown.current.set(o.base, Date.now());
-        void startRun({ opp: o, sizeUsd: cfg.sizeUsd, hedge: true, autoLevel: "beforeWithdraw" })
-          .then((res) => { if (!("error" in res)) beep(); });
-        break; // at most one entry per tick
-      }
-    };
-    const id = setInterval(tick, 2000);
-    return () => clearInterval(id);
-  }, []);
+   // 브라우저 자동 진입(탭이 열려 있어야 도는 방식)은 2026-09-21 제거 — 서버 쪽 재개 자동 실행(lib/reopen.ts)이 대체한다.
 
   return (
     // PC 확대 — 인라인 px가 수백 곳이라 base font로는 못 키운다. zoom은
@@ -389,18 +337,6 @@ export default function Cockpit() {
           }}
         >
           <span style={{ display: "block", lineHeight: 1, transform: "translateY(0.5px)" }}>⚙</span>
-        </button>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          title={theme === "dark" ? "라이트 모드" : "다크 모드"}
-          style={{
-            border: "1px solid var(--border-strong)", background: "transparent",
-            color: "var(--text-dim)", borderRadius: 999, width: 28, height: 28, boxSizing: "border-box",
-            display: "grid", placeItems: "center", fontSize: 12, lineHeight: 1, cursor: "pointer",
-          }}
-        >
-          <span style={{ display: "block", lineHeight: 1 }}>{theme === "dark" ? "☾" : "☀"}</span>
         </button>
         <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
         {meta?.mock && !isMobile && <Pill text="목업" tone="var(--sky)" soft />}
@@ -507,8 +443,6 @@ export default function Cockpit() {
             runs={runList}
             killed={runsStore.killed}
             onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }}
-            autoEntry={autoEntry}
-            onAutoEntry={setAutoEntry}
             wide={!isMobile}
           />
         )}
