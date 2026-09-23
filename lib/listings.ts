@@ -13,6 +13,7 @@ import type { Venue } from "./types";
 import { notifyNow } from "./telegram";
 import { loadSection, saveSection } from "./persist";
 import { primeUpbitMarkets } from "./exchanges";
+import { priceConsensus } from "./priceConsensus";
 
 const ANN_POLL_MS = 2500; // announcements are a sub-second race — poll tight
 
@@ -143,7 +144,11 @@ const L = g.__arbListings;
 // probing in order cost 2-3 serial round-trips (~600ms typical, up to 9s) — and
 // this sits directly in front of the listing alert AND the auto-buy. Preference
 // order is preserved by picking the first venue in `tries` that answered.
-export async function globalVenueFor(base: string): Promise<{ venue: string; price: number } | null> {
+/** 해외 매수처 — 세 거래소 가격을 대조해 **합의 묶음** 안에서 선호 순(바낸>바이비트>OKX)으로 고른다.
+ *  티커가 같아도 다른 토큰일 수 있다(2026-08 LIT: 바낸 $0.74 ≠ 바이비트·OKX $5.15). 예전엔
+ *  "바낸에 있으면 바낸"이라 공지 자동매수가 엉뚱한 토큰을 살 수 있었다.
+ *  ambiguous = 서로 다 다름(판단 불가 — 무인 매수 금지), outliers = 튀는 거래소. */
+export async function globalVenueFor(base: string): Promise<{ venue: string; price: number; ambiguous?: boolean; outliers?: string[]; single?: boolean } | null> {
   const tries: [string, string][] = [
     ["binance", `https://api.binance.com/api/v3/ticker/price?symbol=${base}USDT`],
     ["bybit", `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${base}USDT`],
@@ -164,11 +169,14 @@ export async function globalVenueFor(base: string): Promise<{ venue: string; pri
       return null;
     }
   });
-  for (const p of inflight) {
-    const r = await p; // already in flight — no extra round-trip
-    if (r) return r;
-  }
-  return null;
+  // 전부 기다린다 — 대조하려면 셋 다 필요하다. 동시에 쏘므로 추가 지연은 가장 느린 응답과
+  // 가장 빠른 응답의 차이(보통 수백 ms, 최대 타임아웃 3초)뿐이다. 엉뚱한 토큰을 사는 것보다 싸다.
+  const got = (await Promise.all(inflight)).filter((r): r is { venue: string; price: number } => !!r);
+  if (!got.length) return null;
+  const c = priceConsensus(got);
+  if (c.ambiguous) return { ...got[0], ambiguous: true, outliers: c.outliers };
+  const pick = got.find((g) => c.agreed.includes(g.venue))!;
+  return { ...pick, outliers: c.outliers.length ? c.outliers : undefined, single: c.single || undefined };
 }
 
 // ── 자동매수 프리셋 (공지 감지 즉시) ──────────────────────────────────────────
@@ -381,8 +389,13 @@ async function registerPlayInner(
   // 드릴은 라이브에서 자동매수 금지 (DRY에선 전체 플로우 리허설).
   const { CONFIG } = await import("./config");
   if (fromAnnouncement && g2 && (!opts?.drill || CONFIG.DRY_RUN)) {
-    if (detect) detect.autoBuyMs = Date.now() - detect.at;
-    void autoBuy(base, g2.venue, g2.price);
+    if (g2.ambiguous) {
+      // 거래소마다 가격이 제각각 — 어느 게 상장 코인인지 모른다. 무인으로 사지 않는다.
+      void notifyNow(`⚠️ <b>${base}</b> 자동매수 보류 — 해외 거래소 가격이 서로 달라 같은 토큰인지 불명 (${g2.outliers?.join("·")}). 수동 확인`);
+    } else {
+      if (detect) detect.autoBuyMs = Date.now() - detect.at;
+      void autoBuy(base, g2.venue, g2.price);
+    }
   }
   const head = fromAnnouncement ? "📢 상장 공지" : "🚨 거래 개시";
   if (detect) detect.alertMs = Date.now() - detect.at;
@@ -607,7 +620,8 @@ async function trackPlays() {
     // Peak vs announcement price (성과 히스토리 데이터).
     if (p.overseas && p.globalPrice && p.globalPrice > 0) {
       const g2 = await globalVenueFor(p.base).catch(() => null);
-      if (g2 && g2.price > 0) {
+      // 같은 거래소 가격끼리만 비교한다 — 합의 판정으로 매수처가 바뀌면 다른 토큰 가격을 피크로 잴 수 있다.
+      if (g2 && g2.price > 0 && !g2.ambiguous && (!p.globalVenue || g2.venue === p.globalVenue)) {
         const pct = ((g2.price - p.globalPrice) / p.globalPrice) * 100;
         if (p.peakPct == null || pct > p.peakPct) { p.peakPct = pct; p.peakAt = now; }
       }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { vlabel } from "../cockpit-ui";
+import { PremiumChart, type Spec } from "../PremiumChart";
 import { CAP, BTN_GHOST, type CexRow, type DexRow } from "./shared";
 
 // ── 차트 — CEX는 TradingView, DEX는 DexScreener 임베드 ────────────────────────
@@ -13,9 +14,26 @@ export const TV_SYMBOL: Record<string, (b: string) => string> = {
   bithumb: (b) => `BITHUMB:${b}KRW`,
 };
 
-export function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; dex: DexRow[] }) {
-  type Opt = { key: string; label: string; src: string };
+// 갭 차트 캔들 소스(lib/premiumSeries)가 있는 해외 거래소만 — OKX는 아직 없다.
+const GLOBAL_PREF = ["binance", "bybit"];
+const KR_V = ["upbit", "bithumb"];
+
+export function ChartSection({ base, cex, dex, krVenue }: { base: string; cex: CexRow[]; dex: DexRow[]; krVenue?: string }) {
+  // 갭 탭 — 두 거래소 가격과 그 차이(%)를 1분봉으로. 상장따리는 "국내 개장 후 김프가
+  // 얼마나 붙었다 꺼지나"와 "공지 직후 해외 거래소끼리 가격이 벌어지나"가 판단의 절반이다.
+  // 캔들은 각 거래소 공개 API에서 요청 시점에 만든다(lib/premiumSeries) — KR 개장 전엔
+  // KR 캔들이 없으니 김프 탭은 개장 뒤에만 생긴다.
+  type Opt = { key: string; label: string; src?: string; gap?: { a: Spec; b: Spec } };
+  // 다른 토큰 의심(suspect) 거래소는 갭 계산에서 뺀다 — 넣으면 +587% 같은 유령 갭이 그려진다.
+  const listed = new Set<string>(cex.filter((r) => r.listed && !r.suspect).map((r) => r.venue));
+  const globals = GLOBAL_PREF.filter((v) => listed.has(v));
+  const krs = KR_V.filter((v) => listed.has(v)).sort((a, b) => (a === krVenue ? -1 : b === krVenue ? 1 : 0));
+  const gapOpts: Opt[] = [
+    ...(krs[0] && globals[0] ? [{ key: `gap:${krs[0]}:${globals[0]}`, label: `김프 ${vlabel(krs[0] as never)}·${vlabel(globals[0] as never)}`, gap: { a: { venue: krs[0], market: "spot" as const }, b: { venue: globals[0], market: "spot" as const } } }] : []),
+    ...(globals.length >= 2 ? [{ key: `gap:${globals[0]}:${globals[1]}`, label: `해외갭 ${vlabel(globals[0] as never)}·${vlabel(globals[1] as never)}`, gap: { a: { venue: globals[0], market: "spot" as const }, b: { venue: globals[1], market: "spot" as const } } }] : []),
+  ];
   const opts: Opt[] = [
+    ...gapOpts,
     ...cex.filter((r) => r.listed && TV_SYMBOL[r.venue]).map((r) => ({
       key: `cex:${r.venue}`,
       label: vlabel(r.venue as never) ?? r.venue,
@@ -58,7 +76,12 @@ export function ChartSection({ base, cex, dex }: { base: string; cex: CexRow[]; 
         <span style={{ flex: 1 }} />
         <button type="button" style={BTN_GHOST} onClick={() => setOpen(!open)}>{open ? "접기" : "펼치기"}</button>
       </div>
-      {open && active && (
+      {open && active?.gap && (
+        <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", background: "var(--card)" }}>
+          <PremiumChart key={active.key} coin={base} a={active.gap.a} b={active.gap.b} unit={1} compact costPct={null} />
+        </div>
+      )}
+      {open && active?.src && (
         <iframe
           key={active.key /* venue 전환 시 강제 재로드 */}
           src={active.src}

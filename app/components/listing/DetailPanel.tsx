@@ -372,7 +372,7 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
       </div>
 
       {/* ② 차트 */}
-      <ChartSection base={base} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
+      <ChartSection base={base} krVenue={play?.venue} cex={d.cex} dex={d.dex.filter((x) => !x.note || x.verified || x.note.includes("키"))} />
 
       {/* ③ 매수·매도 — CEX+DEX 통합 표, 금액 입력은 표 머리에 */}
       {sec("매수 · 매도", (
@@ -394,19 +394,20 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
               {r.listed ? <VenueLink venue={r.venue} base={base} /> : (vlabel(r.venue as never) ?? r.venue)}
             </span>
             <span className="tnum" style={{ textAlign: "right", color: r.listed ? "var(--text)" : "var(--text-mute)" }}>
-              {r.listed ? (r.priceKrw != null ? `₩${r.priceKrw.toLocaleString()}` : `$${fmtPx(r.priceUsd)}`) : "미상장"}
+              {r.listed ? (r.priceKrw != null ? `₩${r.priceKrw.toLocaleString()}` : `$${fmtPx(r.priceUsd)}`) : "미상장"}{r.suspect && <span style={{ color: "var(--neg)" }}> ⚠</span>}
             </span>
             {!mob && <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>{r.myCashUsd != null ? fmtUsd(r.myCashUsd) : d.balancesPending ? "…" : "키없음"}</span>}
             {!mob && <span className="tnum" style={{ textAlign: "right",
               color: (r.myCoinQty ?? 0) > 0 ? "var(--amber)"
                 : play && !play.opened && r.venue === play.venue ? "var(--amber)" : "var(--text-mute)",
               fontWeight: play && !play.opened && r.venue === play.venue ? 700 : 400 }}>
-              {(r.myCoinQty ?? 0) > 0 ? `보유 ${r.myCoinQty!.toFixed(3)}`
+              {r.suspect ? <span style={{ color: "var(--neg)", fontWeight: 700 }} title="다른 해외 거래소와 가격이 크게 다름 — 같은 티커의 다른 토큰이거나 거래가 멈춘 시장">⚠ 다른 토큰 의심</span>
+                : (r.myCoinQty ?? 0) > 0 ? `보유 ${r.myCoinQty!.toFixed(3)}`
                 : play && !play.opened && r.venue === play.venue ? "★ 상장 예정 — 개장 후 매도처"
                 : ["upbit", "bithumb"].includes(r.venue) ? "개장 후 매도처" : "—"}
             </span>}
             <span style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
-              {r.listed && ["binance", "bybit", "okx"].includes(r.venue) && (
+              {r.listed && !r.suspect && ["binance", "bybit", "okx"].includes(r.venue) && (
                 <button type="button" style={BTN} disabled={busy != null || size <= 0}
                   onClick={() => void act(`buy:${r.venue}`, "/api/listing-buy", { base, venue: r.venue, sizeUsd: size })}>
                   {busy === `buy:${r.venue}` ? "…" : "매수"}

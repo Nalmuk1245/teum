@@ -35,9 +35,14 @@ export async function POST(req: Request) {
     if (venue && !["binance", "bybit", "okx"].includes(venue)) {
       return NextResponse.json({ ok: false, message: `지원 안 하는 거래소: ${venue}` }, { status: 400 });
     }
+    // 티커 충돌 방어 — 요청한 거래소가 다른 거래소들과 가격이 크게 다르면 다른 토큰이다.
+    const g = await globalVenueFor(base);
+    if (venue && g?.outliers?.includes(venue) && !g.ambiguous) {
+      return NextResponse.json({ ok: false, message: `${venue}의 ${base}는 다른 거래소와 가격이 크게 달라 다른 토큰으로 보입니다 — 매수 차단 (합의: ${g.venue} @ ${g.price})` }, { status: 409 });
+    }
     if (!venue) {
-      const g = await globalVenueFor(base);
       if (!g) return NextResponse.json({ ok: false, message: `${base} 해외 미상장 — 매수 불가` });
+      if (g.ambiguous) return NextResponse.json({ ok: false, message: `${base} 해외 거래소 가격이 서로 달라 어느 게 맞는 토큰인지 불명 — 거래소를 직접 지정하세요` }, { status: 409 });
       venue = g.venue; price = g.price;
     } else {
       // Explicit venue — grab its price so DRY runs still record a usable qty.

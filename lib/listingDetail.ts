@@ -3,6 +3,7 @@
 // my buying power), DEX executability (OKX quote), exchange hot/cold supply,
 // and my current position. The UI's detail panel is a straight render of this.
 
+import { priceConsensus } from "./priceConsensus";
 import { resolveToken, type ResolvedToken } from "./tokenResolve";
 import { getRoute, ensureRoute, noteLiquidity, topPair, LIQUIDITY_TTL_MS, type RouteChain } from "./tokenRoutes";
 import { QUOTE_STABLES, quoteDex, dexConfigured } from "./dex";
@@ -18,6 +19,8 @@ export type CexRow = {
   priceKrw: number | null;
   myCashUsd: number | null; // buying power at that venue (null = keys absent)
   myCoinQty: number | null; // existing position there
+  /** 다른 해외 거래소들과 가격이 크게 다름 — 같은 티커의 다른 토큰이거나 멈춘 시장 (priceConsensus) */
+  suspect?: boolean;
 };
 
 export type DexRow = {
@@ -260,8 +263,14 @@ export async function buildListingDetail(baseRaw: string, opts?: { fast?: boolea
     dex = rows.sort(byTradeability);
   }
 
-  // Kimchi read once KR side is trading: cheapest global vs cheapest KR.
-  const gUsd = Math.min(...cex.filter((r) => ["binance", "bybit", "okx"].includes(r.venue) && r.priceUsd != null).map((r) => r.priceUsd!), Infinity);
+  // 티커 충돌 표시 — 해외 거래소끼리 가격을 대조해 튀는 곳을 suspect로.
+  // KR은 대조에서 뺀다: 개장 직후 김프가 30%를 넘는 게 정상이라 KR을 넣으면 오판한다.
+  const gl = cex.filter((r) => ["binance", "bybit", "okx"].includes(r.venue) && r.listed && r.priceUsd != null);
+  const cons = priceConsensus(gl.map((r) => ({ venue: r.venue, price: r.priceUsd! })));
+  for (const r of gl) if (cons.outliers.includes(r.venue)) r.suspect = true;
+  // Kimchi read once KR side is trading: cheapest AGREED global vs cheapest KR.
+  // 예전엔 "가장 싼 해외 가격"이라 다른 토큰($0.74)이 끼어 +587% 같은 유령값이 나왔다.
+  const gUsd = cons.ambiguous ? Infinity : Math.min(...gl.filter((r) => !r.suspect).map((r) => r.priceUsd!), Infinity);
   const kUsd = Math.min(...cex.filter((r) => ["upbit", "bithumb"].includes(r.venue) && r.priceUsd != null).map((r) => r.priceUsd!), Infinity);
   const kimchiPct = Number.isFinite(gUsd) && Number.isFinite(kUsd) ? ((kUsd - gUsd) / gUsd) * 100 : null;
 
