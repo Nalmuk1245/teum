@@ -4,6 +4,7 @@
 // 양쪽 거래소 차트(TradingView) + net% 히스토리 스파크라인(30분) + 비용 분해 +
 // 지속성/전송 리스크 + 실행 버튼. 데이터는 이미 보드가 든 opp + 히스토리 API.
 
+import { useCoinSheet } from "./coinSheetCtx";
 import React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Opportunity } from "@/lib/types";
@@ -222,6 +223,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
   onClose: () => void;
 }) {
   const km = KIND_META[opp.kind];
+  const openCoin = useCoinSheet();
   // 견적 프리페치 — 검사창을 열었다는 건 곧 실행 모달을 열 확률이 높다는 뜻.
   // 지금 서버 오더북 캐시를 데워 두면 모달의 첫 견적이 캐시 히트로 즉시 뜬다.
   // 결과는 버린다(모달이 다시 요청) — 목적은 서버 캐시 워밍뿐.
@@ -274,6 +276,8 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
         </span>
         <span style={{ flex: 1 }} />
         <span className="tnum" style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-0.03em", color: net > 0 ? "var(--pos)" : "var(--neg)" }}>{pct(net)}</span>
+        <button type="button" onClick={() => openCoin(opp.base)} title="체인별 입출금·거래소 온체인 보유량"
+          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--brand-2)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>코인 상세</button>
         <button type="button" onClick={onClose} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>닫기</button>
       </div>
 

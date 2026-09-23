@@ -9,6 +9,7 @@ import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, authHeaders, type RunView } from "@/lib/runStore";
 import { EpisodeChart } from "./EpisodeChart";
 import { PnlCalendar } from "./PnlCalendar";
+import { useCoinSheet } from "./coinSheetCtx";
 import { longestWindowSec, longestProfitableRunSec, mergeWindows, outlastsEta } from "@/lib/episodeStats";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
 
@@ -16,59 +17,34 @@ export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: n
 
 export function ControlPanel({ runs, killed, onOpen, wide }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; wide?: boolean }) {
   const inFlight = inFlightUsd();
-  const runsBlock = runs.length > 0
-    ? <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} />
-    : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "18px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 갭 탭에서 시작하면 여기에 표시됩니다</div>;
+  // 운영 탭은 "지금 돌고 있는 것과 멈추는 스위치"만. 끝난 런·손익·달력은 자산·기록 탭,
+  // 입출금·온체인 보유량 조회는 코인 상세 패널(헤더 🔍)로 옮겼다 (2026-09-23).
+  const live = runs.filter((r) => r.phase !== "done");
+  const runsBlock = live.length > 0
+    ? <RunsDashboard runs={live} onOpen={onOpen} onClearDone={() => {}} hero={wide} />
+    : <div style={{ color: "var(--text-mute)", fontSize: 12.5, textAlign: "center", padding: "14px 0", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>진행 중인 실행 없음 — 갭 탭에서 시작하면 여기에 표시됩니다</div>;
   const col: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 12, minWidth: 0 };
-  if (!wide) {
-    return (
-      <div style={{ ...col, paddingBottom: 40 }}>
-        <StatusCard runs={runs} killed={killed} inFlight={inFlight} />
-        {runsBlock}
-        <SectionLabel>안전장치</SectionLabel>
-        <KillCard killed={killed} />
-        <ReopenCard killed={killed} />
-        <SectionLabel>실행 현황</SectionLabel>
-        <PnlCard />
-        <SectionLabel>실행 도구</SectionLabel>
-        <SellTriggerCard />
-        <GatesCard />
-        <HoldingsCard />
-      </div>
-    );
-  }
-  // PC: 현황 풀폭 + 3컬럼, 성격별 그룹 — ① 안전장치(킬·리스크·자동진입)
-  // ② 활동·기록(실행 현황·거래손익) ③ 연결·도구(TG·입출금·도구).
-  // 컬럼 높이가 비슷해지도록 긴 목록(입출금)은 카드 안에서 스크롤.
+  const safety = (
+    <div style={col}>
+      <SectionLabel>안전장치</SectionLabel>
+      <KillCard killed={killed} />
+      <ReopenCard killed={killed} />
+    </div>
+  );
+  const tools = (
+    <div style={col}>
+      <SectionLabel>실행 도구</SectionLabel>
+      <SellTriggerCard />
+      <BlockedCoinsCard />
+    </div>
+  );
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 40 }}>
       <StatusCard runs={runs} killed={killed} inFlight={inFlight} />
-      {/* 진행 중 실행 = 최우선 — 풀폭 히어로로 크게 */}
-      {runs.length > 0 && <RunsDashboard runs={runs} onOpen={onOpen} onClearDone={() => {}} hero />}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr 1.1fr", gap: 12, alignItems: "start" }}>
-        {/* ① 안전장치 */}
-        <div style={col}>
-          <SectionLabel>안전장치</SectionLabel>
-          <KillCard killed={killed} />
-          {/* 리스크 한도 편집은 ⚙ 설정 모달에 있다 (운영자 결정 2026-08-22 —
-              한도는 자주 만지는 값이 아니라 탭 자리를 안 준다). 대시보드
-              "한도 조정 →"이 설정 모달을 바로 연다. */}
-          <ReopenCard killed={killed} />
-        </div>
-        {/* ② 실행 현황·기록 */}
-        <div style={col}>
-          <SectionLabel>실행 현황</SectionLabel>
-          {runs.length === 0 && runsBlock}
-          <PnlCard />
-        </div>
-        {/* ③ 실행 도구 — 자동매도·입출금 게이트·핫월렛 */}
-        <div style={col}>
-          <SectionLabel>실행 도구</SectionLabel>
-          <SellTriggerCard />
-          <GatesCard />
-          <HoldingsCard />
-        </div>
-      </div>
+      {runsBlock}
+      {wide
+        ? <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12, alignItems: "start" }}>{safety}{tools}</div>
+        : <>{safety}{tools}</>}
     </div>
   );
 }
@@ -94,7 +70,6 @@ function StatusCard({ runs, killed, inFlight }: { runs: RunView[]; killed: boole
   const running = runs.filter((r) => r.phase === "running").length;
   const paused = runs.filter((r) => r.phase === "paused").length;
   const errored = runs.filter((r) => r.phase === "error").length;
-  const pnl = risk?.realizedPnlUsd ?? 0;
   const cell = (label: string, value: React.ReactNode, tone?: string) => (
     <div style={{ padding: "10px 12px", borderRight: "1px solid var(--border)", minWidth: 0 }}>
       <div className="tnum" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.1, color: tone ?? "var(--text)", whiteSpace: "nowrap" }}>{value}</div>
@@ -104,13 +79,12 @@ function StatusCard({ runs, killed, inFlight }: { runs: RunView[]; killed: boole
   return (
     <div style={{ border: `1px solid ${killed ? "var(--neg)" : "var(--border)"}`, borderRadius: "var(--radius)", overflow: "hidden" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" }}>
-        {/* 셀은 4개로 끝낸다 — "재개 자동 실행"은 아래 ReopenCard가, "상장
+        {/* 셀은 3개로 끝낸다 — 손익은 자산·기록 탭 하나에만. 예전 주석: 4개로 끝낸다 — "재개 자동 실행"은 아래 ReopenCard가, "상장
             감시"는 대시보드 감시 카드가 담당한다. 같은 상태를 두 번 찍는 셀은
             밀도만 높이고 정보를 안 늘린다. */}
         {cell("상태", killed ? "중단됨" : errored > 0 ? "오류" : running > 0 ? "실행 중" : "대기", killed ? "var(--neg)" : errored > 0 ? "var(--amber)" : running > 0 ? "var(--pos)" : undefined)}
         {cell("실행 · 대기 · 오류", `${running} · ${paused} · ${errored}`, errored > 0 ? "var(--amber)" : undefined)}
         {cell("노출", risk ? `$${inFlight.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : `$${inFlight.toFixed(0)}`)}
-        {cell("오늘 실현 손익", `${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`, pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : undefined)}
       </div>
     </div>
   );
@@ -245,7 +219,9 @@ type SellTrig = {
   targetPrice?: number; floorPrice?: number; expectQty?: number; repeat: boolean;
   status: string; soldQty: number; proceeds: number; attempts: number; lastMsg?: string; dry: boolean;
 };
+const ENDED = new Set(["done", "cancelled", "error"]);
 export function SellTriggerCard() {
+  const [showEnded, setShowEnded] = useState(false);
   const [list, setList] = useState<SellTrig[]>([]);
   const [dry, setDry] = useState(true);
   const [f, setF] = useState({ venue: "upbit", base: "", mode: "market", fire: "hybrid", targetPrice: "", floorPrice: "", expectQty: "", repeat: false });
@@ -321,12 +297,12 @@ export function SellTriggerCard() {
         </div>
       )}
       {msg && <div style={{ fontSize: 11, color: "var(--neg)", marginBottom: 6 }}>{msg}</div>}
-      {list.length === 0 && !formOpen && (
+      {list.filter((t) => !ENDED.has(t.status)).length === 0 && !formOpen && (
         <div style={{ fontSize: 11.5, color: "var(--text-mute)", padding: "6px 0 2px" }}>무장된 트리거 없음 — "+ 등록"으로 만듭니다</div>
       )}
       {list.length > 0 && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 4, marginTop: formOpen ? 0 : 4 }}>
-          {list.map((t) => (
+          {list.filter((t) => showEnded || !ENDED.has(t.status)).map((t) => (
             <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 11.5, borderTop: "1px solid var(--border)" }}>
               <b>{t.base}</b>
               <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{VENUE_LABEL[t.venue] ?? t.venue} · {modeKo[t.mode]}{t.fire === "hammer" ? "·해머" : ""}{t.repeat ? "·반복" : ""}</span>
@@ -337,6 +313,13 @@ export function SellTriggerCard() {
               )}
             </div>
           ))}
+          {/* 끝난 트리거(완료·취소·오류)는 접는다 — 살아서 주문을 낼 수 있는 것만 기본 표시 */}
+          {list.some((t) => ENDED.has(t.status)) && (
+            <button type="button" onClick={() => setShowEnded((v) => !v)}
+              style={{ border: "none", background: "transparent", color: "var(--text-mute)", fontSize: 11, cursor: "pointer", padding: "6px 0 0" }}>
+              {showEnded ? "지난 트리거 접기" : `지난 트리거 ${list.filter((t) => ENDED.has(t.status)).length}건`}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -345,7 +328,7 @@ export function SellTriggerCard() {
 const SEL: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12, minWidth: 0 };
 const INP: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 };
 
-// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────
+// ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────
 // "어제 그 김프, 얼마나 지속됐고 왜 못 먹었나"의 답. 데이터는 스캔 루프가
 // data/episodes.jsonl에 적재한 것(lib/episodes.ts) — 여긴 읽기만 한다.
 type Episode = {
@@ -641,139 +624,44 @@ export function ManualTokenCard() {
 
 export type GateRow = { base: string; venues: Record<string, { deposit: boolean; withdraw: boolean } | null> };
 
-export function GatesCard() {
-  const [q, setQ] = useState("");
-  const [data, setData] = useState<{ venues: string[]; rows: GateRow[]; missing?: string[] } | null>(null);
+/** 운영 탭의 입출금 요약 — 막힌 코인만 칩으로. 누르면 코인 상세 패널(체인별·보유량).
+ *  예전 입출금 조회 카드(511행 목록·검색)는 코인 상세 패널로 옮겼다. */
+export function BlockedCoinsCard() {
+  const openCoin = useCoinSheet();
+  const [data, setData] = useState<{ rows: GateRow[]; missing?: string[] } | null>(null);
   useEffect(() => {
-    fetch("/api/gates", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
+    const load = () => fetch("/api/gates", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
   }, []);
-  // 기본은 **막힌 코인만**. 이 카드에 오는 이유는 "지금 뭐가 막혔나"인데,
-  // 500행 전체를 항상 그리면 운영 탭이 데이터 덤프가 된다 — 대시보드도 이미
-  // "중단 N종"만 요약한다. 특정 코인 확인은 검색으로(전체에서 찾음), 전체
-  // 목록은 명시적 토글로 연다. 절단이 아니라 접힘이다 — 개수는 항상 보인다.
-  // (전체 모드에선 예전 결정 유지: 자르지 않고 다 보여주고 컨테이너가 스크롤.)
-  const [showAll, setShowAll] = useState(false);
-  const isBlocked = (r: GateRow) => Object.values(r.venues).some((s) => s && (!s.deposit || !s.withdraw));
-  const rows = useMemo(() => {
-    if (!data) return [];
-    const term = q.trim().toUpperCase();
-    let list = term ? data.rows.filter((r) => r.base.includes(term)) : data.rows.slice();
-    if (!term && !showAll) list = list.filter(isBlocked);
-    // 막힌 것 먼저 — 가나다순 500줄 속에서 막힌 코인은 영영 눈에 안 띈다.
-    return list.sort((a, b) => (isBlocked(b) ? 1 : 0) - (isBlocked(a) ? 1 : 0) || a.base.localeCompare(b.base));
-  }, [data, q, showAll]);
-  // 집계는 표시 목록이 아니라 전체 기준 — 접힘 상태에서도 참이어야 한다.
-  const blockedCount = useMemo(() => (data ? data.rows.filter(isBlocked).length : 0), [data]);
-  const cell = (s: { deposit: boolean; withdraw: boolean } | null) => {
-    if (!s) return <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>키필요</span>;
-    const tag = (on: boolean, t: string) => (
-      <span style={{ fontSize: 10.5, fontWeight: 700, color: on ? "var(--pos)" : "var(--neg)" }}>{t}</span>
-    );
-    return <span style={{ display: "inline-flex", gap: 4 }}>{tag(s.deposit, "입")}{tag(s.withdraw, "출")}</span>;
-  };
-
-  // 행 펼침 — 어떤 체인이 열리고 막혔는지. "코인이 열렸다"는 요약은 어느 한
-  // 체인만 열려 있어도 참이라, 실제 전송 경로를 고르려면 체인 단위가 필요하다.
-  const [openBase, setOpenBase] = useState<string | null>(null);
-  type NetRow = { net: string; deposit: boolean; withdraw: boolean; feeCoin?: number; isDefault?: boolean };
-  const [nets, setNets] = useState<Record<string, Record<string, NetRow[]>>>({});
-  const toggleRow = (base: string) => {
-    const next = openBase === base ? null : base;
-    setOpenBase(next);
-    if (next && !nets[next]) {
-      fetch(`/api/gate-networks?coin=${encodeURIComponent(next)}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((j) => setNets((p) => ({ ...p, [next]: j.networks ?? {} })))
-        .catch(() => {});
-    }
-  };
+  const blocked = useMemo(() => (data ? data.rows.filter((r) => Object.values(r.venues).some((v) => v && (!v.deposit || !v.withdraw))) : []), [data]);
+  const SHOW = 18;
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>입출금 상태 조회</div>
-      <div style={{ fontSize: 11, color: "var(--text-mute)", marginBottom: 8 }}>실행 전 코인의 거래소별 입금·출금 열림 여부 확인 (<span style={{ color: "var(--pos)" }}>입/출</span> = 열림, <span style={{ color: "var(--neg)" }}>빨강</span> = 중단)</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>막힌 코인</span>
+        {data && <span className="tnum" style={{ fontSize: 12, fontWeight: 700, color: blocked.length ? "var(--neg)" : "var(--pos)" }}>{blocked.length}</span>}
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>입금 또는 출금 정지</span>
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={() => openCoin("")} style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>코인 조회 →</button>
+      </div>
       {data && (data.missing?.length ?? 0) > 0 && (
-        <div style={{ fontSize: 10.5, color: "var(--amber)", marginBottom: 8 }}>
-          {data.missing!.map((v) => VENUE_LABEL[v] ?? v).join("·")}는 인증 API라 키 등록 후 표시됩니다 — 헤더 ⚙ 설정에서 입력 (빗썸만 공개 API)
-        </div>
+        <div style={{ fontSize: 10.5, color: "var(--amber)", marginBottom: 6 }}>{data.missing!.map((v) => VENUE_LABEL[v] ?? v).join("·")}는 키 등록 후 표시 (빗썸만 공개 API)</div>
       )}
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="코인 검색 (예: XRP)"
-        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", color: "var(--text)", fontSize: 13, outline: "none", marginBottom: 6 }}
-      />
-      {data && (
-        <div style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 10.5, color: "var(--text-mute)", marginBottom: 6 }}>
-          <span>
-            {q.trim()
-              ? `${rows.length}개 표시 (전체 ${data.rows.length})`
-              : showAll
-                ? `전체 ${rows.length}개`
-                : blockedCount > 0
-                  ? <span style={{ color: "var(--neg)", fontWeight: 700 }}>중단 {blockedCount}개</span>
-                  : "지금 막힌 코인 없음"}
-          </span>
-          <span style={{ flex: 1 }} />
-          {!q.trim() && (
-            <button type="button" onClick={() => setShowAll((v) => !v)}
-              style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>
-              {showAll ? "막힌 것만" : `전체 ${data.rows.length}개 보기`}
-            </button>
-          )}
-        </div>
-      )}
-      {!data ? (
-        <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "8px 0" }}>조회 중…</div>
-      ) : rows.length === 0 ? (
-        <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "8px 0" }}>
-          {q.trim() ? "검색 결과 없음" : "확인 가능한 거래소 기준 중단된 코인이 없습니다 — 특정 코인은 검색으로"}
-        </div>
-      ) : (
-        <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: `64px repeat(${data.venues.length}, 1fr)`, gap: "6px 10px", fontSize: 12, minWidth: 60 + data.venues.length * 70 }}>
-            <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>코인</span>
-            {data.venues.map((v) => <span key={v} style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{VENUE_LABEL[v] ?? v}</span>)}
-            {rows.map((r) => (
-              <Fragment key={r.base}>
-                <span onClick={() => toggleRow(r.base)}
-                  style={{ fontWeight: 700, cursor: "pointer", color: openBase === r.base ? "var(--brand-2)" : undefined }}>
-                  {r.base} <span style={{ fontSize: 9, color: "var(--text-mute)" }}>{openBase === r.base ? "▲" : "▼"}</span>
-                </span>
-                {data.venues.map((v) => <span key={v} onClick={() => toggleRow(r.base)} style={{ cursor: "pointer" }}>{cell(r.venues[v])}</span>)}
-                {openBase === r.base && (
-                  <div style={{ gridColumn: "1 / -1", margin: "2px 0 6px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9 }}>
-                    {!nets[r.base] ? (
-                      <span style={{ fontSize: 11, color: "var(--text-mute)" }}>체인 조회 중…</span>
-                    ) : Object.keys(nets[r.base]).length === 0 ? (
-                      <span style={{ fontSize: 11, color: "var(--text-mute)" }}>
-                        체인 상세 없음 — 빗썸 공개 API는 코인 단위만 제공하고, 나머지 거래소는 키 등록 후 체인별 상태가 보입니다
-                      </span>
-                    ) : (
-                      Object.entries(nets[r.base]).map(([venue, list]) => (
-                        <div key={venue} style={{ padding: "3px 0" }}>
-                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-dim)", marginRight: 8 }}>{VENUE_LABEL[venue] ?? venue}</span>
-                          <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-                            {list.map((n) => (
-                              <span key={n.net} className="tnum" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>
-                                <b style={{ color: n.isDefault ? "var(--text)" : "var(--text-dim)" }}>{n.net}</b>
-                                {" "}
-                                <span style={{ fontWeight: 700, color: n.deposit ? "var(--pos)" : "var(--neg)" }}>입</span>
-                                <span style={{ fontWeight: 700, color: n.withdraw ? "var(--pos)" : "var(--neg)" }}>출</span>
-                                {n.feeCoin != null && <span style={{ color: "var(--text-mute)" }}> 수수료 {n.feeCoin}</span>}
-                              </span>
-                            ))}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </Fragment>
+      {!data ? <div style={{ fontSize: 12, color: "var(--text-mute)" }}>불러오는 중…</div>
+        : blocked.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-mute)" }}>지금 막힌 코인 없음</div>
+        : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {blocked.slice(0, SHOW).map((r) => (
+              <button key={r.base} type="button" onClick={() => openCoin(r.base)}
+                style={{ border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", borderRadius: 8, padding: "3px 8px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>{r.base}</button>
             ))}
+            {blocked.length > SHOW && (
+              <button type="button" onClick={() => openCoin("")} style={{ border: "none", background: "transparent", color: "var(--text-mute)", fontSize: 11.5, cursor: "pointer" }}>+{blocked.length - SHOW}개</button>
+            )}
           </div>
-          {rows.length === 0 && <div style={{ color: "var(--text-mute)", fontSize: 12, padding: "6px 0" }}>결과 없음</div>}
-        </div>
-      )}
+        )}
     </div>
   );
 }
@@ -1034,6 +922,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
 }
 
 export function PnlCard() {
+  const [more, setMore] = useState(false);
   const [data, setData] = useState<{ trades: TradeRec[]; stats: TradeStats } | null>(null);
   useEffect(() => {
     const load = () => fetch("/api/trades", { cache: "no-store" }).then((r) => r.json()).then(setData).catch(() => {});
@@ -1057,10 +946,13 @@ export function PnlCard() {
             <Metric label="히트율" value={`${st.hitRatePct}%`} sub={`${st.wins}/${st.count - st.dryCount || st.count}`} />
             <Metric label="탐지 vs 실현" value={`−${st.avgSlipPct.toFixed(2)}%`} sub="평균 누수" tone={st.avgSlipPct > 0.3 ? "var(--amber)" : "var(--text)"} />
           </div>
-          <PnlViz trades={data.trades} />
-          {/* 손익 캘린더 — 일별 정리는 여기. 최근 목록(아래)은 흐름, 캘린더는 리듬. */}
-          <PnlCalendar />
           <TradeList trades={data.trades} />
+          {/* 누적 곡선·시간대 히트맵·달력은 가끔 보는 분석 — 접어 둔다 */}
+          <button type="button" onClick={() => setMore((v) => !v)}
+            style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: "10px 0 0" }}>
+            {more ? "분석 접기" : "누적 곡선 · 시간대 · 손익 달력 보기"}
+          </button>
+          {more && (<><PnlViz trades={data.trades} /><PnlCalendar /></>)}
         </>
       )}
     </div>
@@ -1117,6 +1009,7 @@ function ReopenCard({ killed }: { killed: boolean }) {
   const [snap, setSnap] = useState<ReopenSnap | null>(null);
   const [draft, setDraft] = useState<ReopenCfg | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const load = () => fetch("/api/reopen", { cache: "no-store" }).then((r) => r.json()).then((j: ReopenSnap) => { setSnap(j); setDraft((d) => d ?? j.cfg); }).catch(() => {});
   useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, []);
@@ -1138,9 +1031,9 @@ function ReopenCard({ killed }: { killed: boolean }) {
   const armed = snap?.cfg.armed ?? false;
   const num = (v: string) => Number(v.replace(/[^\d.]/g, "")) || 0;
   const field = (label: string, key: "sizeUsd" | "minNet" | "prepositionLeadMin" | "prepositionMaxWaitMin", suffix: string) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)", minWidth: 0 }}>
         <input className="tnum" inputMode="decimal" value={String(draft?.[key] ?? "")} disabled={armed}
           onChange={(e) => setDraft((d) => (d ? { ...d, [key]: num(e.target.value) } : d))}
           onBlur={() => draft && void save({ [key]: draft[key] })}
@@ -1171,6 +1064,14 @@ function ReopenCard({ killed }: { killed: boolean }) {
         {snap?.watch.lastTickAt ? ` · 마지막 ${Math.max(0, Math.round((Date.now() - snap.watch.lastTickAt) / 1000))}초 전` : ""}.
         열림이 2회 연속 확인되면 즉시 알림{armed ? "과 자동 실행" : ""}.
       </div>
+      {/* 설정은 평소 접는다 — 상태 한 줄과 켜기 버튼만 보이게. 요약은 여기 한 줄로. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 11.5, color: "var(--text-dim)" }}>
+        <span className="tnum">${snap?.cfg.sizeUsd ?? "-"} · 최소 {snap?.cfg.minNet ?? "-"}% · {snap?.cfg.whitelist.length ? snap.cfg.whitelist.join(",") : "전 코인"} · 사전 포지션 {snap?.cfg.preposition ? "켜짐" : "꺼짐"}</span>
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={() => setShowCfg((v) => !v)}
+          style={{ border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>{showCfg ? "설정 접기" : "설정"}</button>
+      </div>
+      {showCfg && (<>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginTop: 10 }}>
         {field("규모", "sizeUsd", "$")}
         {field("최소 순수익", "minNet", "%")}
@@ -1186,7 +1087,7 @@ function ReopenCard({ killed }: { killed: boolean }) {
       {/* 사전 포지션 */}
       <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 700 }}>사전 포지션</span>
+          <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>사전 포지션</span>
           <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>재개 공지 시각 전에 매수+헷지, 출금은 열림 확인 후</span>
           <span style={{ flex: 1 }} />
           <button type="button" disabled={!armed} onClick={() => void save({ preposition: !(snap?.cfg.preposition) })}
@@ -1195,11 +1096,12 @@ function ReopenCard({ killed }: { killed: boolean }) {
             {snap?.cfg.preposition ? "켜짐" : "꺼짐"}
           </button>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8, marginTop: 8 }}>
           {field("예정 몇 분 전", "prepositionLeadMin", "분")}
           {field("미개방 시 철회", "prepositionMaxWaitMin", "분")}
         </div>
       </div>
+      </>)}
       {/* 재개 예정 · 사전 포지션 현황 */}
       {snap && (Object.keys(snap.schedule).length > 0 || Object.keys(snap.prepos).length > 0) && (
         <div style={{ marginTop: 10, fontSize: 11.5 }}>
@@ -1232,8 +1134,8 @@ function fmtQty(n: number): string {
   return n >= 1 ? n.toFixed(1) : n > 0 ? n.toFixed(4) : "0";
 }
 
-export function HoldingsCard() {
-  const [sym, setSym] = useState("");
+export function HoldingsCard({ base }: { base?: string } = {}) {
+  const [sym, setSym] = useState(base ?? "");
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1270,12 +1172,14 @@ export function HoldingsCard() {
     finally { setImporting(false); }
   };
   const totalAddrs = stats ? Object.values(stats).reduce((s, v) => s + v.hot + v.cold, 0) : null;
+  // 코인 상세 패널에서 열면 바로 조회
+  useEffect(() => { if (base) { setSym(base); void lookup(base); } }, [base]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>거래소 온체인 보유량</span>
-        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>상장따리 물량 신호 · ETH/BSC/Base</span>
+        <span style={{ fontSize: 10.5, color: "var(--text-mute)" }} title="국내 입금 지갑 유입 = 차익 물량 도착(프리미엄 붕괴 신호) · 해외 핫월렛 고갈 = 출금 지연 위험 · 상장따리 물량">물량 신호 · ETH/BSC/Base</span>
         <span style={{ flex: 1 }} />
         <button
           type="button" disabled={importing} onClick={() => void runImport()}
@@ -1285,7 +1189,7 @@ export function HoldingsCard() {
           {importing ? "임포트 중…" : `라벨 가져오기${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
         </button>
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
+      {!base && <div style={{ display: "flex", gap: 8 }}>
         <input
           value={sym}
           onChange={(e) => setSym(e.target.value.toUpperCase())}
@@ -1299,7 +1203,7 @@ export function HoldingsCard() {
         >
           {busy ? "…" : "조회"}
         </button>
-      </div>
+      </div>}
       {err && <div style={{ marginTop: 8, fontSize: 11.5, color: err.startsWith("✓") ? "var(--pos)" : "var(--amber)" }}>{err}</div>}
       {data && (
         <div style={{ marginTop: 10 }}>

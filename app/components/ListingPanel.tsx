@@ -15,11 +15,13 @@ import {
   type Listing, type Watch, type HistoryRow, type AutoCfg,
 } from "./listing/shared";
 import { DetailPanel } from "./listing/DetailPanel";
+import { useCoinSheet } from "./coinSheetCtx";
 
 // 하위 호환 재수출 — GapInspect 등이 "./ListingPanel"에서 가져간다.
 export { TV_SYMBOL } from "./listing/charts";
 
 export function ListingPanel({ wide }: { wide?: boolean }) {
+  const openCoin = useCoinSheet();
   const [rows, setRows] = useState<Listing[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
@@ -213,6 +215,8 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{l.base}</span>
+                <button type="button" onClick={(e) => { e.stopPropagation(); openCoin(l.base); }} title="코인 상세 — 체인별 입출금·온체인 보유량"
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-mute)", borderRadius: 7, padding: "0 5px", fontSize: 10, cursor: "pointer" }}>🔍</button>
                 {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 9, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
                 <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-ink)", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px", whiteSpace: "nowrap" }}>
                   {l.opened ? "거래개시" : "공지"}

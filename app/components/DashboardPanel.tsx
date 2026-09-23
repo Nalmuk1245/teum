@@ -13,7 +13,7 @@ import { vlabel, Spark, oppKindLabel, kindLabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
 import { srcVerdict } from "@/lib/watchVerdict";
 import type { RiskState } from "./ControlPanel";
-import { EpisodeCard } from "./ControlPanel";
+import { useCoinSheet } from "./coinSheetCtx";
 import { isLocked } from "@/lib/gateState";
 
 const CAP: React.CSSProperties = { fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-mute)" };
@@ -310,6 +310,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
     [rankKey],
   );
   const [waitingOpen, setWaitingOpen] = useState(false);
+  const openCoin = useCoinSheet();
 
   const secHd = (title: string, right?: React.ReactNode) => (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 16px", borderBottom: "1px solid var(--border)" }}>
@@ -441,8 +442,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               {waiting.map((o) => {
                 const [buy, sell] = o.legs;
                 return (
-                  <div key={o.id} onClick={onInspect ? () => onInspect(o) : undefined}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12, cursor: onInspect ? "pointer" : undefined, opacity: 0.85 }}>
+                  <div key={o.id} onClick={() => openCoin(o.base)} title="코인 상세 — 체인별 입출금·온체인 보유량"
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12, cursor: "pointer", opacity: 0.85 }}>
                     <span style={{ fontWeight: 700 }}>{o.base}</span>
                     <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}</span>
                     <span style={{ fontSize: 10.5, fontWeight: 700, color: o.gate === "closed" ? "var(--neg)" : "var(--amber)" }}>{o.gate === "closed" ? "닫힘" : "정지 의심"}</span>
@@ -466,7 +467,6 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
           {streamCard}
           {fundsCardMobile}
-          <EpisodeCard />
         </div>
       )}
       {/* 데모 배너 — 키가 없으면 아래 카드 대부분이 빈 채로 남는다. 그 이유와 다음 행동을
@@ -631,7 +631,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
 
       {/* 기회 복기 — 지난 기회 구간(임계 위)을 다시 본다. 실행이 아니라 분석이라
           운영 탭이 아니라 여기(보는 화면)에 둔다. */}
-      {!mobile && <EpisodeCard />}
+      {/* 기회 복기는 자산·기록 탭으로 옮겼다 (분석이지 실시간 정보가 아니다) */}
 
       {/* 하단 2행: 상장 감시 | 최근 거래 */}
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>

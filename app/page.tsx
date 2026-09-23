@@ -19,6 +19,9 @@ import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, Pill, ScanAge, LiveDots } from "./components/cockpit-ui";
 import { useIsMobile } from "./mobile";
 import { isLocked } from "@/lib/gateState";
+import { CoinSheet } from "./components/CoinSheet";
+import { CoinSheetCtx } from "./components/coinSheetCtx";
+import { PnlCard, RunsDashboard, EpisodeCard } from "./components/ControlPanel";
 
 // 모바일 판정은 app/mobile.tsx의 단일 소스 (서버 UA로 첫 페인트부터 맞추고
 // 마운트 후 matchMedia가 정정 — 이유는 그 파일 주석 참고).
@@ -268,6 +271,9 @@ export default function Cockpit() {
   // Background runs + kill switch (survive modal close; shown in the 실행 탭).
   const runsStore = useRuns();
   const runList = Object.values(runsStore.runs).sort((a, b) => b.startedAt - a.startedAt);
+  // 코인 상세 패널 — null 닫힘, "" 검색·막힌 코인 목록, "XRP" 그 코인. 어느 탭에서든 연다.
+  const [coinSheet, setCoinSheet] = useState<string | null>(null);
+  const openCoin = useCallback((b: string) => setCoinSheet(b.trim().toUpperCase()), []);
   const activeRuns = runList.filter((r) => r.phase === "running" || r.phase === "paused").length;
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   // On first client mount, sync the kill flag from the server.
@@ -280,9 +286,10 @@ export default function Cockpit() {
    // 브라우저 자동 진입(탭이 열려 있어야 도는 방식)은 2026-09-21 제거 — 서버 쪽 재개 자동 실행(lib/reopen.ts)이 대체한다.
 
   return (
-    // PC 확대 — 인라인 px가 수백 곳이라 base font로는 못 키운다. zoom은
-    // 레이아웃까지 스케일하는 표준 속성(FF 126+)이라 밀도 비율이 유지된다.
-    // QHD(2560)에서 1.15배 → 콘텐츠 폭 1680이 물리 ~1930px로 렌더.
+    <CoinSheetCtx.Provider value={openCoin}>
+    {/* PC 확대 — 인라인 px가 수백 곳이라 base font로는 못 키운다. zoom은
+        레이아웃까지 스케일하는 표준 속성(FF 126+)이라 밀도 비율이 유지된다.
+        QHD(2560)에서 1.15배 → 콘텐츠 폭 1680이 물리 ~1930px로 렌더. */}
     <main style={{ minHeight: "100dvh", zoom: isMobile ? undefined : 1.15 }}>
       {/* ── Header ─────────────────────────────────────────────── */}
       <header
@@ -324,6 +331,18 @@ export default function Cockpit() {
         >
           <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "#fff" : "var(--neg)" }} />
           {runsStore.killed ? "중단됨" : "STOP"}
+        </button>
+        <button
+          type="button"
+          onClick={() => openCoin("")}
+          title="코인 조회 — 입출금(체인별)·온체인 보유량·지금 갭"
+          style={{
+            border: "1px solid var(--border)", background: "var(--card)",
+            color: "var(--text-dim)", borderRadius: 999, width: 28, height: 28, boxSizing: "border-box",
+            display: "grid", placeItems: "center", fontSize: 13, lineHeight: 1, cursor: "pointer",
+          }}
+        >
+          <span style={{ display: "block", lineHeight: 1 }}>🔍</span>
         </button>
         <button
           type="button"
@@ -371,7 +390,7 @@ export default function Cockpit() {
             { k: "funding", label: "펀딩", sub: "APR" },
             { k: "listing", label: "상장", sub: "따리·물량" },
             { k: "control", label: "운영", sub: "실행·리스크" },
-            { k: "assets", label: "자산", sub: "잔고" },
+            { k: "assets", label: "자산·기록", sub: "잔고·손익" },
           ] as const).map((m) => {
             const active = mode === m.k;
             return (
@@ -413,7 +432,15 @@ export default function Cockpit() {
 
         {/* ── Assets: one-line summary on trading tabs; full panel on 자산 ── */}
         {mode === "assets" ? (
-          <AssetsPanel isMobile={isMobile} />
+          // 자산·기록 — "지금 얼마 있나"(잔고)와 "어떻게 변했나"(손익·끝난 런·기회 복기)를 한 탭에.
+          <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 14, paddingBottom: 40 }}>
+            <AssetsPanel isMobile={isMobile} />
+            <PnlCard />
+            {runList.some((r) => r.phase === "done") && (
+              <RunsDashboard runs={runList.filter((r) => r.phase === "done")} onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }} onClearDone={() => {}} />
+            )}
+            <EpisodeCard />
+          </div>
         ) : mode === "control" || mode === "listing" || mode === "home" ? null : (
           <AssetSummary isMobile={isMobile} onOpen={() => setMode("assets")} />
         )}
@@ -679,7 +706,18 @@ export default function Cockpit() {
         onMore={() => setMode("control")}
       />
       {settingsOpen && <SettingsModal onClose={() => { setSettingsOpen(false); setSettingsTab(null); }} initialTab={settingsTab ?? undefined} />}
+      {coinSheet != null && (
+        <CoinSheet
+          base={coinSheet}
+          opps={opps}
+          mobile={isMobile}
+          onClose={() => setCoinSheet(null)}
+          onOpenCoin={openCoin}
+          onInspect={(o) => { setCoinSheet(null); setMode("monitor"); if (!isMobile) setInspectId(o.id); }}
+        />
+      )}
     </main>
+    </CoinSheetCtx.Provider>
   );
 }
 
