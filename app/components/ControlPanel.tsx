@@ -13,7 +13,7 @@ import { useCoinSheet } from "./coinSheetCtx";
 import { longestWindowSec, longestProfitableRunSec, mergeWindows, outlastsEta } from "@/lib/episodeStats";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
 
-export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number };
+export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number; unrealizedPnlUsd?: number | null; unrealizedLossUsd?: number | null; openNotionalUsd?: number | null; unpricedPositions?: number };
 
 export function ControlPanel({ runs, killed, onOpen, wide }: { runs: RunView[]; killed: boolean; onOpen: (r: RunView) => void; wide?: boolean }) {
   const inFlight = inFlightUsd();

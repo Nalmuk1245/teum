@@ -287,6 +287,27 @@ export function inFlightUsd(): number {
     .reduce((s, r) => s + r.sizeUsd, 0);
 }
 
+/** 미실현 손익 평가용 — 코인이나 헷지를 들고 있는 런의 수량·진입가. (lib/unrealized)
+ *  현물 진입가는 규모/체결수량(USD 기준), 헷지 진입가는 숏 체결 금액/수량(USDT). */
+export function riskPositions(): { id: string; base: string; venue: string | null; notionalUsd: number; spotQty: number; spotEntryUsd: number | null; hedgeQty: number; hedgeEntryUsd: number | null }[] {
+  return Object.values(E.runs)
+    .filter((r) => r.remaining > 0 || (r.statuses.hedge === "done" && r.statuses.close !== "done"))
+    .map((r) => {
+      const eng = E.engines.get(r.id);
+      const openHedge = r.statuses.hedge === "done" && r.statuses.close !== "done";
+      const hq = openHedge ? eng?.hedgeQty ?? 0 : 0;
+      return {
+        id: r.id, base: r.base,
+        venue: r.opp.legs.find((l) => l.quote === "USDT" && l.venue !== "dex")?.venue ?? null,
+        notionalUsd: r.sizeUsd,
+        spotQty: r.remaining,
+        spotEntryUsd: r.totalQty > 0 ? r.sizeUsd / r.totalQty : null,
+        hedgeQty: hq,
+        hedgeEntryUsd: hq > 0 && eng?.fills.hedgeOpenQuote ? eng.fills.hedgeOpenQuote / hq : null,
+      };
+    });
+}
+
 /** Is there an unresolved position on this coin? Blocks a second run on the same
  *  base — compounding shorts on one symbol makes their reduceOnly closes fight. */
 function hasOpenPosition(base: string): RunView | undefined {

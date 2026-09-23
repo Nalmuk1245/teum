@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     if (!base) return NextResponse.json({ ok: false, message: "base 필요" }, { status: 400 });
     if (!(sizeUsd > 0)) return NextResponse.json({ ok: false, message: "규모가 0 이하" }, { status: 400 });
     if (isKilled()) return NextResponse.json({ ok: false, message: "킬 스위치 활성" }, { status: 423 });
-    const risk = checkEntry(sizeUsd);
+    const risk = checkEntry(sizeUsd, { listing: true });
     if (risk) return NextResponse.json({ ok: false, message: `리스크 한도 — ${risk}` }, { status: 400 });
     if (!CONFIG.DRY_RUN) {
       const token = process.env.EXEC_TOKEN;

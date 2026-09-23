@@ -190,8 +190,13 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
 
   // 리스크 현황 — 사용률의 최대치 기준 여유
   const inFlight = inFlightUsd();
-  const expoUse = risk && risk.maxInFlightUsd > 0 ? (inFlight / risk.maxInFlightUsd) * 100 : 0;
-  const lossUse = risk && risk.maxDailyLossUsd > 0 ? (Math.max(0, -pnl) / risk.maxDailyLossUsd) * 100 : 0;
+  // 노출 = 실행 런 + 상장 보유 (서버 스냅샷이 있으면 그 값 — 상장 포지션까지 포함)
+  const exposure = risk?.openNotionalUsd ?? inFlight;
+  const expoUse = risk && risk.maxInFlightUsd > 0 ? (exposure / risk.maxInFlightUsd) * 100 : 0;
+  // 일일 손실 = 실현 + 미실현(포지션별 손실 합) — 서버 게이트(checkEntry)와 같은 식
+  const unrealLoss = risk?.unrealizedLossUsd ?? 0;
+  const dayLoss = Math.max(0, -pnl) + unrealLoss;
+  const lossUse = risk && risk.maxDailyLossUsd > 0 ? (dayLoss / risk.maxDailyLossUsd) * 100 : 0;
   const headroom = Math.max(0, Math.round(100 - Math.max(expoUse, lossUse)));
   // 한도가 하나도 없으면 "여유 100%"는 거짓 안심이다 — 게이지를 죽이고 미설정이라고 말한다.
   const riskConfigured = !!risk && (risk.maxInFlightUsd > 0 || risk.maxDailyLossUsd > 0 || risk.maxPerTradeUsd > 0);
@@ -605,8 +610,12 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           </div>
           <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", fontSize: 12 }}>
             {[
-              { l: "노출", v: risk ? `$${inFlight.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : "—", warn: expoUse > 60 },
-              { l: "일일 손실", v: risk ? `−$${Math.max(0, -pnl).toFixed(0)} / $${risk.maxDailyLossUsd}` : "—", warn: lossUse > 60 },
+              { l: "노출", v: risk ? `$${exposure.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : "—", warn: expoUse > 60 },
+              { l: "일일 손실", v: risk ? `−$${dayLoss.toFixed(0)} / $${risk.maxDailyLossUsd}` : "—", warn: lossUse > 60 },
+              // 미실현 — 들고 있는 포지션을 지금 가격으로. 손실분은 위 일일 손실에 이미 들어가 있다.
+              ...(risk?.unrealizedPnlUsd != null && (risk.unrealizedPnlUsd !== 0 || (risk.openNotionalUsd ?? 0) > 0)
+                ? [{ l: "미실현", v: `${risk.unrealizedPnlUsd >= 0 ? "+" : "−"}$${Math.abs(risk.unrealizedPnlUsd).toFixed(0)}${risk.unpricedPositions ? ` (가격 미확인 ${risk.unpricedPositions})` : ""}`, warn: risk.unrealizedPnlUsd < 0 }]
+                : []),
               { l: "1회 한도", v: risk ? `$${risk.maxPerTradeUsd.toLocaleString()}` : "—", warn: false },
               // 감시 카드에서 이사 — 시장 게이트 상태는 리스크의 일부다.
               {

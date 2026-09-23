@@ -15,8 +15,10 @@ export type Limits = {
 
 import { loadSection, saveSection, flushSection } from "./persist";
 
+/** 미실현 손익 스냅샷 (lib/unrealized가 15초마다 채운다). */
+export type Unrealized = { pnlUsd: number; lossUsd: number; openNotionalUsd: number; runsNotionalUsd: number; positions: number; unpriced: number; at: number };
 const g = globalThis as unknown as {
-  __arbRisk?: { limits: Limits; day: string; realizedPnlUsd: number };
+  __arbRisk?: { limits: Limits; day: string; realizedPnlUsd: number; unrealized?: Unrealized };
 };
 const persisted = loadSection<{ day: string; realizedPnlUsd: number }>("riskPnl");
 // UI에서 바꾼 한도는 재시작을 넘긴다. 예전엔 메모리에만 있어서 pm2가 재시작하면
@@ -72,20 +74,38 @@ export function recordPnl(usd: number) {
   flushSection("riskPnl", { day: S.day, realizedPnlUsd: S.realizedPnlUsd }); // daily-loss limit survives restarts
 }
 
+/** 이보다 낡은 미실현 스냅샷은 쓰지 않는다 — 루프가 죽었는데 옛 손실로 진입을 영원히 막으면 안 된다. */
+const UNREAL_STALE_MS = 5 * 60_000;
+export function setUnrealized(u: Unrealized) { S.unrealized = u; }
+function freshUnrealized(): Unrealized | null {
+  const u = S.unrealized;
+  return u && Date.now() - u.at < UNREAL_STALE_MS ? u : null;
+}
 export function riskState() {
   roll();
-  return { day: S.day, realizedPnlUsd: S.realizedPnlUsd, ...S.limits };
+  const u = freshUnrealized();
+  return { day: S.day, realizedPnlUsd: S.realizedPnlUsd, ...S.limits, unrealizedPnlUsd: u?.pnlUsd ?? null, unrealizedLossUsd: u?.lossUsd ?? null, openNotionalUsd: u?.openNotionalUsd ?? null, unpricedPositions: u?.unpriced ?? 0 };
 }
 
-/** Server gate at trade entry (buy). Returns a reason string if blocked. */
-export function checkEntry(sizeUsd: number): string | null {
+/** Server gate at trade entry (buy). Returns a reason string if blocked.
+ *  `opts.listing`: 상장 매수 — 실행 엔진의 노출 한도 검사를 거치지 않으므로 여기서 본다.
+ *
+ *  일일 손실 = 실현 손실 + **미실현 손실**. 예전엔 실현만 봐서, 전송 중 급락으로 −$400 물린
+ *  런이 있어도 한도 $500이면 신규 진입이 그대로 나갔다 — 손실이 겹치는 가장 나쁜 순간에. */
+export function checkEntry(sizeUsd: number, opts?: { listing?: boolean }): string | null {
   roll();
   if (sizeUsd > S.limits.maxPerTradeUsd) {
     return `1회 한도 초과 ($${sizeUsd.toFixed(0)} > $${S.limits.maxPerTradeUsd})`;
   }
-  const loss = -S.realizedPnlUsd;
+  const u = freshUnrealized();
+  const realizedLoss = Math.max(0, -S.realizedPnlUsd);
+  const unrealLoss = u?.lossUsd ?? 0;
+  const loss = realizedLoss + unrealLoss;
   if (loss >= S.limits.maxDailyLossUsd) {
-    return `일일 손실 한도 도달 (−$${loss.toFixed(0)} ≥ $${S.limits.maxDailyLossUsd}) — 오늘 신규 실행 중단`;
+    return `일일 손실 한도 도달 (실현 −$${realizedLoss.toFixed(0)}${unrealLoss > 0 ? ` + 미실현 −$${unrealLoss.toFixed(0)}` : ""} ≥ $${S.limits.maxDailyLossUsd}) — 신규 실행 중단`;
+  }
+  if (opts?.listing && u && Number.isFinite(S.limits.maxInFlightUsd) && S.limits.maxInFlightUsd > 0 && u.openNotionalUsd + sizeUsd > S.limits.maxInFlightUsd) {
+    return `총 노출 한도 초과 (보유 $${u.openNotionalUsd.toFixed(0)} + $${sizeUsd.toFixed(0)} > $${S.limits.maxInFlightUsd.toFixed(0)})`;
   }
   return null;
 }

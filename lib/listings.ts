@@ -239,7 +239,7 @@ async function autoBuy(base: string, gVenue: string, gPrice: number) {
   const { isKilled } = await import("./killswitch");
   const { checkEntry } = await import("./risk");
   if (isKilled()) return;
-  const risk = checkEntry(cfg.sizeUsd);
+  const risk = checkEntry(cfg.sizeUsd, { listing: true });
   if (risk) { void notifyNow(`⏸ 자동매수 차단 — <b>${base}</b>: ${risk}`); return; }
   // 메타 가드 — CoinGecko가 모르는 코인/저시총/이미 급등은 무인 매수 스킵 (fail-closed).
   try {
