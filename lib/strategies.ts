@@ -11,6 +11,22 @@ import {
   COIN_NETWORK, COIN_NETWORK_DEFAULT,
 } from "./config";
 import { walletStatus, routeFor, venueChainStatus } from "./transfers";
+import { priceConsensus } from "./priceConsensus";
+
+/** 코인별로 해외 거래소 가격이 합의에서 튀는 거래소 — 같은 티커의 다른 토큰이거나 멈춘 시장.
+ *  백테스트에서 드러났다: G(OKX vs 바이낸스 38%), BONK(39%) 같은 "기회"가 수익 상위를 전부 차지했는데
+ *  실제로는 다른 토큰끼리의 가격 차이였다. 김프·크로스 조합에서 이 거래소를 뺀다. */
+function globalOutliers(ctx: ScanContext, base: string): Set<string> {
+  const rows: { venue: string; price: number }[] = [];
+  for (const v of ["binance", "bybit", "okx"] as Venue[]) {
+    const t = ctx.tickers[v]?.get(base);
+    if (t?.price) rows.push({ venue: v, price: t.price });
+  }
+  if (rows.length < 2) return new Set();
+  const c = priceConsensus(rows);
+  // 둘뿐인데 서로 다르면 어느 쪽이 맞는지 모른다 — 둘 다 뺀다(조합 자체를 만들지 않음).
+  return new Set(c.ambiguous ? rows.map((r) => r.venue) : c.outliers);
+}
 import { coinNetwork, withdrawFeeCoin, transferEtaMin } from "./networks";
 import { erc20Symbol } from "./tokens";
 import { chainKeyFromLabel } from "./chains";
@@ -120,6 +136,7 @@ const kimchi: Strategy = {
       // net reflects what you'd actually capture.
       type Cand = { kv: Venue; gv: Venue; krPrice: number; gPrice: number; premiumPct: number; cost: number; net: number; execGross: number };
       const cands: Cand[] = [];
+      const outl = globalOutliers(ctx, base);
       for (const kv of KR_VENUES) {
         const km = ctx.tickers[kv];
         const kr = km?.get(base);
@@ -132,6 +149,7 @@ const kimchi: Strategy = {
         const fx = km?.get("USDT")?.price ?? (ctx.fxLive ? ctx.usdKrw : null);
         if (!fx) continue;
         for (const gv of GLOBAL_VENUES) {
+          if (outl.has(gv)) continue; // 다른 토큰 의심
           const g = ctx.tickers[gv]?.get(base);
           if (!g || !g.price) continue;
           if (g.quoteVolumeUsd < CONFIG.MIN_VOLUME_USD) continue;
@@ -287,7 +305,9 @@ const crossCex: Strategy = {
       }
     }
 
-    for (const [base, quotes] of bases) {
+    for (const [base, quotesAll] of bases) {
+      const outl = globalOutliers(ctx, base);
+      const quotes = quotesAll.filter((q) => !outl.has(q.v));
       if (quotes.length < 2) continue;
       // Buy at the cheapest ASK, sell into the richest BID — the executable arb.
       let lo = quotes[0], hi = quotes[0];

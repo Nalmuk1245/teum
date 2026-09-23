@@ -93,3 +93,18 @@ describe("kimchi — 미확인 조합이 메인보다 크면 별도 행 (키 없
     expect(alt.note).toMatch(/미확인/);
   });
 });
+
+describe("해외 거래소 가격 합의 — 다른 토큰 배제", () => {
+  it("바이낸스 가격만 튀면(다른 토큰) 그 거래소로 김프 조합을 만들지 않는다", async () => {
+    const ctx = ctxWith({ bithumb: open, upbit: open, binance: open });
+    // 바이비트·OKX는 $1, 바이낸스는 $0.14 (다른 토큰) → 바이낸스 조합이면 +600% 유령 김프
+    ctx.tickers.binance = new Map([["XYZ", tick(0.14, "USDT", 1e8)]]);
+    ctx.tickers.bybit = new Map([["XYZ", tick(1.0, "USDT", 1e8)]]);
+    ctx.tickers.okx = new Map([["XYZ", tick(1.01, "USDT", 1e8)]]);
+    const opps = await kimchi.scan(ctx);
+    for (const o of opps.filter((x) => x.base === "XYZ")) {
+      expect(o.legs.some((l) => l.venue === "binance")).toBe(false);
+      expect(o.grossPct).toBeLessThan(10);
+    }
+  });
+});

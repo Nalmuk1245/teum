@@ -22,6 +22,7 @@ import { isLocked } from "@/lib/gateState";
 import { CoinSheet } from "./components/CoinSheet";
 import { CoinSheetCtx } from "./components/coinSheetCtx";
 import { PnlCard, RunsDashboard, EpisodeCard } from "./components/ControlPanel";
+import { BacktestCard } from "./components/BacktestCard";
 
 // 모바일 판정은 app/mobile.tsx의 단일 소스 (서버 UA로 첫 페인트부터 맞추고
 // 마운트 후 matchMedia가 정정 — 이유는 그 파일 주석 참고).
@@ -440,6 +441,7 @@ export default function Cockpit() {
               <RunsDashboard runs={runList.filter((r) => r.phase === "done")} onOpen={(r) => { setOpenRunId(r.id); setSelected(r.opp); }} onClearDone={() => {}} />
             )}
             <EpisodeCard />
+            <BacktestCard />
           </div>
         ) : mode === "control" || mode === "listing" || mode === "home" ? null : (
           <AssetSummary isMobile={isMobile} onOpen={() => setMode("assets")} />
