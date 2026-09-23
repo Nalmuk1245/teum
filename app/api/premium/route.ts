@@ -4,7 +4,7 @@ import { premiumSeries, UNITS, type ChartVenue, type MarketKind, type Unit, type
 
 export const dynamic = "force-dynamic";
 
-const VENUES: ChartVenue[] = ["upbit", "bithumb", "binance", "bybit"];
+const VENUES: ChartVenue[] = ["upbit", "bithumb", "binance", "bybit", "okx"];
 
 function parseSpec(raw: string | null, fallback: VenueSpec): VenueSpec | null {
   if (!raw) return fallback;

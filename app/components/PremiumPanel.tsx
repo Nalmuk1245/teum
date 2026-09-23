@@ -27,6 +27,8 @@ const PRESETS: { label: string; a: Spec; b: Spec }[] = [
   { label: "국내갭", a: { venue: "upbit", market: "spot" }, b: { venue: "bithumb", market: "spot" } },
   { label: "현선갭 Binance", a: { venue: "binance", market: "spot" }, b: { venue: "binance", market: "futures" } },
   { label: "현선갭 Bybit", a: { venue: "bybit", market: "spot" }, b: { venue: "bybit", market: "futures" } },
+  { label: "현선갭 OKX", a: { venue: "okx", market: "spot" }, b: { venue: "okx", market: "futures" } },
+  { label: "김프 OKX", a: { venue: "upbit", market: "spot" }, b: { venue: "okx", market: "spot" } },
   { label: "거래소갭 현물", a: { venue: "binance", market: "spot" }, b: { venue: "bybit", market: "spot" } },
   { label: "거래소갭 선물", a: { venue: "binance", market: "futures" }, b: { venue: "bybit", market: "futures" } },
 ];
@@ -67,7 +69,7 @@ export function PremiumPanel({ mobile }: { mobile?: boolean }) {
         const venue = e.target.value;
         set({ venue, market: KR(venue) ? "spot" : cur.market });
       }} style={SEL}>
-        {["upbit", "bithumb", "binance", "bybit"].map((v) => <option key={v} value={v}>{VENUE_LABEL[v] ?? v}</option>)}
+        {["upbit", "bithumb", "binance", "bybit", "okx"].map((v) => <option key={v} value={v}>{VENUE_LABEL[v] ?? v}</option>)}
       </select>
       <select value={cur.market} onChange={(e) => set({ ...cur, market: e.target.value as Market })} style={{ ...SEL, opacity: KR(cur.venue) ? 0.5 : 1 }} disabled={KR(cur.venue)}>
         <option value="spot">현물</option>

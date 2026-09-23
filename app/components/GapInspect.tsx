@@ -18,7 +18,7 @@ import { PremiumChart, type Spec, type Market } from "./PremiumChart";
 const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-mute)" };
 
 // 프리미엄 차트가 그릴 수 있는 CEX (원화·바이낸스·바이빗). DEX 다리는 못 그린다.
-const PREM_VENUES = new Set(["upbit", "bithumb", "binance", "bybit"]);
+const PREM_VENUES = new Set(["upbit", "bithumb", "binance", "bybit", "okx"]);
 const isKR = (v: string) => v === "upbit" || v === "bithumb";
 
 // 기회 → 프리미엄 차트 A/B. 둘 다 그릴 수 있는 CEX이고 서로 다를 때만.

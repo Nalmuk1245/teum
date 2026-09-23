@@ -14,8 +14,8 @@ export const TV_SYMBOL: Record<string, (b: string) => string> = {
   bithumb: (b) => `BITHUMB:${b}KRW`,
 };
 
-// 갭 차트 캔들 소스(lib/premiumSeries)가 있는 해외 거래소만 — OKX는 아직 없다.
-const GLOBAL_PREF = ["binance", "bybit"];
+// 갭 차트 캔들 소스(lib/premiumSeries)가 있는 해외 거래소 — 선호 순.
+const GLOBAL_PREF = ["binance", "bybit", "okx"];
 const KR_V = ["upbit", "bithumb"];
 
 export function ChartSection({ base, cex, dex, krVenue }: { base: string; cex: CexRow[]; dex: DexRow[]; krVenue?: string }) {

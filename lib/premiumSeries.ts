@@ -12,7 +12,7 @@
 // 현재값에서만 정확하다.
 
 export type MarketKind = "spot" | "futures";
-export type ChartVenue = "upbit" | "bithumb" | "binance" | "bybit";
+export type ChartVenue = "upbit" | "bithumb" | "binance" | "bybit" | "okx";
 export type VenueSpec = { venue: ChartVenue; market: MarketKind };
 
 /** 분 단위 — UI의 1분/3분/5분/15분/30분/1시간/4시간/1일에 대응. */
@@ -78,6 +78,27 @@ async function bybitCandles(symbol: string, market: MarketKind, unit: Unit, coun
   return r.result.list.map((k) => ({ t: Math.floor(Number(k[0]) / 1000), close: Number(k[4]) })).reverse();
 }
 
+// OKX — 1회 300개 상한, 최신순. 더 과거는 `after`(이 시각보다 이전)로 페이지네이션.
+// 최근 1440개까지는 /candles, 그 너머는 /history-candles. 일봉은 1Dutc(다른 거래소와 같은 UTC 경계).
+const OKX_BAR: Record<Unit, string> = { 1: "1m", 3: "3m", 5: "5m", 15: "15m", 30: "30m", 60: "1H", 240: "4H", 1440: "1Dutc" };
+async function okxCandles(instId: string, unit: Unit, count: number): Promise<Candle[]> {
+  const out: Candle[] = [];
+  let after: string | undefined;
+  for (let page = 0; out.length < count && page < 10; page++) {
+    const n = Math.min(300, count - out.length);
+    const ep = out.length + n > 1440 ? "history-candles" : "candles";
+    const r = await j<{ code: string; msg: string; data: string[][] }>(
+      `https://www.okx.com/api/v5/market/${ep}?instId=${instId}&bar=${OKX_BAR[unit]}&limit=${n}${after ? `&after=${after}` : ""}`,
+    );
+    if (r.code !== "0") throw new Error(`okx ${r.msg || r.code}`);
+    if (!r.data.length) break;
+    for (const k of r.data) out.push({ t: Math.floor(Number(k[0]) / 1000), close: Number(k[4]) });
+    after = r.data[r.data.length - 1][0];
+    if (r.data.length < n) break;
+  }
+  return out.reverse(); // 과거 → 현재
+}
+
 /** 그 거래소에서의 한 다리 캔들 (원화 거래소는 KRW 표기 그대로). */
 async function legCandles(spec: VenueSpec, coin: string, unit: Unit, count: number): Promise<Candle[]> {
   const c = coin.toUpperCase();
@@ -86,6 +107,7 @@ async function legCandles(spec: VenueSpec, coin: string, unit: Unit, count: numb
     case "bithumb": return bithumbCandles(c, unit, count);
     case "binance": return binanceCandles(`${c}USDT`, spec.market, unit, count);
     case "bybit": return bybitCandles(`${c}USDT`, spec.market, unit, count);
+    case "okx": return okxCandles(spec.market === "futures" ? `${c}-USDT-SWAP` : `${c}-USDT`, unit, count);
   }
 }
 
