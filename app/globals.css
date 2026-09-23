@@ -1,92 +1,48 @@
-/* ── Liquid Glass (시안 glass-cockpit 이식) ─────────────────────────────
-   다크 기본(트레이딩 상시 화면) + [data-theme="light"] 수동 토글.
-   유리 재질: 반투명 표면 + 상단 스펙큘러 엣지(inset 그림자 토큰에 포함),
-   배경은 그라데이션 + 웜/인디고 블롭 글로우. 컴포넌트는 토큰만 참조. */
+/* ── 터미널형 다크 (2026-09-23) ─────────────────────────────────────
+   예전 Liquid Glass(반투명 유리·블롭 광원·16px 둥근 카드)는 SaaS 랜딩처럼 보였고
+   숫자를 흐렸다. 이제: 단색 면 3단 + 1px 선, 작은 모서리, 그림자 없음.
+   숫자가 주인공이라 표면은 조용하게. 컴포넌트는 토큰만 참조한다. */
 :root {
-  --bg: rgba(10, 12, 17, 0.55); /* 입력창 등 유리 위의 오목면 */
+  --bg: #0b0d11;        /* 입력창 등 오목면 */
   --bg-grad: none;
-  --card: rgba(36, 39, 48, 0.62);
-  --card-2: rgba(50, 54, 65, 0.55);
-  --card-3: rgba(64, 69, 82, 0.55);
-  --border: rgba(255, 255, 255, 0.10);
-  --border-strong: rgba(255, 255, 255, 0.20);
-  --header-bg: rgba(14, 16, 22, 0.72);
+  --card: #12151b;      /* 1단 — 카드·표 */
+  --card-2: #181c23;    /* 2단 — 호버·강조 행 */
+  --card-3: #20252e;    /* 3단 — 트랙·비활성 칩 */
+  --border: #222731;
+  --border-strong: #323946;
+  --header-bg: #0d0f14;
 
-  --text: #eef0f4;
-  --text-dim: #b6bbc6;
-  --text-mute: #8e94a1;
+  --text: #e8eaef;
+  --text-dim: #aab0bc;
+  --text-mute: #7c8391;
 
   /* 액센트 — 실행 가능한 것에만 */
-  --brand: #6db1e8;
-  --brand-2: #8cc3f0;
-  --brand-soft: rgba(109, 177, 232, 0.14);
+  --brand: #5ea8e6;
+  --brand-2: #86bdee;
+  --brand-soft: rgba(94, 168, 230, 0.13);
   --brand-grad: var(--brand);
-  --brand-ink: #101216; /* 액센트/배지 위 잉크 */
+  --brand-ink: #0b0d11;
 
-  --pos: #4cc46e;
-  --pos-soft: rgba(76, 196, 110, 0.15);
-  --neg: #ff7369;
-  --neg-soft: rgba(255, 115, 105, 0.14);
+  --pos: #3fbf68;
+  --pos-soft: rgba(63, 191, 104, 0.13);
+  --neg: #f0645a;
+  --neg-soft: rgba(240, 100, 90, 0.13);
 
-  --sky: #6db1e8;
-  --amber: #e8b04c;
-  --teal: #46bfae;
+  --sky: #5ea8e6;
+  --amber: #e2a83f;
+  --teal: #3fb5a4;
 
-  --radius: 16px;
-  --radius-sm: 10px;
-  --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
-  --shadow: 0 14px 34px rgba(0, 0, 0, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.10);
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
 
-  --html-grad: linear-gradient(160deg, #101218 0%, #0a0c10 100%);
-  --blob-warm-a: #b97b1e;
-  --blob-warm-b: #8a5a14;
-  --blob-warm-o: 0.16;
-  --blob-cool: #4a63d8;
-  --blob-cool-o: 0.20;
+  --html-grad: #0b0d11;
 
-  --sans: "Pretendard Variable", Pretendard, "Inter", -apple-system, system-ui,
+  --sans: var(--font-pretendard), "Pretendard Variable", Pretendard, -apple-system, system-ui,
     "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --num: var(--sans);
-}
-
-:root[data-theme="light"] {
-  --bg: rgba(255, 255, 255, 0.65);
-  --card: rgba(255, 255, 255, 0.66);
-  --card-2: rgba(242, 244, 248, 0.75);
-  --card-3: rgba(233, 236, 242, 0.85);
-  --border: rgba(23, 24, 28, 0.08);
-  --border-strong: rgba(23, 24, 28, 0.18);
-  --header-bg: rgba(244, 246, 249, 0.72);
-
-  --text: #17181c;
-  --text-dim: #55585f;
-  --text-mute: #8b8e96;
-
-  --brand: #2b6fd8;
-  --brand-2: #4a86e2;
-  --brand-soft: rgba(43, 111, 216, 0.12);
-  --brand-ink: #ffffff;
-
-  --pos: #238a44;
-  --pos-soft: #e4f3e8;
-  --neg: #cf4444;
-  --neg-soft: #fdeaea;
-
-  --sky: #2b6fd8;
-  --amber: #c07b1d;
-  --teal: #1f9c8d;
-
-  --shadow-sm: 0 10px 26px rgba(23, 24, 28, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-  --shadow: 0 14px 34px rgba(23, 24, 28, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-  --shadow-lg: 0 24px 56px rgba(23, 24, 28, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-
-  --html-grad: linear-gradient(160deg, #eef0f3 0%, #e6e8ec 100%);
-  --blob-warm-a: #ffd76a;
-  --blob-warm-b: #ffb84d;
-  --blob-warm-o: 0.38;
-  --blob-cool: #3b57d0;
-  --blob-cool-o: 0.25;
 }
 
 * {
@@ -96,6 +52,7 @@
 html {
   background: var(--html-grad);
   min-height: 100%;
+  color-scheme: dark;
 }
 
 html,
@@ -107,7 +64,7 @@ body {
   font-family: var(--sans);
   font-size: 13px;
   line-height: 1.4;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -119,49 +76,10 @@ body {
   position: relative;
 }
 
-/* 배경 블롭 — 유리 뒤에서 은은히 비치는 광원 */
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  z-index: -1;
-  border-radius: 50%;
-  pointer-events: none;
-}
-body::before {
-  width: 48vw;
-  height: 38vw;
-  left: 58vw;
-  top: -22vw;
-  background: radial-gradient(circle at 45% 45%, var(--blob-warm-a) 0%, var(--blob-warm-b) 40%, transparent 72%);
-  filter: blur(80px);
-  opacity: var(--blob-warm-o);
-}
-body::after {
-  width: 22vw;
-  height: 18vw;
-  right: 4vw;
-  bottom: -4vw;
-  background: radial-gradient(circle, var(--blob-cool) 0%, transparent 70%);
-  filter: blur(70px);
-  opacity: var(--blob-cool-o);
-}
-
-/* ── Liquid Glass 표면 ─────────────────────────────────────────────────
-   반투명 배경(--card)만으로는 유리가 아니다 — backdrop-filter blur로 뒤의
-   블롭·콘텐츠가 흐릿하게 비쳐야 유리 재질이 된다. saturate로 뒤 색을
-   살짝 끌어와 생기를 준다. 카드성 표면(.glass)과 그 안의 얕은 표면
-   (.glass-sub)을 나눠, 중첩된 blur가 과해지지 않게 한다. */
-.glass {
-  backdrop-filter: blur(22px) saturate(1.5);
-  -webkit-backdrop-filter: blur(22px) saturate(1.5);
-}
+/* .glass / .glass-sub — 유리 재질은 걷어냈다. 클래스는 남겨 두되 효과 없음. */
+.glass,
 .glass-sub {
-  backdrop-filter: blur(10px) saturate(1.3);
-  -webkit-backdrop-filter: blur(10px) saturate(1.3);
-}
-@media (prefers-reduced-motion: reduce) {
-  /* blur는 모션이 아니라 재질이므로 유지 — 접근성 영향 없음 */
+  backdrop-filter: none;
 }
 
 button,
@@ -189,16 +107,16 @@ button:disabled {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 999px;
+  border-radius: 4px;
 }
 
 /* ── Motion (frequency-based) — 가끔 보는 표면만 진입 모션 ──────────── */
 @keyframes panel-in {
-  from { opacity: 0; transform: scale(0.985) translateY(6px); filter: blur(6px); }
-  to { opacity: 1; transform: none; filter: blur(0); }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
 }
 .panel-in {
-  animation: panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1); /* materialize — 크리티컬 댐핑 */
+  animation: panel-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes overlay-in {
   from { opacity: 0; }
@@ -232,9 +150,19 @@ button:not(:disabled):active {
 
 /* Spike alert — a row whose live net just crossed the threshold */
 @keyframes spike-flash {
-  0% { background: rgba(109, 177, 232, 0.22); }
+  0% { background: rgba(94, 168, 230, 0.2); }
   100% { background: transparent; }
 }
 .spike-flash {
   animation: spike-flash 1.2s ease-out 3;
+}
+
+/* 입력창 포커스 — 유리 테두리 대신 액센트 선 */
+input:focus-visible,
+select:focus-visible {
+  outline: 1px solid var(--brand);
+  outline-offset: -1px;
+}
+select {
+  font-family: inherit;
 }

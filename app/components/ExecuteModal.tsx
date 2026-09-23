@@ -110,7 +110,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px", borderBottom: "1px solid var(--border)" }}>
-          <span style={{ width: 8, height: 8, borderRadius: 9, background: km.color }} />
+          <span style={{ width: 8, height: 8, borderRadius: 6, background: km.color }} />
           <span style={{ fontWeight: 700, fontSize: 15 }}>실행 · {opp.base}</span>
           <span style={{ color: "var(--text-mute)", fontSize: 12 }}>{oppKindLabel(opp)}</span>
           <span style={{ flex: 1 }} />
@@ -119,7 +119,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
               버튼이 말해준다 (런이 있을 때만 의미가 있어 그때만 노출). */}
           {running && (
             <button type="button" onClick={guardedClose} title="백그라운드로 접기 — 우하단에서 진행 상황이 계속 보입니다"
-              style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+              style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
               접기 ↘
             </button>
           )}
@@ -149,7 +149,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
                   fontSize: 11, fontWeight: 700,
                   color: opp.hasPerp ? "var(--pos)" : "var(--text-mute)",
                   border: `1px solid ${opp.hasPerp ? "var(--pos)" : "var(--border-strong)"}`,
-                  borderRadius: 9, padding: "1px 8px",
+                  borderRadius: 6, padding: "1px 8px",
                 }}
               >
                 {opp.hasPerp ? "있음" : "없음"}
@@ -163,7 +163,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
                 border: `1px solid ${hedgeOn ? "var(--brand)" : "var(--border-strong)"}`,
                 background: hedgeOn ? "var(--brand-soft)" : "transparent",
                 color: hedgeOn ? "var(--brand-2)" : "var(--text-mute)",
-                borderRadius: 9, padding: "5px 14px", fontSize: 12, fontWeight: 700,
+                borderRadius: 6, padding: "5px 14px", fontSize: 12, fontWeight: 700,
                 cursor: opp.hasPerp ? "pointer" : "not-allowed",
               }}
             >
@@ -179,7 +179,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
           {opp.transferRisk && opp.transferRisk.driftPct > 0.01 && (
             <div
               style={{
-                marginTop: 8, padding: "8px 10px", borderRadius: 9, fontSize: 11.5,
+                marginTop: 8, padding: "8px 10px", borderRadius: 6, fontSize: 11.5,
                 background: opp.transferRisk.hedgeAdvised && !hedgeOn ? "var(--neg-soft)" : "var(--card-2)",
                 color: opp.transferRisk.hedgeAdvised && !hedgeOn ? "var(--neg)" : "var(--text-dim)",
               }}
@@ -203,7 +203,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
             <label style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 500 }}>
               수량 ({unit === "usd" ? "USD" : opp.base})
             </label>
-            <div style={{ display: "inline-flex", gap: 2, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: 2 }}>
+            <div style={{ display: "inline-flex", gap: 2, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: 2 }}>
               {(["usd", "coin"] as const).map((u) => (
                 <button
                   key={u}
@@ -211,7 +211,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
                   disabled={running}
                   onClick={() => switchUnit(u)}
                   style={{
-                    border: "none", cursor: "pointer", borderRadius: 9, padding: "3px 11px",
+                    border: "none", cursor: "pointer", borderRadius: 6, padding: "3px 11px",
                     fontSize: 11, fontWeight: 600,
                     background: unit === u ? "var(--brand-soft)" : "transparent",
                     color: unit === u ? "var(--brand-2)" : "var(--text-mute)",
@@ -270,7 +270,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
                     style={{
                       border: `1px solid ${on ? "var(--brand)" : "var(--border)"}`,
                       background: on ? "var(--brand-soft)" : "transparent",
-                      borderRadius: 9, padding: "8px 4px", cursor: "pointer",
+                      borderRadius: 6, padding: "8px 4px", cursor: "pointer",
                       display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
                     }}
                   >
@@ -442,7 +442,7 @@ export function StepTimeline({
           <div key={s.id} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "4px 0" }}>
             <span
               style={{
-                marginTop: 4, width: 8, height: 8, borderRadius: 9, background: color,
+                marginTop: 4, width: 8, height: 8, borderRadius: 6, background: color,
                 boxShadow: st === "running" ? `0 0 6px ${color}` : "none", flex: "0 0 auto",
               }}
             />
@@ -465,7 +465,7 @@ export function StepTimeline({
                     fontSize: 10.5, fontWeight: 600,
                     color: tx.url ? "var(--sky)" : "var(--text-mute)",
                     background: "var(--card-2)", border: "1px solid var(--border)",
-                    borderRadius: 9, padding: "2px 7px",
+                    borderRadius: 6, padding: "2px 7px",
                     textDecoration: "none",
                     cursor: tx.url ? "pointer" : "default",
                   }}
@@ -504,7 +504,7 @@ export function PositionPanel({ run }: { run: RunView }) {
         <span style={{ color: "var(--text-dim)" }}>보유 <span className="tnum" style={{ color: "var(--text)", fontWeight: 600 }}>{remaining.toFixed(4)} {opp.base}</span></span>
         <span className="tnum" style={{ color: "var(--text-dim)" }}>{usd(remaining * price)}</span>
       </div>
-      <div style={{ height: 8, borderRadius: 9, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
+      <div style={{ height: 8, borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
         <div style={{ width: `${pctLeft}%`, height: "100%", background: "var(--brand)", transition: "width 200ms" }} />
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--text-mute)", marginTop: 4 }}>
@@ -521,7 +521,7 @@ export function PositionPanel({ run }: { run: RunView }) {
             onClick={() => doUnwind(f)}
             disabled={done || busy}
             style={{
-              border: "1px solid var(--border-strong)", borderRadius: 9, padding: "8px 4px",
+              border: "1px solid var(--border-strong)", borderRadius: 6, padding: "8px 4px",
               background: done ? "transparent" : "var(--brand-soft)",
               color: done ? "var(--text-mute)" : "var(--brand-2)",
               fontWeight: 700, fontSize: 13, cursor: done || busy ? "not-allowed" : "pointer",
@@ -580,7 +580,7 @@ export function QuotePanel({
     <div style={{ marginTop: 12, padding: 14, borderRadius: "var(--radius-sm)", background: "var(--card-2)", border: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7, color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 9, background: quoting ? "var(--amber)" : "var(--pos)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 6, background: quoting ? "var(--amber)" : "var(--pos)" }} />
           {quoting ? "실호가 조회 중…" : "실호가 기준 순수익"}
         </span>
         <span style={{ textAlign: "right" }}>
@@ -663,7 +663,7 @@ export function TransferPanel({ opp }: { opp: Opportunity }) {
             border: `1px solid ${wl ? "var(--pos)" : "var(--amber)"}`,
             background: "transparent", cursor: "pointer",
             color: wl ? "var(--pos)" : "var(--amber)",
-            borderRadius: 9, padding: "3px 11px", fontSize: 12, fontWeight: 600,
+            borderRadius: 6, padding: "3px 11px", fontSize: 12, fontWeight: 600,
           }}
         >
           {wl ? "등록 ✓" : "미등록"}

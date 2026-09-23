@@ -90,6 +90,10 @@ export function Tile({
 
 export const COLS = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 64px 84px 84px 104px";
 
+/** 우측 검사창이 열려 표 폭이 ~800px일 때 — 총차익·비용·추이는 검사창(분해·30분 히스토리)이
+ *  보여주니 뺀다. 경로가 잘리면 표가 쓸모없어진다. */
+export const COLS_NARROW = "44px minmax(150px,1fr) minmax(190px,1.25fr) 76px 92px 72px";
+
 export const COLS_MON = "108px minmax(0,1fr) minmax(0,1.5fr) 74px 66px 64px 84px 84px"; // monitor: no execute column
 
 /** 행 스파크라인 — 30분 net% 추이 (gross 시계열 − 현재 비용 근사).
@@ -130,7 +134,7 @@ export function Empty({ text, hint }: { text: string; hint?: string }) {
 
 export function Metric({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
-    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px" }}>
+    <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px" }}>
       <div style={{ fontSize: 10, color: "var(--text-mute)" }}>{label}</div>
       <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: tone ?? "var(--text)" }}>{value}</div>
       {sub && <div style={{ fontSize: 9.5, color: "var(--text-mute)" }}>{sub}</div>}
@@ -159,7 +163,7 @@ export function Line({
 
 export function Warn({ text }: { text: string }) {
   return (
-    <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 9, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
+    <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 6, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
       {text}
     </div>
   );
@@ -279,9 +283,9 @@ export function PersistChip({ p }: { p?: Opportunity["persistence"] }) {
     <span
       className="tnum"
       title={`지속 ${label} · 적중률 ${p.hitRatePct}%`}
-      style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600, color: tone }}
+      style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600, color: tone, whiteSpace: "nowrap", flex: "0 0 auto" }}
     >
-      <span style={{ width: 4, height: 4, borderRadius: 9, background: tone }} />
+      <span style={{ width: 4, height: 4, borderRadius: 6, background: tone }} />
       {held <= 0 ? "신규" : `지속 ${label}`}
     </span>
   );
@@ -300,7 +304,7 @@ export function ScanAge({ ts, live }: { ts: number; live: boolean }) {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--text-mute)" }}>
       {live && (
         <>
-          <span style={{ width: 5, height: 5, borderRadius: 9, background: "var(--pos)" }} />
+          <span style={{ width: 5, height: 5, borderRadius: 6, background: "var(--pos)" }} />
           <span style={{ color: "var(--pos)", fontWeight: 600 }}>실시간</span>
           <span>·</span>
         </>
@@ -326,13 +330,13 @@ export function LiveDots({ status, ages, isMobile }: { status: LiveStatus; ages:
         title={on ? `${full} 시세 · ${age != null ? age + "초 전" : "수신 대기"}` : `${full} 미연결 — 웹소켓 끊김 또는 키 미설정`}
         style={{
           display: "inline-flex", alignItems: "center", gap: 4,
-          border: `1px ${on ? "solid" : "dashed"} ${on ? "var(--border)" : "var(--border-strong)"}`, borderRadius: 9,
+          border: `1px ${on ? "solid" : "dashed"} ${on ? "var(--border)" : "var(--border-strong)"}`, borderRadius: 6,
           padding: isMobile ? "2px 5px" : "2px 7px",
           background: on ? "var(--card)" : "transparent",
           opacity: on ? 1 : 0.75,
         }}
       >
-        <span style={{ width: 5, height: 5, borderRadius: 9, background: tone }} />
+        <span style={{ width: 5, height: 5, borderRadius: 6, background: tone }} />
         <span className="tnum" style={{ fontSize: 10, fontWeight: 600, color: on ? "var(--text-dim)" : "var(--text-mute)" }}>
           {label}
           {!isMobile && <span style={{ color: "var(--text-mute)", fontWeight: 400 }}> {on ? (age != null ? `${age}s` : "…") : "—"}</span>}
@@ -363,12 +367,12 @@ export function Pill({
         display: "inline-flex", alignItems: "center", gap: 6,
         border: `1px solid ${soft ? "transparent" : tone}`,
         background: soft ? "color-mix(in srgb, " + tone + " 14%, transparent)" : "transparent",
-        color: tone, fontSize: 11.5, fontWeight: 600, borderRadius: 9, padding: "4px 9px",
+        color: tone, fontSize: 11.5, fontWeight: 600, borderRadius: 6, padding: "4px 9px",
         // 헤더가 좁아져도 글자를 세로로 쪼개지 않는다 — 모바일에서 "페이퍼"가 3줄이 됐다.
         whiteSpace: "nowrap", flex: "0 0 auto",
       }}
     >
-      {dot && <span style={{ width: 7, height: 7, borderRadius: 9, background: tone }} />}
+      {dot && <span style={{ width: 7, height: 7, borderRadius: 6, background: tone }} />}
       {text}
     </span>
   );
@@ -376,5 +380,5 @@ export function Pill({
 
 export const xBtn: React.CSSProperties = {
   background: "transparent", border: "1px solid var(--border-strong)",
-  color: "var(--text-dim)", fontSize: 13, borderRadius: 9, padding: "4px 9px", cursor: "pointer",
+  color: "var(--text-dim)", fontSize: 13, borderRadius: 6, padding: "4px 9px", cursor: "pointer",
 };

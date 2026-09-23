@@ -101,7 +101,7 @@ export function BacktestCard() {
               ["승률", g.trades ? `${Math.round((g.wins / g.trades) * 100)}%` : "—", undefined],
               ["진입 → 청산 순수익", `${pct(g.avgEntryNet)} → ${pct(g.avgExitNet)}`, (g.avgExitNet ?? 0) >= 0 ? "var(--pos)" : "var(--neg)"],
             ].map(([l, v, c]) => (
-              <div key={l} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px" }}>
+              <div key={l} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px" }}>
                 <div style={CAP}>{l}</div>
                 <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: c ?? "var(--text)" }}>{v}</div>
               </div>
@@ -184,7 +184,7 @@ export function BacktestCard() {
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 6 }}>
               {res.listing.marks.map((m) => (
-                <div key={m.min} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", textAlign: "center" }}>
+                <div key={m.min} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", textAlign: "center" }}>
                   <div style={CAP}>{m.min}분 후 · {m.n}건</div>
                   <div className="tnum" style={{ fontWeight: 800, color: (m.medianPct ?? 0) >= 0 ? "var(--pos)" : "var(--neg)" }}>{pct(m.medianPct)}</div>
                   <div style={CAP}>승률 {m.winRate ?? "—"}%</div>

@@ -32,7 +32,7 @@ function SwapPreview({ base, pv }: { base: string; pv: PreviewData | { error: st
     ? `$${(pv.probeUsd / 1000).toFixed(0)}k 매수 시 임팩트 ${pv.probeImpactPct > 0 ? "+" : ""}${pv.probeImpactPct.toFixed(2)}%`
     : `$${(pv.probeUsd / 1000).toFixed(0)}k 규모는 못 삼킴 — 소액만 가능`;
   return (
-    <div style={{ padding: "8px 11px", background: "var(--card)", border: `1px solid ${liq === "thin" ? "var(--neg)" : "var(--border)"}`, borderRadius: 9 }}>
+    <div style={{ padding: "8px 11px", background: "var(--card)", border: `1px solid ${liq === "thin" ? "var(--neg)" : "var(--border)"}`, borderRadius: 6 }}>
       {/* 유동성 강조 헤더 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid var(--border)" }}>
         <span style={{ fontSize: 11.5, fontWeight: 800, color: liqColor, padding: "2px 9px", borderRadius: 7, border: `1.5px solid ${liqColor}`, whiteSpace: "nowrap" }}>
@@ -109,12 +109,12 @@ function TransferSection({ base, play, dex, busy, act }: {
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <select value={chain} onChange={(e) => setChain(e.target.value)}
-          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
           {chains.map((c) => <option key={c} value={c}>{c === "ethereum" ? "eth" : c}</option>)}
         </select>
         <span style={{ color: "var(--text-mute)", fontSize: 12 }}>→</span>
         <select value={venue} onChange={(e) => setVenue(e.target.value)}
-          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
           {TRANSFER_VENUES.map((v) => (
             <option key={v} value={v}>
               {vlabel(v as never) ?? v}{play?.venue === v ? " ★" : ""}
@@ -123,7 +123,7 @@ function TransferSection({ base, play, dex, busy, act }: {
         </select>
         <input value={qty} onChange={(e) => setQty(e.target.value)} placeholder="수량" inputMode="decimal"
           className="tnum"
-          style={{ width: 110, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 }} />
+          style={{ width: 110, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 }} />
         <button type="button" style={BTN_GHOST} disabled={bal == null || bal <= 0}
           onClick={() => bal != null && setQty(String(Math.floor(bal * 1e6) / 1e6))}
           title="지갑 잔고 전액">
@@ -363,7 +363,7 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
       })()}
 
       {/* ① 신호 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden", marginTop: 12, background: "var(--card)" }}>
         {signal("가격", d.token?.priceUsd != null ? `$${fmtPx(d.token.priceUsd)}` : "—")}
         {signal("시총", fmtUsd(d.token?.marketCapUsd))}
         {signal("24h 볼륨", fmtUsd(d.token?.volumeUsd), d.token?.volumeUsd == null ? undefined : d.token.volumeUsd < 1_000_000 ? "var(--amber)" : undefined)}
@@ -486,7 +486,7 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
       </div>
       {lastTx && txStatus && (
         <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
-          padding: "7px 10px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--card)" }}>
+          padding: "7px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>
           <span style={{ fontWeight: 700,
             color: txStatus.status === "success" ? "var(--pos)" : txStatus.status === "fail" ? "var(--neg)" : "var(--amber)" }}>
             스왑 {txStatus.status === "success" ? "✓ 확정" : txStatus.status === "fail" ? "✗ 실패" : txStatus.status === "pending" ? "⏳ 대기" : "· 조회중"}
@@ -512,7 +512,7 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
         </span>
       ))}
       {addOpen && (
-        <div style={{ margin: "2px 0 10px", padding: "9px 11px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 9 }}>
+        <div style={{ margin: "2px 0 10px", padding: "9px 11px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6 }}>
           <div style={{ ...CAP, marginBottom: 6 }}>입금 지갑 수동 등록 — 상장 전 KR 거래소 입금 물량 워치 (영구 주소록에 저장)</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <select value={addForm.venue} onChange={(e) => setAddForm({ ...addForm, venue: e.target.value })} style={{ ...INPUT, width: 86 }}>
@@ -670,7 +670,7 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
 
       {/* ③″ 국내 매도 경로 — 해외 매수 → 국내 입금 → 개장 순간 매도 (lib/listingKr) */}
       {play && (
-        <div style={{ marginTop: 12, border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px", background: "var(--card)" }}>
+        <div style={{ marginTop: 12, border: "1px solid var(--border)", borderRadius: 6, padding: "10px 12px", background: "var(--card)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, fontWeight: 700 }}>국내 매도 경로</span>
             <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>해외에서 사서 {play.venue === "upbit" ? "업비트" : "빗썸"}로 보내 두고 개장 순간 매도 — 상장 김프까지</span>
@@ -756,7 +756,7 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
                   >
                     {copied === c.chain ? "복사됨 ✓" : `${c.address.slice(0, 10)}…${c.address.slice(-8)}`}
                   </button>
-                  {dexRow?.verified && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--pos)", border: "1px solid var(--pos)", borderRadius: 9, padding: "0 4px" }}>OKX 검증</span>}
+                  {dexRow?.verified && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--pos)", border: "1px solid var(--pos)", borderRadius: 6, padding: "0 4px" }}>OKX 검증</span>}
                 </div>
               );
             }) : (

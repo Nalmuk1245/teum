@@ -47,7 +47,7 @@ export function GapAutoCard({ killed }: { killed: boolean }) {
   const field = (label: string, key: "sizeUsd" | "minNet" | "minHeldSec" | "maxEntryPct" | "cooldownMin" | "maxConcurrent", suffix: string) => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)", minWidth: 0 }}>
         <input className="tnum" inputMode="decimal" value={String(draft?.[key] ?? "")} disabled={armed}
           onChange={(e) => setDraft((d) => (d ? { ...d, [key]: num(e.target.value) } : d))}
           onBlur={() => draft && void save({ [key]: draft[key] })}
@@ -58,7 +58,7 @@ export function GapAutoCard({ killed }: { killed: boolean }) {
   );
   const chip = (on: boolean, label: string, onClick: () => void) => (
     <button type="button" disabled={armed} onClick={onClick}
-      style={{ border: `1px solid ${on ? "var(--brand-2)" : "var(--border)"}`, borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", background: on ? "color-mix(in srgb, var(--brand-2) 14%, transparent)" : "transparent", color: on ? "var(--brand-2)" : "var(--text-dim)" }}>{label}</button>
+      style={{ border: `1px solid ${on ? "var(--brand-2)" : "var(--border)"}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", background: on ? "color-mix(in srgb, var(--brand-2) 14%, transparent)" : "transparent", color: on ? "var(--brand-2)" : "var(--text-dim)" }}>{label}</button>
   );
   const skipped = Object.entries(snap?.lastSkipped ?? {});
   const c = snap?.cfg;
@@ -66,7 +66,7 @@ export function GapAutoCard({ killed }: { killed: boolean }) {
     <div style={{ background: armed ? "color-mix(in srgb, var(--amber) 12%, transparent)" : "var(--card)", border: `1px solid ${armed ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>갭 자동 진입</span>
-        <span style={{ width: 6, height: 6, borderRadius: 9, background: armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 6, background: armed ? "var(--amber)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, fontWeight: armed ? 700 : 400, color: armed ? "var(--amber)" : "var(--text-mute)" }}>{armed ? `켜짐${snap?.dryRun ? " (페이퍼)" : ""}` : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
         {confirming && !armed && <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 600 }}>조건 맞으면 무인 매수 — 한 번 더</span>}
@@ -115,7 +115,7 @@ export function GapAutoCard({ killed }: { killed: boolean }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
           <button type="button" disabled={armed} onClick={() => void loadBest()}
-            style={{ border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: "transparent", color: "var(--text)" }}>백테스트 추천값 불러오기</button>
+            style={{ border: "1px solid var(--border-strong)", borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: "transparent", color: "var(--text)" }}>백테스트 추천값 불러오기</button>
           <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>전체 기록 · 실행 가능 · 20건↑·지속 30초↑·중앙 청산 + 중 합계 최고</span>
         </div>
       </>)}

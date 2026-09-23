@@ -42,7 +42,7 @@ const SEL: React.CSSProperties = {
 // 칩 하나의 모양은 하나 — 타임프레임·프리셋이 같은 세그먼트 셸(GROUP) 안에서 같은 칩(CHIP)을 쓴다.
 // 예전엔 타임프레임은 맨칩, 프리셋은 테두리칩이라 한 툴바에 컨트롤 양식이 셋이었다.
 const GROUP: React.CSSProperties = {
-  display: "inline-flex", gap: 2, padding: 3, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9,
+  display: "inline-flex", gap: 2, padding: 3, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
 };
 const CHIP = (on: boolean): React.CSSProperties => ({
   border: "none", borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",

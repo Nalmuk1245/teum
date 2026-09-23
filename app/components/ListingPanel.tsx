@@ -91,6 +91,15 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     }
   }, [rows]);
 
+  // PC: 처음 열 때 선택이 없으면 가장 최근 플레이를 연다 — 우측이 빈 상자로 남지 않게.
+  // 한 번만 (닫기를 누른 뒤 다시 열리면 닫기가 무시된 것처럼 보인다).
+  const autoPicked = useRef(false);
+  useEffect(() => {
+    if (!wide || autoPicked.current || selected || !rows.length) return;
+    autoPicked.current = true;
+    setSelected(rows[0].base);
+  }, [wide, rows, selected]);
+
   useEffect(() => {
     const load = () => fetch("/api/listings", { cache: "no-store" }).then((r) => r.json())
       .then((j) => { setRows(j.listings ?? []); setWatch(j.watch ?? null); setHistory(j.history ?? []); }).catch(() => {});
@@ -154,7 +163,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
       {/* 헤더: 상태점 + 수동조회 + 알림 + 드릴 */}
       <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
         <span title={watchTitle} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}>
-          <span style={{ width: 6, height: 6, borderRadius: 9, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 6, background: watch == null ? "var(--text-mute)" : watchOk ? "var(--pos)" : "var(--amber)" }} />
           <span style={{ fontSize: 13, fontWeight: 700 }}>탐지된 상장</span>
         </span>
         <span style={CAP}>{rows.length}건</span>
@@ -188,8 +197,8 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         title={`공지 감지 → 해외 최저가 CEX 즉시 시장가 매수.\n킬스위치·리스크 한도 하위 + 시총/기펌핑 가드.\n라이브 집행은 LISTING_AUTO_LIVE=true 필요${autoLive ? " (활성)" : " (미설정 — 모의만)"}.`}
         style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, background: auto?.armed ? "color-mix(in srgb, var(--amber) 6%, transparent)" : "transparent" }}
       >
-        <span style={{ width: 6, height: 6, borderRadius: 9, background: auto?.armed ? "var(--amber)" : "var(--text-mute)" }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: auto?.armed ? "var(--amber)" : "var(--text-dim)" }}>공지 즉시 자동매수</span>
+        <span style={{ width: 6, height: 6, borderRadius: 6, background: auto?.armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: auto?.armed ? "var(--amber)" : "var(--text-dim)", whiteSpace: "nowrap" }}>공지 즉시 자동매수</span>
         <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{auto?.armed ? (autoLive ? "켜짐 · 라이브" : "켜짐 · 모의") : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
         {/* 매도처 — 해외(자동 청산 규칙) / 국내(개장 순간 매도, 입출금 안 열려 있으면 해외로 대신) */}
@@ -225,17 +234,17 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", background: exitCfg?.enabled ? "color-mix(in srgb, var(--amber) 6%, transparent)" : "transparent" }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 9, background: exitCfg?.enabled ? "var(--amber)" : "var(--text-mute)" }} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: exitCfg?.enabled ? "var(--amber)" : "var(--text-dim)" }}>자동 청산</span>
+          <span style={{ width: 6, height: 6, borderRadius: 6, background: exitCfg?.enabled ? "var(--amber)" : "var(--text-mute)" }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: exitCfg?.enabled ? "var(--amber)" : "var(--text-dim)", whiteSpace: "nowrap", flex: "0 0 auto" }}>자동 청산</span>
           {exitCfg && (
             <span className="tnum" style={{ fontSize: 10, color: "var(--text-mute)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {[exitCfg.takeProfitPct && `익절 +${exitCfg.takeProfitPct}%`, exitCfg.stopLossPct && `손절 −${exitCfg.stopLossPct}%`, exitCfg.trailingPct && `트레일 ${exitCfg.trailingPct}%`, exitCfg.afterOpenMin && `개장+${exitCfg.afterOpenMin}분`, exitCfg.maxHoldMin && `최대 ${exitCfg.maxHoldMin}분`].filter(Boolean).join(" · ")}
             </span>
           )}
           <span style={{ flex: 1 }} />
-          <button type="button" style={BTN_GHOST} onClick={() => setExitOpen(!exitOpen)}>{exitOpen ? "접기" : "설정"}</button>
+          <button type="button" style={{ ...BTN_GHOST, whiteSpace: "nowrap", flex: "0 0 auto" }} onClick={() => setExitOpen(!exitOpen)}>{exitOpen ? "접기" : "설정"}</button>
           <button type="button" onClick={() => void saveExit({ enabled: !exitCfg?.enabled })}
-            style={{ ...BTN, background: exitCfg?.enabled ? "var(--neg)" : "var(--brand)", color: exitCfg?.enabled ? "#fff" : "var(--brand-ink)" }}>
+            style={{ ...BTN, whiteSpace: "nowrap", flex: "0 0 auto", background: exitCfg?.enabled ? "var(--neg)" : "var(--brand)", color: exitCfg?.enabled ? "#fff" : "var(--brand-ink)" }}>
             {exitCfg?.enabled ? "끄기" : "켜기"}
           </button>
         </div>
@@ -277,8 +286,8 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{l.base}</span>
                 <button type="button" onClick={(e) => { e.stopPropagation(); openCoin(l.base); }} title="코인 상세 — 체인별 입출금·온체인 보유량"
                   style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-mute)", borderRadius: 7, padding: "0 5px", fontSize: 10, cursor: "pointer" }}>🔍</button>
-                {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 9, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
-                <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-ink)", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px", whiteSpace: "nowrap" }}>
+                {l.drill && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 6, padding: "0 4px", whiteSpace: "nowrap" }}>드릴</span>}
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-ink)", background: l.opened ? "var(--pos)" : "var(--amber)", borderRadius: 6, padding: "1px 5px", whiteSpace: "nowrap" }}>
                   {l.opened ? "거래개시" : "공지"}
                 </span>
                 <span style={{ color: "var(--text-mute)", fontSize: 11 }}>
@@ -394,7 +403,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
   // 중요한 순간은 상장 이벤트 중인데, 그때 한 코인을 실행하느라 새 감지가
   // 안 보이면 다음 기회를 그대로 놓친다. 갭 탭 검사창과 같은 구조로 맞춘다.
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "400px minmax(0,1fr)", gap: 14, alignItems: "start", paddingBottom: 40 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "420px minmax(0,1fr)", gap: 12, alignItems: "start", paddingBottom: 24 }}>
       <div style={{ minWidth: 0 }}>{mainCard}</div>
       {selected ? (
         // sticky 금지 — 상세가 화면보다 길어서(차트 440px+표) 걸면 하단이 안 닿는다
@@ -408,8 +417,10 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
           <DetailPanel base={selected} narrow={tight} />
         </div>
       ) : (
-        <div style={{ ...CARD, padding: "60px 20px", textAlign: "center", color: "var(--text-mute)", fontSize: 12.5, border: "1px dashed var(--border)" }}>
-          좌측에서 티커를 선택하거나 수동 조회로 열면<br />여기에 신호·차트·매수처·포지션이 표시됩니다.
+        <div style={{ ...CARD, padding: "18px 18px", color: "var(--text-mute)", fontSize: 12.5, lineHeight: 1.6 }}>
+          <div style={{ color: "var(--text-dim)", fontWeight: 600 }}>선택된 코인 없음</div>
+          좌측 목록·히스토리에서 고르거나 티커를 직접 조회하면 신호·갭 차트·매수처·포지션이 여기 열립니다.
+          상장이 감지되면 자동으로 열립니다.
         </div>
       )}
     </div>

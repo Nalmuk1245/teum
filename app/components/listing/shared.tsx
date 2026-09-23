@@ -44,9 +44,9 @@ export const CAP: React.CSSProperties = { fontSize: 9, letterSpacing: "0.08em", 
 /** 열려 있는 상세 블록에 붙는 id — 히스토리에서 열었을 때 거기로 스크롤하기 위한 표식. */
 export const DETAIL_ANCHOR = "listing-detail-open";
 export const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px"  }
-export const BTN: React.CSSProperties = { border: "none", borderRadius: 9, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
+export const BTN: React.CSSProperties = { border: "none", borderRadius: 6, padding: "6px 12px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" };
 export const BTN_SELL: React.CSSProperties = { ...BTN, background: "var(--neg)", color: "#fff" };
-export const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
+export const BTN_GHOST: React.CSSProperties = { border: "1px solid var(--border-strong)", borderRadius: 6, padding: "5px 10px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" };
 export type PreviewData = {
   expectedOut: number; pricePerToken: number; minReceive: number; slippagePct: number;
   priceImpactPct: number | null; tradeFeeUsd: number | null; gasUsd: number | null;
@@ -54,7 +54,7 @@ export type PreviewData = {
   liquidity: "deep" | "ok" | "thin"; probeUsd: number; probeImpactPct: number | null;
 };
 export type TxStatusData = { status: "pending" | "success" | "fail" | "unknown"; failReason: string | null };
-export const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
+export const INPUT: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", padding: "4px 8px", fontSize: 12, outline: "none" };
 
 // 실행 표 공통 그리드: 처 | 가격 | 내 자금 | 비고 | 액션
 export const EXEC_COLS = "84px minmax(70px,1fr) minmax(60px,1fr) minmax(80px,1.2fr) auto";

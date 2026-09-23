@@ -27,6 +27,12 @@ import { BacktestCard } from "./components/BacktestCard";
 // 모바일 판정은 app/mobile.tsx의 단일 소스 (서버 UA로 첫 페인트부터 맞추고
 // 마운트 후 matchMedia가 정정 — 이유는 그 파일 주석 참고).
 
+const ICON_BTN: React.CSSProperties = {
+  border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)",
+  borderRadius: 6, width: 28, height: 28, boxSizing: "border-box",
+  display: "grid", placeItems: "center", cursor: "pointer", padding: 0,
+};
+
 /** How often row ORDER may change. Values still update at the 600ms WS cadence;
  *  only the ranking is throttled, so rows don't shuffle under the cursor. */
 const RANK_THROTTLE_MS = 2500;
@@ -168,8 +174,11 @@ export default function Cockpit() {
   // Stable handler identities — passing fresh arrows every render defeats
   // React.memo on the rows entirely (they'd re-render 100×/min regardless).
   const onExecute = useCallback((o: Opportunity) => { setOpenRunId(null); setSelected(o); }, []);
+  // PC 검사창은 상시 — 행 클릭은 선택만 바꾼다(토글 아님). 닫기(✕)로 숨긴 뒤 행을 누르면 다시 열린다.
+  const [inspectHidden, setInspectHidden] = useState(false);
   const onInspect = useCallback((o: Opportunity) => {
-    setInspectId((cur) => (cur === o.id ? null : o.id));
+    setInspectId(o.id);
+    setInspectHidden(false);
   }, []);
   // While hovering, keep the exact row order the user is looking at.
   const displayRows = useMemo(() => {
@@ -286,151 +295,109 @@ export default function Cockpit() {
   // Enters automatically when a gap meets ALL of: executable (live gates),
    // 브라우저 자동 진입(탭이 열려 있어야 도는 방식)은 2026-09-21 제거 — 서버 쪽 재개 자동 실행(lib/reopen.ts)이 대체한다.
 
+  // 탭 — 한 줄 라벨. 부제(요약·차익·실행…)는 매번 읽히는 소음이라 뺐다.
+  const tabBar = (
+    <nav style={{ display: "flex", alignItems: "stretch", height: isMobile ? 38 : 46, gap: isMobile ? 0 : 2 }}>
+      {([
+        { k: "home", label: "대시보드" },
+        { k: "monitor", label: "갭" },
+        { k: "premium", label: "프리미엄" },
+        { k: "funding", label: "펀딩" },
+        { k: "listing", label: "상장" },
+        { k: "control", label: "운영" },
+        { k: "assets", label: "자산·기록" },
+      ] as const).map((m) => {
+        const active = mode === m.k;
+        return (
+          <button
+            key={m.k}
+            type="button"
+            onClick={() => {
+              // Runs persist in the background store now, so leaving the
+              // execute view never kills anything — just close the modal.
+              if (m.k !== "monitor") { setSelected(null); setInspectId(null); }
+              setMode(m.k);
+            }}
+            style={{
+              border: "none", cursor: "pointer", borderRadius: 0, background: "transparent",
+              padding: isMobile ? "0 12px" : "0 12px", flex: "0 0 auto",
+              borderBottom: active ? "2px solid var(--brand)" : "2px solid transparent",
+              borderTop: "2px solid transparent",
+              display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap",
+              fontSize: 13, fontWeight: active ? 700 : 500, color: active ? "var(--text)" : "var(--text-mute)",
+            }}
+          >
+            {m.label}
+            {m.k === "control" && activeRuns > 0 && (
+              <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "var(--brand-ink)", background: "var(--brand)", borderRadius: 6, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
+                {activeRuns}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </nav>
+  );
+
   return (
     <CoinSheetCtx.Provider value={openCoin}>
     {/* PC 확대 — 인라인 px가 수백 곳이라 base font로는 못 키운다. zoom은
         레이아웃까지 스케일하는 표준 속성(FF 126+)이라 밀도 비율이 유지된다.
         QHD(2560)에서 1.15배 → 콘텐츠 폭 1680이 물리 ~1930px로 렌더. */}
     <main style={{ minHeight: "100dvh", zoom: isMobile ? undefined : 1.15 }}>
-      {/* ── Header ─────────────────────────────────────────────── */}
+      {/* ── Header — PC는 로고·탭·상태·스위치를 한 줄에 (예전엔 헤더 + 두 줄 탭바로 ~110px).
+          모바일은 헤더 한 줄 + 가로 스크롤 탭 한 줄. ─────────────────────────── */}
       <header
         style={{
           position: "sticky", top: 0, zIndex: 20,
-          display: "flex", alignItems: "center", gap: isMobile ? 6 : 14,
-          padding: isMobile ? "9px 10px" : "9px 16px",
-          borderBottom: "1px solid var(--border)",
           background: "var(--header-bg)",
-          backdropFilter: "blur(22px) saturate(1.5)", WebkitBackdropFilter: "blur(22px) saturate(1.5)",
+          borderBottom: "1px solid var(--border)",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 10, padding: isMobile ? "0 10px" : "0 16px", height: isMobile ? 44 : 46 }}>
+          <span style={{ fontWeight: 800, fontSize: 14.5, letterSpacing: "-0.02em", whiteSpace: "nowrap", marginRight: isMobile ? 0 : 10 }}>
             Teum
           </span>
-          {!isMobile && (
-            <span style={{ color: "var(--text-mute)", fontSize: 11 }}>
-              반자동 · 개인용
-            </span>
+          {!isMobile && tabBar}
+          <span style={{ flex: 1 }} />
+          <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
+          {/* 모드 — 페이퍼/실주문 하나로. 목업은 거기에 붙인다 (배지 두 개가 따로 놀았다). */}
+          {meta && (
+            <Pill
+              text={meta.dryRun ? (meta.mock ? "페이퍼 · 목업" : "페이퍼") : "실주문"}
+              tone={meta.dryRun ? "var(--amber)" : "var(--neg)"}
+              soft
+            />
           )}
+          <button type="button" onClick={() => openCoin("")} title="코인 조회 — 입출금(체인별)·온체인 보유량·지금 갭" style={ICON_BTN}>
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M10.4 10.4 14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+          </button>
+          <button type="button" onClick={() => setSettingsOpen(true)} title="설정 — API 키·리스크 한도·알림" style={ICON_BTN}>
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /><circle cx="5" cy="4" r="1.6" fill="var(--header-bg)" stroke="currentColor" strokeWidth="1.4" /><circle cx="11" cy="8" r="1.6" fill="var(--header-bg)" stroke="currentColor" strokeWidth="1.4" /><circle cx="6.5" cy="12" r="1.6" fill="var(--header-bg)" stroke="currentColor" strokeWidth="1.4" /></svg>
+          </button>
+          {/* Kill switch — halt all runs + block new ones. Always reachable.
+              항상 "빨간 것"으로 읽혀야 한다 — 평소 붉은 윤곽, 작동 중 붉은 채움. 맨 오른쪽 끝 고정. */}
+          <button
+            type="button"
+            onClick={() => setKillSwitch(!runsStore.killed)}
+            title={runsStore.killed ? "킬 스위치 활성 — 눌러서 해제" : "전체 중단 (킬 스위치)"}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              border: `1px solid ${runsStore.killed ? "var(--neg)" : "color-mix(in srgb, var(--neg) 55%, transparent)"}`,
+              background: runsStore.killed ? "var(--neg)" : "var(--neg-soft)",
+              color: runsStore.killed ? "#fff" : "var(--neg)",
+              borderRadius: 6, padding: "0 10px", height: 28, boxSizing: "border-box",
+              fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", cursor: "pointer",
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: 6, background: runsStore.killed ? "#fff" : "var(--neg)" }} />
+            {runsStore.killed ? "중단됨" : "STOP"}
+          </button>
         </div>
-        <span style={{ flex: 1 }} />
-        {/* Kill switch — halt all runs + block new ones. Always reachable. */}
-        <button
-          type="button"
-          onClick={() => setKillSwitch(!runsStore.killed)}
-          title={runsStore.killed ? "킬 스위치 활성 — 눌러서 해제" : "전체 중단 (킬 스위치)"}
-          style={{
-            // 킬 스위치는 항상 "빨간 것"으로 읽혀야 한다 — 회색 테두리는 비활성처럼 보였다.
-            // 평소: 붉은 윤곽 + 붉은 글자. 작동 중: 붉은 채움 + 흰 글자.
-            display: "inline-flex", alignItems: "center", gap: 5,
-            border: `1px solid ${runsStore.killed ? "var(--neg)" : "color-mix(in srgb, var(--neg) 55%, transparent)"}`,
-            background: runsStore.killed ? "var(--neg)" : "var(--neg-soft)",
-            color: runsStore.killed ? "#fff" : "var(--neg)",
-            borderRadius: 9, padding: "0 11px", height: 28, boxSizing: "border-box",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.02em", cursor: "pointer",
-          }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: 9, background: runsStore.killed ? "#fff" : "var(--neg)" }} />
-          {runsStore.killed ? "중단됨" : "STOP"}
-        </button>
-        <button
-          type="button"
-          onClick={() => openCoin("")}
-          title="코인 조회 — 입출금(체인별)·온체인 보유량·지금 갭"
-          style={{
-            border: "1px solid var(--border)", background: "var(--card)",
-            color: "var(--text-dim)", borderRadius: 999, width: 28, height: 28, boxSizing: "border-box",
-            display: "grid", placeItems: "center", fontSize: 13, lineHeight: 1, cursor: "pointer",
-          }}
-        >
-          <span style={{ display: "block", lineHeight: 1 }}>🔍</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          title="설정 — API 키·리스크 한도·알림"
-          style={{
-            border: "1px solid var(--border)", background: "var(--card)",
-            backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)",
-            color: "var(--text-dim)", borderRadius: 999, width: 28, height: 28, boxSizing: "border-box",
-            display: "grid", placeItems: "center", fontSize: 13, lineHeight: 1, cursor: "pointer",
-          }}
-        >
-          <span style={{ display: "block", lineHeight: 1, transform: "translateY(0.5px)" }}>⚙</span>
-        </button>
-        <LiveDots status={liveStatus} ages={liveAges} isMobile={isMobile} />
-        {meta?.mock && !isMobile && <Pill text="목업" tone="var(--sky)" soft />}
-        {/* Don't flash "실주문"(red) before meta loads — unknown ≠ live. */}
-        {meta && (
-          <Pill
-            text={meta.dryRun ? "페이퍼" : "실주문"}
-            tone={meta.dryRun ? "var(--amber)" : "var(--neg)"}
-            soft
-          />
-        )}
+        {isMobile && <div className="no-bar" style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderTop: "1px solid var(--border)", padding: "0 4px" }}>{tabBar}</div>}
       </header>
 
-      <div style={{ maxWidth: 1680, margin: "0 auto", padding: isMobile ? "10px 10px" : "18px 24px" }}>
-        {/* ── Mode: gap monitor (view-only) vs execution (trade) ── */}
-        {/* 탭 7개를 한 줄에 — PC는 균등 분배, 모바일은 가로 스크롤(줄바꿈·글자 잘림 금지).
-            repeat(6,1fr) 그리드는 7번째 탭을 둘째 줄로 떨어뜨렸다. */}
-        <div
-          className="no-bar"
-          style={{
-            display: "flex",
-            overflowX: isMobile ? "auto" : undefined,
-            WebkitOverflowScrolling: "touch",
-            marginBottom: isMobile ? 10 : 14,
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          {([
-            { k: "home", label: "대시보드", sub: "요약" },
-            { k: "monitor", label: "갭", sub: "차익·실행" },
-            { k: "premium", label: "프리미엄", sub: "갭 차트" },
-            { k: "funding", label: "펀딩", sub: "APR" },
-            { k: "listing", label: "상장", sub: "따리·물량" },
-            { k: "control", label: "운영", sub: "실행·리스크" },
-            { k: "assets", label: "자산·기록", sub: "잔고·손익" },
-          ] as const).map((m) => {
-            const active = mode === m.k;
-            return (
-              <button
-                key={m.k}
-                type="button"
-                onClick={() => {
-                  // Runs persist in the background store now, so leaving the
-                  // execute view never kills anything — just close the modal.
-                  if (m.k !== "monitor") { setSelected(null); setInspectId(null); }
-                  setMode(m.k);
-                }}
-                style={{
-                  border: "none", cursor: "pointer", borderRadius: 0,
-                  padding: isMobile ? "9px 14px" : "10px 8px",
-                  flex: isMobile ? "0 0 auto" : "1 1 0", minWidth: 0,
-                  background: "transparent",
-                  borderBottom: active ? "2px solid var(--brand)" : "2px solid transparent",
-                  marginBottom: -1,
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span style={{ fontSize: 13.5, fontWeight: active ? 700 : 500, color: active ? "var(--text)" : "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  {m.label}
-                  {m.k === "control" && activeRuns > 0 && (
-                    <span className="tnum" style={{ fontSize: 10, fontWeight: 700, color: "var(--brand-ink)", background: "var(--brand)", borderRadius: 9, padding: "0 5px", minWidth: 14, textAlign: "center" }}>
-                      {activeRuns}
-                    </span>
-                  )}
-                </span>
-                <span style={{ fontSize: 10, letterSpacing: "0.06em", color: active ? "var(--text-dim)" : "var(--text-mute)" }}>
-                  {m.sub}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
+      <div style={{ maxWidth: 1680, margin: "0 auto", padding: isMobile ? "10px 10px" : "14px 20px" }}>
         {/* ── Assets: one-line summary on trading tabs; full panel on 자산 ── */}
         {mode === "assets" ? (
           // 자산·기록 — "지금 얼마 있나"(잔고)와 "어떻게 변했나"(손익·끝난 런·기회 복기)를 한 탭에.
@@ -458,7 +425,7 @@ export default function Cockpit() {
             mobile={isMobile}
             onGoTab={(t) => setMode(t)}
             onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
-            onInspect={(o) => { setMode("monitor"); if (!isMobile) setInspectId(o.id); }}
+            onInspect={(o) => { setMode("monitor"); if (!isMobile) { setInspectId(o.id); setInspectHidden(false); } }}
             onOpenSettings={(t) => { setSettingsTab(t ?? null); setSettingsOpen(true); }}
           />
         )}
@@ -477,47 +444,17 @@ export default function Cockpit() {
         )}
 
         {(mode === "monitor" || mode === "funding") && (<>
-        {/* ── KPI tiles ────────────────────────────────────────── */}
-        <div
-          style={{
-            display: "grid",
-            // PC에서 타일이 화면 1/3씩 먹지 않게 — 좌측 정렬 소형 타일.
-            gridTemplateColumns: isMobile ? "repeat(3, minmax(0,1fr))" : "repeat(3, minmax(140px, 210px))",
-            gap: isMobile ? 6 : 10,
-            marginBottom: isMobile ? 10 : 14,
-          }}
-        >
-          <Tile
-            label={funding ? "펀딩 기회" : "기회"}
-            value={String(livePool.length)}
-            sub={funding ? "스프레드 8%+" : `전략 ${GAP_KINDS.length}종`}
-            compact
-          />
-          <Tile
-            label={funding ? "수익 스프레드" : "수익 기회"}
-            value={String(positive)}
-            sub={funding ? "APR 양수" : "비용 넘김"}
-            tone="var(--pos)"
-            compact
-          />
-          <Tile
-            label={funding ? "최고 APR" : "최고 수익"}
-            value={bestEdge == null ? "—" : pct(bestEdge)}
-            sub={funding ? "연환산" : "실데이터 · 목업 제외"}
-            tone={bestEdge && bestEdge > 0 ? "var(--pos)" : "var(--text)"}
-            compact
-          />
-        </div>
-
         {/* ── Segmented filter (gap modes only — funding is a single strategy) ── */}
-        {!funding && (
-        <div style={{ display: "flex", alignItems: "stretch", gap: 8, marginBottom: 16, maxWidth: "100%" }}>
+        {/* 필터·수익만·알림·스캔 시각을 한 줄에. 예전 KPI 타일 3개(기회·수익 기회·최고)는
+            칩 숫자와 하단 바가 이미 말하고 있어 뺐다. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, maxWidth: "100%", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+        {!funding && (<>
         <div style={{ overflowX: "auto", minWidth: 0, WebkitOverflowScrolling: "touch" }}>
         <div
           style={{
-            display: "inline-flex", gap: 4, padding: 4,
+            display: "inline-flex", gap: 2, padding: 3,
             background: "var(--card)", border: "1px solid var(--border)",
-            borderRadius: 9,
+            borderRadius: 6,
           }}
         >
           {(["all", ...GAP_KINDS, "locked"] as const).map((k) => {
@@ -530,8 +467,8 @@ export default function Cockpit() {
                 type="button"
                 onClick={() => setFilter(k)}
                 style={{
-                  border: "none", cursor: "pointer", borderRadius: 9,
-                  padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
+                  border: "none", cursor: "pointer", borderRadius: 4,
+                  padding: "4px 10px", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
                   background: active ? "var(--brand-soft)" : "transparent",
                   color: active ? "var(--brand-2)" : "var(--text-dim)",
                   transition: "background 120ms, color 120ms",
@@ -549,15 +486,15 @@ export default function Cockpit() {
         {/* Always visible (outside the scrollable chip strip) — but styled as the
             strip's sibling: same shell, same chip shape. The old green outline made it
             look like a third kind of control next to the filter group. */}
-        <div style={{ display: "inline-flex", padding: 4, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 9, flex: "0 0 auto" }}>
+        <div style={{ display: "inline-flex", padding: 3, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6, flex: "0 0 auto" }}>
           <button
             type="button"
             onClick={togglePlusOnly}
             title="순수익 마이너스(비용 못 넘는) 갭 숨기기"
             aria-pressed={plusOnly}
             style={{
-              border: "none", cursor: "pointer", borderRadius: 9,
-              padding: "5px 12px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
+              border: "none", cursor: "pointer", borderRadius: 4,
+              padding: "4px 10px", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
               background: plusOnly ? "var(--pos-soft)" : "transparent",
               color: plusOnly ? "var(--pos)" : "var(--text-dim)",
               transition: "background 120ms, color 120ms",
@@ -567,8 +504,35 @@ export default function Cockpit() {
             <span style={{ marginLeft: 6, fontWeight: 500, color: plusOnly ? "var(--pos)" : "var(--text-mute)" }}>{positive}</span>
           </button>
         </div>
-        </div>
+        </>)}
+        {funding && (
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>
+            펀딩 스프레드 (숏 받는쪽 → 롱 내는쪽) · <span className="tnum">{livePool.length}</span>건
+            {bestEdge != null && <> · 최고 <b className="tnum" style={{ color: bestEdge > 0 ? "var(--pos)" : "var(--text)" }}>{pct(bestEdge)}</b> APR</>}
+          </span>
         )}
+        <span style={{ flex: 1 }} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          {!funding && (
+            <button
+              type="button"
+              onClick={toggleAlerts}
+              title={`라이브 순수익 +${ALERT_NET_PCT}% 돌파 시 알림음 + 브라우저 알림`}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                background: alertsOn ? "var(--brand-soft)" : "transparent",
+                border: `1px solid ${alertsOn ? "var(--brand)" : "var(--border)"}`,
+                color: alertsOn ? "var(--brand-2)" : "var(--text-mute)",
+                borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              <span style={{ width: 5, height: 5, borderRadius: 6, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
+              알림 {alertsOn ? "ON" : "OFF"}
+            </button>
+          )}
+          <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
+        </span>
+        </div>
 
         {/* Runs live on the 운영 tab now — nudge there when any are active. */}
         {mode === "monitor" && activeRuns > 0 && (
@@ -586,36 +550,11 @@ export default function Cockpit() {
           </button>
         )}
 
-        {/* ── Board ────────────────────────────────────────────── */}
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 2px 6px" }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>
-            {funding ? "펀딩 스프레드 (숏 받는쪽 → 롱 내는쪽)" : "기회 목록"}
-          </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-            {!funding && (
-              <button
-                type="button"
-                onClick={toggleAlerts}
-                title={`라이브 순수익 +${ALERT_NET_PCT}% 돌파 시 알림음 + 브라우저 알림`}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  background: alertsOn ? "var(--brand-soft)" : "transparent",
-                  border: `1px solid ${alertsOn ? "var(--brand)" : "var(--border)"}`,
-                  color: alertsOn ? "var(--brand-2)" : "var(--text-mute)",
-                  borderRadius: 9, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
-                }}
-              >
-                <span style={{ width: 5, height: 5, borderRadius: 9, background: alertsOn ? "var(--brand)" : "var(--text-mute)" }} />
-                알림 {alertsOn ? "ON" : "OFF"}
-              </button>
-            )}
-            <ScanAge ts={scanTs} live={Object.keys(liveOverlay).length > 0} />
-          </span>
-        </div>
         {(() => {
           // PC 검사창 — inspectId의 최신 스냅샷(스캔마다 갱신)을 우측에.
-          const inspectOpp = !isMobile && !funding && inspectId
-            ? (gapOpps.find((o) => o.id === inspectId) ?? null)
+          // 선택이 없거나 사라졌으면 최상단 행 — 우측이 빈 채로 남지 않게 (선택 고정은 아래 effect).
+          const inspectOpp = !isMobile && !funding && !inspectHidden
+            ? ((inspectId ? gapOpps.find((o) => o.id === inspectId) : null) ?? displayRows[0] ?? null)
             : null;
           const board = (
             <CockpitBoard
@@ -624,7 +563,8 @@ export default function Cockpit() {
               onFreezeOrder={setOrderFrozen}
               mobile={isMobile} showExecute={!funding} live={liveOverlay} flash={flashIds}
               onInspect={!isMobile && !funding ? onInspect : undefined}
-              inspectedId={inspectId}
+              narrow={!isMobile && !funding && !inspectHidden && displayRows.length > 0}
+              inspectedId={inspectHidden ? null : (inspectId && gapOpps.some((o) => o.id === inspectId) ? inspectId : displayRows[0]?.id ?? null)}
               lastColLabel={funding ? "다음 정산" : undefined}
               emptyText={hiddenNeg > 0
                 ? `비용 넘는 갭 없음 — 마이너스 ${hiddenNeg}건 숨김${bestEdge != null ? ` (최고 ${bestEdge.toFixed(2)}%)` : ""} · '수익만' 해제 시 전체 표시`
@@ -633,21 +573,21 @@ export default function Cockpit() {
           );
           if (!inspectOpp) return board;
           return (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 520px", gap: 14, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 500px", gap: 12, alignItems: "start" }}>
               <div style={{ minWidth: 0 }}>{board}</div>
-              <div style={{ position: "sticky", top: 60 }}>
+              <div style={{ position: "sticky", top: 58 }}>
                 <GapInspect
                   opp={inspectOpp}
                   live={liveOverlay[inspectOpp.id]}
                   onExecute={(o) => { setOpenRunId(null); setSelected(o); }}
-                  onClose={() => setInspectId(null)}
+                  onClose={() => setInspectHidden(true)}
                 />
               </div>
             </div>
           );
         })()}
 
-        <p style={{ color: "var(--text-mute)", fontSize: 12, marginTop: 14, paddingBottom: 56 }}>
+        <p style={{ color: "var(--text-mute)", fontSize: 11, marginTop: 10, paddingBottom: isMobile ? 56 : 24 }}>
           {funding
             ? "APR = 8h 정규화 펀딩 스프레드의 연환산 (바낸·바이비트는 다음 주기 예측). 정산 시점에만 지급 — 카운트다운 참고. 실행 배선 전, 모니터링 전용."
             : `순수익 = 총차익 − 예상 왕복비용${meta?.calPct ? ` − 자동보정 ${meta.calPct.toFixed(2)}%p (실거래 ${meta.calSamples}건 누수 반영)` : ""}. 김프·크로스(거래소 갭)는 실데이터 연동, CEX-DEX는 목업 스텁입니다.`}
@@ -656,17 +596,18 @@ export default function Cockpit() {
       </div>
 
       {/* ── Sticky summary bar (var1) — best live opportunity at a glance ── */}
-      {mode !== "assets" && best && (
+      {/* PC는 뺀다 — 갭 탭은 표·검사창이, 대시보드는 기회 카드가 이미 같은 걸 보여준다. */}
+      {isMobile && mode !== "assets" && best && (
         <div
           style={{
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30,
             display: "flex", alignItems: "center", gap: 10,
             padding: "9px 14px",
-            background: "var(--header-bg)", backdropFilter: "blur(10px)",
+            background: "var(--header-bg)",
             borderTop: "1px solid var(--border)",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 9, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 6, background: best.net > 0 ? "var(--pos)" : "var(--text-mute)" }} />
           <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
             최고 <b style={{ color: "var(--text)" }}>{best.o.base}</b>
           </span>
@@ -715,7 +656,7 @@ export default function Cockpit() {
           mobile={isMobile}
           onClose={() => setCoinSheet(null)}
           onOpenCoin={openCoin}
-          onInspect={(o) => { setCoinSheet(null); setMode("monitor"); if (!isMobile) setInspectId(o.id); }}
+          onInspect={(o) => { setCoinSheet(null); setMode("monitor"); if (!isMobile) { setInspectId(o.id); setInspectHidden(false); } }}
         />
       )}
     </main>

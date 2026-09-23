@@ -19,7 +19,7 @@ import { isLocked } from "@/lib/gateState";
 const CAP: React.CSSProperties = { fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-mute)" };
 const CARD: React.CSSProperties = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)"  }
 // 핵심 카드(실시간 기회) — 한 단계 밝은 표면·강한 테두리·깊은 그림자로 격자에서 떠오르게.
-const CARD_HERO: React.CSSProperties = { ...CARD, background: "var(--card-2)", border: "1px solid var(--border-strong)", boxShadow: "var(--shadow)" };
+const CARD_HERO: React.CSSProperties = CARD; // 예전엔 한 단계 밝은 표면 — 평평한 톤으로 통일
 // 카드 우상단 "… →" 이동 링크 — 대시보드 전체가 같은 모양을 쓴다.
 const LINK: React.CSSProperties = { border: "none", background: "transparent", color: "var(--brand-2)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 };
 // 응답이 이 시간 넘게 안 오면 "불러오는 중"이 아니라 "응답 없음"이다.
@@ -32,7 +32,7 @@ function MiniBars({ series, color }: { series: number[]; color?: string }) {
   return (
     <div
       title={view.length < 2 ? "세션 추이 — 스캔이 갱신될 때마다 8초 간격으로 쌓입니다" : undefined}
-      style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 34, marginTop: 10 }}
+      style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 20 }}
     >
       {view.length < 2 ? (
         // 카드 4장에 같은 "수집 중…" 문장을 반복하지 않는다 — 빈 자리엔 자리표시 바만.
@@ -54,34 +54,24 @@ function MiniBars({ series, color }: { series: number[]; color?: string }) {
   );
 }
 
-function Kpi({ label, value, chip, sub, series, tone, compact }: {
-  label: string; value: string; chip?: string; sub?: string; series: number[]; tone?: string;
-  /** 2-column mobile grid — the card is ~130px wide, so the big number has to
-   *  shrink or it pushes its grid track past the viewport. */
-  compact?: boolean;
+/** KPI 한 칸 — 카드가 아니라 한 줄 스트립의 칸. 세션 추이 막대는 표본이 쌓였을 때만
+ *  (예전엔 빈 점선 자리표시가 카드마다 남아 "고장난 차트"처럼 보였다). */
+function Kpi({ label, value, chip, sub, series, tone, compact, children }: {
+  label: string; value: string; chip?: string; sub?: string; series?: number[]; tone?: string;
+  compact?: boolean; children?: React.ReactNode;
 }) {
   return (
-    <div style={{ ...CARD, padding: compact ? "12px 12px 10px" : "14px 16px 12px", minWidth: 0, overflow: "hidden" }}>
-      <div style={{ fontSize: compact ? 11.5 : 12.5, color: "var(--text-dim)", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-      <div style={{ marginTop: compact ? 6 : 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-        <span
-          className="tnum"
-          style={{
-            fontSize: compact ? 19 : 28, fontWeight: 700, letterSpacing: "-0.02em",
-            color: tone ?? "var(--text)",
-            // Last-resort break: a very large P&L must wrap inside the card
-            // rather than widen the track and scroll the whole page sideways.
-            minWidth: 0, overflowWrap: "anywhere",
-          }}
-        >
+    <div style={{ padding: compact ? "10px 12px" : "11px 16px", minWidth: 0, overflow: "hidden" }}>
+      <div style={{ ...CAP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+      <div style={{ marginTop: 4, display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+        <span className="tnum" style={{ fontSize: compact ? 18 : 21, fontWeight: 700, letterSpacing: "-0.02em", color: tone ?? "var(--text)", minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.15 }}>
           {value}
         </span>
-        {chip && <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "2px 8px", background: "var(--pos-soft)", color: "var(--pos)" }}>{chip}</span>}
+        {chip && <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px", background: "var(--pos-soft)", color: "var(--pos)" }}>{chip}</span>}
+        {series && series.length >= 6 && <span style={{ marginLeft: "auto", width: 64, flex: "0 0 auto" }}><MiniBars series={series} color={tone} /></span>}
       </div>
-      {sub && (
-        <div style={{ marginTop: 3, fontSize: compact ? 10.5 : 11, color: "var(--text-mute)", minWidth: 0, overflowWrap: "anywhere" }}>{sub}</div>
-      )}
-      <MiniBars series={series} color={tone} />
+      {sub && <div style={{ marginTop: 3, fontSize: 11, color: "var(--text-mute)", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+      {children}
     </div>
   );
 }
@@ -323,8 +313,8 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   const openCoin = useCoinSheet();
 
   const secHd = (title: string, right?: React.ReactNode) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 16px", borderBottom: "1px solid var(--border)" }}>
-      <span style={{ fontSize: 13.5, fontWeight: 700 }}>{title}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", borderBottom: "1px solid var(--border)" }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700 }}>{title}</span>
       <span style={{ flex: 1 }} />
       {right}
     </div>
@@ -335,14 +325,14 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   // 한 줄 스트립으로 최상단에 두면 "얼마 있고 어디에 있나"가 첫 눈에 들어오고,
   // 감시 상태·실시간 기회(실제 용건)는 스크롤 없이 그대로 보인다.
   const segBar = (h: number) => (
-    <div style={{ display: "flex", height: h, gap: 4 }}>
-      {p(cash) > 0 && <div title={`가용 ${usd(cash)}`} style={{ width: `${p(cash)}%`, background: "var(--brand)", opacity: 0.75, borderRadius: 6 }} />}
-      {p(coins) > 0 && <div title={`포지션 ${usd(coins)}`} style={{ width: `${p(coins)}%`, background: "var(--amber)", borderRadius: 6 }} />}
-      {p(transit) > 0 && <div title={`전송 중 ${usd(transit)}`} style={{ width: `${Math.max(2, p(transit))}%`, background: "var(--pos)", borderRadius: 6 }} />}
+    <div style={{ display: "flex", height: h, gap: 2 }}>
+      {p(cash) > 0 && <div title={`가용 ${usd(cash)}`} style={{ width: `${p(cash)}%`, background: "var(--brand)", opacity: 0.75, borderRadius: 2 }} />}
+      {p(coins) > 0 && <div title={`포지션 ${usd(coins)}`} style={{ width: `${p(coins)}%`, background: "var(--amber)", borderRadius: 2 }} />}
+      {p(transit) > 0 && <div title={`전송 중 ${usd(transit)}`} style={{ width: `${Math.max(2, p(transit))}%`, background: "var(--pos)", borderRadius: 2 }} />}
     </div>
   );
   const legend = (fs: number, gap: number) => (
-    <div style={{ display: "flex", gap, fontSize: fs, color: "var(--text-dim)", flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap, fontSize: fs, color: "var(--text-dim)", flexWrap: "wrap", whiteSpace: "nowrap" }}>
       <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--brand)", opacity: 0.75, marginRight: 6 }} />가용 <b className="tnum">{usd(cash)}</b> · {p(cash)}%</span>
       <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--amber)", marginRight: 6 }} />포지션 <b className="tnum">{usd(coins)}</b> · {p(coins)}%</span>
       <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: "var(--pos)", marginRight: 6 }} />전송 중 <b className="tnum">{usd(transit)}</b> · {p(transit)}%</span>
@@ -360,25 +350,6 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
       <div style={{ marginTop: 8 }}>{legend(10.5, 12)}</div>
     </div>
   );
-  const fundsStrip = (
-    <div style={{ ...CARD, padding: "12px 18px", display: "flex", alignItems: "center", gap: 20, marginBottom: 12 }}>
-      <div style={{ flex: "0 0 auto" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span className="tnum" style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em" }}>{usd(totalCap)}</span>
-          {mock && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 999, padding: "1px 7px" }}>데모</span>}
-        </div>
-        <div style={{ marginTop: 2, fontSize: 10.5, color: "var(--text-mute)" }}>
-          총자본 · 글로벌 {portfolio ? Math.round(portfolio.skewPct) : "—"} : KR {portfolio ? 100 - Math.round(portfolio.skewPct) : "—"}
-        </div>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {segBar(14)}
-        <div style={{ marginTop: 7 }}>{legend(11.5, 16)}</div>
-      </div>
-      <button type="button" onClick={() => onGoTab("assets")} style={{ ...LINK, flex: "0 0 auto" }}>상세 →</button>
-    </div>
-  );
-
   // ── 실시간 기회 카드 ──
   const streamCard = (
     <div style={{ ...CARD_HERO, padding: 0, minWidth: 0 }}>
@@ -386,7 +357,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
         <button type="button" onClick={() => onGoTab("monitor")} style={LINK}>갭 보드 →</button>
       ))}
       {stream.length === 0 ? (
-        <div style={{ padding: "22px 16px", fontSize: 12.5, color: "var(--text-mute)" }}>
+        <div style={{ padding: "16px 14px", fontSize: 12.5, color: "var(--text-mute)" }}>
           {live.length > 0
             ? `지금은 비용을 넘는 기회 없음 — ${live.length}건 감시 중`
             : portfolioLoaded && mock
@@ -394,14 +365,14 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
               : "스캔 중 — 실데이터 기회가 잡히면 여기 표시됩니다."}
         </div>
       ) : (
-        <div style={{ padding: "2px 16px 8px" }}>
+        <div style={{ padding: "0 14px 6px" }}>
           {stream.map((o) => {
             const net = liveNet(o);
             const held = o.persistence?.heldSec ?? 0;
             const [buy, sell] = o.legs;
             return (
               <div key={o.id} onClick={onInspect ? () => onInspect(o) : undefined}
-                style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto auto", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, cursor: onInspect ? "pointer" : undefined }}>
+                style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto auto auto auto", alignItems: "center", gap: 12, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, cursor: onInspect ? "pointer" : undefined }}>
                 <span style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700 }}>{o.base}</div>
                   <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -425,7 +396,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
                 <span
                   onClick={(e) => { e.stopPropagation(); if (o.executable) onExecute(o); }}
                   style={{
-                    fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "3px 11px", justifySelf: "end",
+                    fontSize: 10.5, fontWeight: 700, borderRadius: 4, padding: "2px 8px", justifySelf: "end", minWidth: 44, textAlign: "center",
                     cursor: o.executable ? "pointer" : "default",
                     background: o.executable ? "var(--pos-soft)" : o.transfer?.blocked ? "transparent" : "var(--card-3)",
                     color: o.executable ? "var(--pos)" : o.transfer?.blocked ? "var(--neg)" : "var(--text-mute)",
@@ -469,244 +440,249 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
     </div>
   );
 
-  return (
-    <div style={{ paddingBottom: 46 }}>
-      {/* 모바일: 실시간 기회가 맨 위 — 폰으로 여는 순간은 "지금 뭐 있나"를 보러
-          온 것이다. 그 아래 자금 요약(압축). 감시·KPI·리스크는 그다음. */}
-      {mobile && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
-          {streamCard}
-          {fundsCardMobile}
-        </div>
-      )}
-      {/* 데모 배너 — 키가 없으면 아래 카드 대부분이 빈 채로 남는다. 그 이유와 다음 행동을
-          한 줄로. "확인 중"이 영영 안 끝나는 걸 사용자가 기다리게 두지 않는다. */}
-      {portfolioLoaded && mock && (
-        <div style={{ ...CARD, display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 12, background: "var(--brand-soft)", border: "1px solid color-mix(in srgb, var(--brand) 40%, transparent)" }}>
-          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: "var(--brand-ink)", background: "var(--brand)", borderRadius: 999, padding: "2px 8px", flex: "0 0 auto" }}>데모</span>
-          <span style={{ fontSize: 12.5, color: "var(--text)", minWidth: 0 }}>
-            거래소 API 키가 없어 <b>목업 데이터</b>로 표시 중입니다. 잔고·리스크·감지 소스는 키를 넣어야 채워집니다.
+  // ── 카드들 — PC·모바일이 같은 조각을 다른 순서로 쓴다 ──
+  const watchCard = (
+    <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+      {secHd("감시 상태", (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: warnCount > 0 ? "var(--neg)" : "var(--text-mute)" }}>
+            {loading ? "불러오는 중…" : warnCount > 0 ? `⚠ 조치 ${warnCount}` : unknownCount > 0 ? `확인 불가 ${unknownCount}` : "전부 정상"}
           </span>
-          <span style={{ flex: 1 }} />
-          {onOpenSettings && (
-            <button type="button" onClick={() => onOpenSettings("keys")} style={{ ...LINK, fontSize: 12, whiteSpace: "nowrap" }}>키 설정 →</button>
-          )}
-        </div>
-      )}
-      {/* PC: 잔고 스트립이 맨 위 — "얼마 있고 어디에 있나" 한 줄 */}
-      {!mobile && fundsStrip}
-      {/* 상단 그리드: 감시 상태 | KPI 2×2 | 리스크 현황 */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(240px,1.15fr) minmax(0,1fr) minmax(0,1fr) minmax(230px,0.9fr)", gridTemplateRows: mobile ? "none" : "auto auto", gap: 12 }}>
-        <div style={{ ...CARD, gridRow: mobile ? "auto" : "1 / 3", gridColumn: mobile ? "1 / -1" : undefined, padding: "16px 18px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700 }}>감시 상태</span>
-            <span style={{ flex: 1 }} />
-            {health && (
-              <span style={{
-                fontSize: 10, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
-                background: health.killed ? "var(--neg)" : health.dryRun ? "var(--card-3)" : "var(--pos)",
-                color: health.killed ? "#fff" : health.dryRun ? "var(--text-dim)" : "var(--brand-ink)",
-              }}>
-                {health.killed ? "킬스위치 ON" : health.dryRun ? "페이퍼" : "라이브"}
-              </span>
-            )}
-          </div>
-          <div style={{ marginTop: 4, fontSize: 11, color: warnCount > 0 ? "var(--neg)" : "var(--text-mute)" }}>
-            {loading ? "상태 불러오는 중…"
-              : warnCount > 0 ? `⚠ ${warnCount}개 항목 조치 필요`
-              : unknownCount > 0 ? `${unknownCount}개 항목 확인 불가 (미설정·대기)`
-              : "감지 소스·프로세스 전부 정상"}
-          </div>
-          <div style={{ marginTop: 10, display: "flex", flexDirection: "column" }}>
-            {(["감지 소스", "시스템"] as const).map((sec) => (
-              <div key={sec}>
-                <div style={{ ...CAP, padding: "8px 0 2px" }}>{sec}</div>
-                {srcRows.filter((r) => r.sec === sec).map((r) => {
-                  const cells = r.heatKey ? heatCells(r.heatKey) : null;
-                  return (
-                    <div key={r.label} title={r.title} style={{ padding: "7px 0 6px", borderBottom: "1px solid var(--border)" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
-                        <span style={{
-                          width: 8, height: 8, borderRadius: 999, flex: "0 0 auto",
-                          background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
-                        }} />
-                        <span style={{ color: "var(--text-dim)" }}>{r.label}</span>
-                        <span style={{ flex: 1 }} />
-                        <span className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)", textAlign: "right" }}>
-                          {r.text}
-                        </span>
-                        {r.action && (
-                          <button
-                            type="button"
-                            onClick={r.action.onClick}
-                            style={{ border: "1px solid var(--border-strong)", borderRadius: 999, padding: "2px 9px", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 700, cursor: "pointer", flex: "0 0 auto" }}
-                          >
-                            {r.action.label}
-                          </button>
-                        )}
-                      </div>
-                      {/* 24h 업타임 스트립 — "지금 초록"이 아니라 "오늘 얼마나 초록이었나" */}
-                      {cells && (
-                        <div style={{ display: "flex", gap: 1.5, marginTop: 5, marginLeft: 18 }}>
-                          {cells.map((c, i) => (
-                            <span key={i} title={c.title} style={{ flex: 1, height: 4, borderRadius: 2, background: c.color }} />
-                          ))}
-                        </div>
-                      )}
+          <button type="button" onClick={() => onGoTab("control")} style={LINK}>운영 →</button>
+        </span>
+      ))}
+      <div style={{ padding: "2px 14px 8px" }}>
+        {(["감지 소스", "시스템"] as const).map((sec) => (
+          <div key={sec}>
+            <div style={{ ...CAP, padding: "8px 0 2px" }}>{sec}</div>
+            {srcRows.filter((r) => r.sec === sec).map((r) => {
+              const cells = r.heatKey ? heatCells(r.heatKey) : null;
+              return (
+                <div key={r.label} title={r.title ?? r.text} style={{ padding: "6px 0 5px", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, minWidth: 0 }}>
+                    <span style={{
+                      width: 7, height: 7, borderRadius: 6, flex: "0 0 auto",
+                      background: r.state === "ok" ? "var(--pos)" : r.state === "warn" ? "var(--neg)" : "var(--border-strong)",
+                    }} />
+                    <span style={{ color: "var(--text-dim)", whiteSpace: "nowrap", flex: "0 0 auto" }}>{r.label}</span>
+                    <span className="tnum" style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 600, color: r.state === "warn" ? "var(--neg)" : r.state === "ok" ? "var(--text)" : "var(--text-mute)", textAlign: "right", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {r.text}
+                    </span>
+                    {r.action && (
+                      <button
+                        type="button"
+                        onClick={r.action.onClick}
+                        style={{ border: "1px solid var(--border-strong)", borderRadius: 4, padding: "1px 7px", background: "transparent", color: "var(--brand-2)", fontSize: 10.5, fontWeight: 700, cursor: "pointer", flex: "0 0 auto" }}
+                      >
+                        {r.action.label}
+                      </button>
+                    )}
+                  </div>
+                  {/* 24h 업타임 스트립 — "지금 초록"이 아니라 "오늘 얼마나 초록이었나" */}
+                  {cells && (
+                    <div style={{ display: "flex", gap: 1.5, marginTop: 4, marginLeft: 15 }}>
+                      {cells.map((c, i) => (
+                        <span key={i} title={c.title} style={{ flex: 1, height: 3, borderRadius: 1, background: c.color }} />
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
-          {/* 이동 링크는 다른 카드와 같은 "… →" 텍스트 — 전폭 버튼은 주요 액션처럼 보였다. */}
-          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-            <button type="button" onClick={() => onGoTab("control")} style={LINK}>운영 탭 →</button>
-          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // 리스크 — 반원 게이지는 숫자 하나에 카드 절반을 썼다. 막대 + 표로.
+  const riskRows = [
+    { l: "노출", v: risk ? `$${exposure.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : "—", warn: expoUse > 60 },
+    { l: "일일 손실", v: risk ? `−$${dayLoss.toFixed(0)} / $${risk.maxDailyLossUsd}` : "—", warn: lossUse > 60 },
+    // 미실현 — 들고 있는 포지션을 지금 가격으로. 손실분은 위 일일 손실에 이미 들어가 있다.
+    ...(risk?.unrealizedPnlUsd != null && (risk.unrealizedPnlUsd !== 0 || (risk.openNotionalUsd ?? 0) > 0)
+      ? [{ l: "미실현", v: `${risk.unrealizedPnlUsd >= 0 ? "+" : "−"}$${Math.abs(risk.unrealizedPnlUsd).toFixed(0)}${risk.unpricedPositions ? ` (가격 미확인 ${risk.unpricedPositions})` : ""}`, warn: risk.unrealizedPnlUsd < 0 }]
+      : []),
+    { l: "1회 한도", v: risk ? `$${risk.maxPerTradeUsd.toLocaleString()}` : "—", warn: false },
+    {
+      l: "입출금 중단",
+      v: gatesBlocked == null ? (stale ? "응답 없음" : "불러오는 중…") : gatesBlocked > 0 ? `${gatesBlocked}종` : gatesPartial ? "일부만 확인 (키 필요)" : "없음",
+      warn: (gatesBlocked ?? 0) > 0,
+    },
+  ];
+  const riskCard = (
+    <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+      {secHd("리스크", (
+        <button type="button" onClick={() => (onOpenSettings ? onOpenSettings("risk") : onGoTab("control"))} style={LINK}>
+          {riskConfigured ? "한도 조정 →" : "한도 설정 →"}
+        </button>
+      ))}
+      <div style={{ padding: "10px 14px 8px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={CAP}>{riskConfigured ? "여유" : "한도"}</span>
+          <span className="tnum" style={{ marginLeft: "auto", fontSize: 15, fontWeight: 700, color: riskConfigured ? gaugeTone : "var(--text-dim)" }}>
+            {riskConfigured ? `${headroom}%` : risk ? "미설정" : stale ? "응답 없음" : "확인 중"}
+          </span>
         </div>
-
-        <Kpi label="기회" value={String(live.length)} sub="실데이터 · 전략 3종" series={hist.current.opp} compact={mobile} />
-        <Kpi label="수익 기회" value={String(positive)} chip={positive > 0 ? "활성" : undefined} sub="비용 넘김 (실시간)" series={hist.current.posi} compact={mobile} />
-        <Kpi
-          label="최고 순수익"
-          value={bestNet != null ? pct(bestNet) : "—"}
-          sub={best ? `${best.base} · ${best.kind === "kimchi" ? oppKindLabel(best) : best.kind}${best.persistence?.heldSec ? ` · 지속 ${dur(best.persistence.heldSec)}` : ""}` : "스캔 중"}
-          series={hist.current.best}
-          compact={mobile}
-          tone={bestNet != null && bestNet > 0 ? "var(--pos)" : "var(--neg)"}
-        />
-        <Kpi
-          label="오늘 실현"
-          value={`${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`}
-          sub="정산 기준 · 자정 리셋"
-          series={hist.current.pnl.map((v) => Math.abs(v))}
-          compact={mobile}
-          tone={pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : undefined}
-        />
-
-        <div style={{ ...CARD, gridColumn: mobile ? "1 / -1" : "4", gridRow: mobile ? "auto" : "1 / 3", padding: "16px 18px", display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>리스크 현황</div>
-          {/* 게이지는 값을 그린다 — 예전엔 세 색 호가 고정 장식이라 미설정에도 초록 100%였다.
-              트랙 위에 여유율만큼만 채우고, 색은 여유 구간(초록/앰버/빨강)·미설정(회색)으로. */}
-          <div style={{ position: "relative", margin: "10px auto 0", width: 180, height: 106 }}>
-            <svg viewBox="0 0 200 118" width="180" height="106" aria-label={riskConfigured ? `리스크 여유 ${headroom}%` : "리스크 한도 미설정"}>
-              <path d="M 16 108 A 84 84 0 0 1 184 108" fill="none" stroke="var(--card-3)" strokeWidth="14" strokeLinecap="round" />
-              {riskConfigured && headroom > 0 && (
-                <path
-                  d="M 16 108 A 84 84 0 0 1 184 108" fill="none" stroke={gaugeTone} strokeWidth="14" strokeLinecap="round"
-                  pathLength={100} strokeDasharray={`${headroom} 100`}
-                  style={{ transition: "stroke-dasharray 400ms ease-out, stroke 300ms" }}
-                />
-              )}
-            </svg>
-            <div style={{ position: "absolute", left: 0, right: 0, top: 48, textAlign: "center" }}>
-              <div style={CAP}>{riskConfigured ? "리스크 여유" : "리스크 한도"}</div>
-              {riskConfigured ? (
-                <div className="tnum" style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: headroom < 30 ? "var(--neg)" : headroom < 60 ? "var(--amber)" : "var(--text)" }}>{headroom}%</div>
-              ) : (
-                <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text-dim)", marginTop: 6 }}>{risk ? "미설정" : stale ? "응답 없음" : "확인 중"}</div>
-              )}
+        <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: "var(--card-3)", overflow: "hidden" }}>
+          {riskConfigured && <div style={{ width: `${headroom}%`, height: "100%", background: gaugeTone, transition: "width 400ms ease-out" }} />}
+        </div>
+        <div style={{ marginTop: 6, fontSize: 12 }}>
+          {riskRows.map((r) => (
+            <div key={r.l} style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+              <span style={{ color: "var(--text-dim)" }}>{r.l}</span>
+              <span className="tnum" style={{ marginLeft: "auto", fontWeight: 600, color: r.warn ? "var(--amber)" : "var(--text)" }}>{r.v}</span>
             </div>
-          </div>
-          <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", fontSize: 12 }}>
-            {[
-              { l: "노출", v: risk ? `$${exposure.toFixed(0)} / $${(risk.maxInFlightUsd / 1000).toFixed(0)}K` : "—", warn: expoUse > 60 },
-              { l: "일일 손실", v: risk ? `−$${dayLoss.toFixed(0)} / $${risk.maxDailyLossUsd}` : "—", warn: lossUse > 60 },
-              // 미실현 — 들고 있는 포지션을 지금 가격으로. 손실분은 위 일일 손실에 이미 들어가 있다.
-              ...(risk?.unrealizedPnlUsd != null && (risk.unrealizedPnlUsd !== 0 || (risk.openNotionalUsd ?? 0) > 0)
-                ? [{ l: "미실현", v: `${risk.unrealizedPnlUsd >= 0 ? "+" : "−"}$${Math.abs(risk.unrealizedPnlUsd).toFixed(0)}${risk.unpricedPositions ? ` (가격 미확인 ${risk.unpricedPositions})` : ""}`, warn: risk.unrealizedPnlUsd < 0 }]
-                : []),
-              { l: "1회 한도", v: risk ? `$${risk.maxPerTradeUsd.toLocaleString()}` : "—", warn: false },
-              // 감시 카드에서 이사 — 시장 게이트 상태는 리스크의 일부다.
-              {
-                l: "입출금 중단",
-                v: gatesBlocked == null ? (stale ? "응답 없음" : "불러오는 중…") : gatesBlocked > 0 ? `${gatesBlocked}종` : gatesPartial ? "일부만 확인 (키 필요)" : "없음",
-                warn: (gatesBlocked ?? 0) > 0,
-              },
-            ].map((r) => (
-              <div key={r.l} style={{ display: "flex", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ color: "var(--text-dim)" }}>{r.l}</span>
-                <span className="tnum" style={{ marginLeft: "auto", fontWeight: 600, color: r.warn ? "var(--amber)" : "var(--text)" }}>{r.v}</span>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => (onOpenSettings ? onOpenSettings("risk") : onGoTab("control"))}
-            style={{ ...LINK, marginTop: "auto", paddingTop: 10, textAlign: "left" }}
-          >
-            {riskConfigured ? "한도 조정 (설정) →" : "한도 설정하기 →"}
-          </button>
+          ))}
         </div>
       </div>
+    </div>
+  );
 
-      {/* 기회 스트림 — 자금이 스트립으로 올라가면서 전폭 승격 (모바일은 이미 위에) */}
-      {!mobile && <div style={{ marginTop: 12 }}>{streamCard}</div>}
-
-      {/* 기회 복기 — 지난 기회 구간(임계 위)을 다시 본다. 실행이 아니라 분석이라
-          운영 탭이 아니라 여기(보는 화면)에 둔다. */}
-      {/* 기회 복기는 자산·기록 탭으로 옮겼다 (분석이지 실시간 정보가 아니다) */}
-
-      {/* 하단 2행: 상장 감시 | 최근 거래 */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "minmax(280px,0.9fr) minmax(0,1.1fr)", gap: 12, marginTop: 12 }}>
-        {/* 상장 감시 */}
-        <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
-          {secHd("상장 감시", (
-            <button type="button" onClick={() => onGoTab("listing")} style={LINK}>상장 탭 →</button>
-          ))}
-          {!listWatch ? (
-            <div style={{ padding: "18px 16px", fontSize: 12, color: stale ? "var(--neg)" : "var(--text-mute)" }}>{stale ? "응답 없음 — 서버 상태를 확인하세요" : "불러오는 중…"}</div>
-          ) : listWatch.plays.length === 0 ? (
-            <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>👀 감시 중 — 신규 상장이 감지되면 여기 뜹니다</div>
-          ) : (
-            <div style={{ padding: "2px 16px 8px" }}>
-              {listWatch.plays.slice(0, 5).map((l) => {
-                const mins = l.opensAt && !l.opened ? Math.round((l.opensAt - Date.now()) / 60_000) : null;
-                return (
-                  <div key={l.base + l.venue} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
-                    <span style={{ fontWeight: 700 }}>{l.base}</span>
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: l.venue === "upbit" ? "var(--brand-2)" : "var(--amber)" }}>{l.venue === "upbit" ? "업비트" : "빗썸"}</span>
-                    <span style={{ flex: 1 }} />
-                    <span className="tnum" style={{ fontSize: 11.5, fontWeight: 700, color: l.opened ? "var(--pos)" : "var(--amber)" }}>
-                      {l.opened ? "개장됨" : mins != null ? (mins > 0 ? `개장 T−${mins}분` : "개장 임박") : "예정"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+  const listingCard = (
+    <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+      {secHd("상장 감시", (
+        <button type="button" onClick={() => onGoTab("listing")} style={LINK}>상장 →</button>
+      ))}
+      {!listWatch ? (
+        <div style={{ padding: "14px", fontSize: 12, color: stale ? "var(--neg)" : "var(--text-mute)" }}>{stale ? "응답 없음 — 서버 상태를 확인하세요" : "불러오는 중…"}</div>
+      ) : listWatch.plays.length === 0 ? (
+        <div style={{ padding: "14px", fontSize: 12, color: "var(--text-mute)" }}>감시 중 — 신규 상장이 감지되면 여기 뜹니다</div>
+      ) : (
+        <div style={{ padding: "0 14px 6px" }}>
+          {listWatch.plays.slice(0, 5).map((l) => {
+            const mins = l.opensAt && !l.opened ? Math.round((l.opensAt - Date.now()) / 60_000) : null;
+            return (
+              <div key={l.base + l.venue} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                <span style={{ fontWeight: 700 }}>{l.base}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: l.venue === "upbit" ? "var(--brand-2)" : "var(--amber)" }}>{l.venue === "upbit" ? "업비트" : "빗썸"}</span>
+                <span style={{ flex: 1 }} />
+                <span className="tnum" style={{ fontSize: 11.5, fontWeight: 700, color: l.opened ? "var(--pos)" : "var(--amber)" }}>
+                  {l.opened ? "개장됨" : mins != null ? (mins > 0 ? `개장 T−${mins}분` : "개장 임박") : "예정"}
+                </span>
+              </div>
+            );
+          })}
         </div>
+      )}
+    </div>
+  );
 
-        {/* 최근 거래 */}
-        <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
-          {secHd("최근 거래", (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              {tradeCount != null && <span style={{ fontSize: 11, color: "var(--text-mute)" }}>누적 {tradeCount}건</span>}
-              <button type="button" onClick={() => onGoTab("control")} style={LINK}>운영 탭 →</button>
+  const tradesCard = (
+    <div style={{ ...CARD, padding: 0, minWidth: 0 }}>
+      {secHd("최근 거래", (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {tradeCount != null && <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>누적 {tradeCount}건</span>}
+          <button type="button" onClick={() => onGoTab("assets")} style={LINK}>기록 →</button>
+        </span>
+      ))}
+      {trades.length === 0 ? (
+        <div style={{ padding: "14px", fontSize: 12, color: "var(--text-mute)" }}>아직 거래 기록 없음 — 실행하면 여기 쌓입니다</div>
+      ) : (
+        <div style={{ padding: "0 14px 6px" }}>
+          {trades.map((t, i) => {
+            const p2 = t.realizedPnlUsd;
+            const ago = Math.round((Date.now() - t.ts) / 60_000);
+            return (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 64px", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                <span style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <span style={{ fontWeight: 700 }}>{t.base}</span>
+                  <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 페이퍼" : ""}</span>
+                </span>
+                <span className="tnum" style={{ fontWeight: 700, color: p2 == null ? "var(--text-mute)" : p2 >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                  {p2 == null ? "—" : `${p2 >= 0 ? "+" : "−"}$${Math.abs(p2).toFixed(2)}`}
+                </span>
+                <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)", textAlign: "right" }}>{ago < 60 ? `${ago}분 전` : ago < 1440 ? `${Math.round(ago / 60)}시간 전` : `${Math.round(ago / 1440)}일 전`}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  // KPI — 숫자 카드 4장 + 게이지 카드를 한 줄 스트립으로. 칸 사이는 1px 선.
+  const kpis = [
+    <Kpi key="opp" label="기회" value={String(live.length)} sub="실데이터 · 전략 3종" series={hist.current.opp} compact={mobile} />,
+    <Kpi key="pos" label="수익 기회" value={String(positive)} chip={positive > 0 ? "활성" : undefined} sub="비용 넘김 (실시간)" series={hist.current.posi} compact={mobile} tone={positive > 0 ? "var(--pos)" : undefined} />,
+    <Kpi
+      key="best"
+      label="최고 순수익"
+      value={bestNet != null ? pct(bestNet) : "—"}
+      sub={best ? `${best.base} · ${best.kind === "kimchi" ? oppKindLabel(best) : best.kind}${best.persistence?.heldSec ? ` · 지속 ${dur(best.persistence.heldSec)}` : ""}` : "스캔 중"}
+      series={hist.current.best}
+      compact={mobile}
+      tone={bestNet != null && bestNet > 0 ? "var(--pos)" : bestNet != null ? "var(--neg)" : undefined}
+    />,
+    <Kpi
+      key="pnl"
+      label="오늘 실현"
+      value={`${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)}`}
+      sub="정산 기준 · 자정 리셋"
+      compact={mobile}
+      tone={pnl > 0 ? "var(--pos)" : pnl < 0 ? "var(--neg)" : undefined}
+    />,
+  ];
+  const cellBorder = (i: number, cols: number): React.CSSProperties => ({
+    borderLeft: i % cols === 0 ? "none" : "1px solid var(--border)",
+    borderTop: i >= cols ? "1px solid var(--border)" : "none",
+    minWidth: 0,
+  });
+
+  if (mobile) {
+    // 모바일: 실시간 기회가 맨 위 — 폰으로 여는 순간은 "지금 뭐 있나"를 보러 온 것이다.
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 46 }}>
+        {streamCard}
+        {fundsCardMobile}
+        <div style={{ ...CARD, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}>
+          {kpis.map((k, i) => <div key={i} style={cellBorder(i, 2)}>{k}</div>)}
+        </div>
+        {watchCard}
+        {riskCard}
+        {listingCard}
+        {tradesCard}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ paddingBottom: 24 }}>
+      {/* 상단 스트립: 총자본(배분 막대) | 기회 | 수익 기회 | 최고 | 오늘 실현 */}
+      <div style={{ ...CARD, display: "grid", gridTemplateColumns: "minmax(400px,1.9fr) repeat(4, minmax(0,1fr))", marginBottom: 12 }}>
+        <div style={{ padding: "11px 16px", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={CAP}>총자본</span>
+            {mock && (
+              <span title="거래소 API 키가 없어 잔고·리스크·일부 감지 소스가 목업입니다. 갭 시세는 실데이터." style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid color-mix(in srgb, var(--sky) 50%, transparent)", borderRadius: 4, padding: "0 5px" }}>데모</span>
+            )}
+            {mock && portfolioLoaded && onOpenSettings && (
+              <button type="button" onClick={() => onOpenSettings("keys")} style={{ ...LINK, fontSize: 11 }}>키 설정 →</button>
+            )}
+            <button type="button" onClick={() => onGoTab("assets")} style={{ ...LINK, marginLeft: "auto", fontSize: 11 }}>상세 →</button>
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4 }}>
+            <span className="tnum" style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.15 }}>{usd(totalCap)}</span>
+            <span className="tnum" style={{ fontSize: 11, color: "var(--text-mute)" }}>
+              글로벌 {portfolio ? Math.round(portfolio.skewPct) : "—"} : KR {portfolio ? 100 - Math.round(portfolio.skewPct) : "—"}
             </span>
-          ))}
-          {trades.length === 0 ? (
-            <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--text-mute)" }}>아직 거래 기록 없음 — 실행하면 여기 쌓입니다</div>
-          ) : (
-            <div style={{ padding: "2px 16px 8px" }}>
-              {trades.map((t, i) => {
-                const p2 = t.realizedPnlUsd;
-                const ago = Math.round((Date.now() - t.ts) / 60_000);
-                return (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0,1fr) auto auto" : "minmax(0,1.4fr) auto auto", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ fontWeight: 700 }}>{t.base}</span>
-                      <span style={{ marginLeft: 6, fontSize: 10.5, color: "var(--text-mute)" }}>{t.route}{t.dryRun ? " · 페이퍼" : ""}</span>
-                    </span>
-                    <span className="tnum" style={{ fontWeight: 700, color: p2 == null ? "var(--text-mute)" : p2 >= 0 ? "var(--pos)" : "var(--neg)" }}>
-                      {p2 == null ? "—" : `${p2 >= 0 ? "+" : "−"}$${Math.abs(p2).toFixed(2)}`}
-                    </span>
-                    <span className="tnum" style={{ fontSize: 10.5, color: "var(--text-mute)", justifySelf: "end" }}>{ago < 60 ? `${ago}분 전` : `${Math.round(ago / 60)}시간 전`}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          </div>
+          <div style={{ marginTop: 6 }}>{segBar(5)}</div>
+          <div style={{ marginTop: 5 }}>{legend(10.5, 10)}</div>
+        </div>
+        {kpis.map((k, i) => <div key={i} style={{ borderLeft: "1px solid var(--border)", minWidth: 0 }}>{k}</div>)}
+      </div>
+
+      {/* 본문: 좌 — 지금 할 일(기회·거래), 우 — 상태(감시·리스크·상장) */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.75fr) minmax(300px,1fr)", gap: 12, alignItems: "start" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+          {streamCard}
+          {tradesCard}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+          {watchCard}
+          {riskCard}
+          {listingCard}
         </div>
       </div>
     </div>

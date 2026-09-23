@@ -21,10 +21,10 @@ export type SettingsTab = "keys" | "risk" | "alerts" | "tools";
 
 const INPUT: React.CSSProperties = {
   width: "100%", background: "var(--bg)", border: "1px solid var(--border)",
-  borderRadius: 9, color: "var(--text)", padding: "8px 10px", fontSize: 12.5, outline: "none",
+  borderRadius: 6, color: "var(--text)", padding: "8px 10px", fontSize: 12.5, outline: "none",
 };
 const BTN_GHOST: React.CSSProperties = {
-  border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 10px",
+  border: "1px solid var(--border-strong)", borderRadius: 6, padding: "5px 10px",
   background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer",
 };
 
@@ -207,12 +207,12 @@ export function SettingsModal({ onClose, initialTab }: { onClose: () => void; in
         className="panel-in"
         style={{
           width: 620, maxWidth: "100%", maxHeight: "90dvh", overflowY: "auto",
-          background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", border: "1px solid var(--border-strong)",
+          background: "var(--card)", border: "1px solid var(--border-strong)",
           borderRadius: "var(--radius)", boxShadow: "var(--shadow-lg)",
         }}
       >
         {/* 헤더 + 탭 */}
-        <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--card)", backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--card)", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px 8px" }}>
             <span style={{ fontWeight: 700, fontSize: 15 }}>⚙ 설정</span>
             <span style={{ fontSize: 11, color: dryRun ? "var(--amber)" : "var(--neg)", fontWeight: 600 }}>
@@ -223,7 +223,7 @@ export function SettingsModal({ onClose, initialTab }: { onClose: () => void; in
               type="button"
               disabled={!dirty || saving}
               onClick={() => void save()}
-              style={{ border: "none", borderRadius: 9, padding: "7px 16px", background: dirty ? "var(--brand)" : "var(--card-3)", color: dirty ? "var(--brand-ink)" : "var(--text-mute)", fontWeight: 700, fontSize: 12.5, cursor: dirty ? "pointer" : "default" }}
+              style={{ border: "none", borderRadius: 6, padding: "7px 16px", background: dirty ? "var(--brand)" : "var(--card-3)", color: dirty ? "var(--brand-ink)" : "var(--text-mute)", fontWeight: 700, fontSize: 12.5, cursor: dirty ? "pointer" : "default" }}
             >
               {saving ? "저장 중…" : dirty ? `저장 (${Object.keys(draft).length})` : "저장"}
             </button>
@@ -252,7 +252,7 @@ export function SettingsModal({ onClose, initialTab }: { onClose: () => void; in
 
           {/* 라이브 모드 인증 — 저장할 변경이 생겼을 때만 (상시 노출은 소음) */}
           {!dryRun && dirty && (
-            <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, background: "var(--neg-soft)", fontSize: 11.5, color: "var(--text-dim)" }}>
+            <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 6, background: "var(--neg-soft)", fontSize: 11.5, color: "var(--text-dim)" }}>
               라이브 모드 — 저장하려면 EXEC_TOKEN 입력:
               <input
                 type="password"

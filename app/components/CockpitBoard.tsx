@@ -7,7 +7,7 @@ import { pct, usd, price } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, COLS_NARROW, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
 import { isLocked } from "@/lib/gateState";
 
 // 게이트 배지 — 닫힌 갭은 지우지 않고 "왜 지금 못 잡나"를 붙인다. 열린 직후 5분은 열림 강조.
@@ -35,8 +35,10 @@ function ladderText(o: Opportunity): string {
 
 export function Board({
   rows, loading, onExecute, mobile, showExecute, live, flash, emptyText, onInspect, inspectedId, lastColLabel,
-  onFreezeOrder,
+  onFreezeOrder, narrow,
 }: {
+  /** 우측 검사창과 나란히 — 총차익·비용 열을 접는다 (검사창에 분해가 있다). */
+  narrow?: boolean;
   rows: Opportunity[];
   loading: boolean;
   onExecute: (o: Opportunity) => void;
@@ -70,18 +72,18 @@ export function Board({
       {!mobile && (
         <div
           style={{
-            display: "grid", gridTemplateColumns: showExecute ? COLS : COLS_MON, gap: 10,
-            padding: "7px 12px", color: "var(--text-mute)", fontSize: 10.5,
+            display: "grid", gridTemplateColumns: narrow && showExecute ? COLS_NARROW : showExecute ? COLS : COLS_MON, gap: 10,
+            padding: "7px 12px", color: "var(--text-mute)", fontSize: 10.5, whiteSpace: "nowrap",
             fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
-            borderBottom: "1px solid var(--border)",
+            borderBottom: "1px solid var(--border)", background: "var(--header-bg)",
           }}
         >
           <span>전략</span>
           <span>종목</span>
           <span>경로</span>
-          <span style={{ textAlign: "right" }}>총차익</span>
-          <span style={{ textAlign: "right" }}>비용</span>
-          <span style={{ textAlign: "right" }}>추이</span>
+          {!narrow && <span style={{ textAlign: "right" }}>총차익</span>}
+          {!narrow && <span style={{ textAlign: "right" }}>비용</span>}
+          {!narrow && <span style={{ textAlign: "right" }}>추이</span>}
           <span style={{ textAlign: "right" }}>순수익</span>
           <span style={{ textAlign: "right" }} title="상위 기회: 호가를 걸어 내려가 순수익>0인 규모와 그때의 총 이익. 나머지: 최우선호가 한 칸 한도">{lastColLabel ?? "규모 · 이익"}</span>
           {showExecute && <span />}
@@ -97,7 +99,7 @@ export function Board({
           mobile ? (
             <OppCard key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} />
           ) : (
-            <Row key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} onInspect={onInspect} inspected={inspectedId === o.id} />
+            <Row key={o.id} o={o} onExecute={onExecute} showExecute={showExecute} live={live?.[o.id]} flashing={flash?.has(o.id)} onInspect={onInspect} inspected={inspectedId === o.id} narrow={narrow} />
           ),
         )
       )}
@@ -122,8 +124,8 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
           <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
             {oppKindLabel(o)}
           </span>
-          {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 9, padding: "0 3px" }}>mock</span>}
-          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
+          {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 6, padding: "0 3px" }}>mock</span>}
+          {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 6, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         </span>
         <span style={{ textAlign: "right", flex: "0 0 auto" }}>
           <span
@@ -181,7 +183,7 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
             disabled={!o.executable}
             onClick={() => onExecute(o)}
             style={{
-              borderRadius: 9, padding: "8px 16px", fontSize: 13, fontWeight: 600,
+              borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 600,
               cursor: o.executable ? "pointer" : "not-allowed",
               border: o.executable ? "none" : "1px solid var(--border-strong)",
               background: o.executable ? "var(--brand)" : "transparent",
@@ -198,7 +200,7 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
   );
 }
 
-function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspected }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean; onInspect?: (o: Opportunity) => void; inspected?: boolean }) {
+function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspected, narrow }: { o: Opportunity; onExecute: (o: Opportunity) => void; showExecute?: boolean; live?: LiveGap; flashing?: boolean; onInspect?: (o: Opportunity) => void; inspected?: boolean; narrow?: boolean }) {
   const km = KIND_META[o.kind];
   const [hover, setHover] = useState(false);
   const net = live?.netPct ?? o.netPct;
@@ -213,8 +215,8 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
       onClick={onInspect ? () => onInspect(o) : undefined}
       className={flashing ? "spike-flash" : undefined}
       style={{
-        display: "grid", gridTemplateColumns: showExecute ? COLS : COLS_MON, gap: 10, alignItems: "center",
-        padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: 12.5,
+        display: "grid", gridTemplateColumns: narrow && showExecute ? COLS_NARROW : showExecute ? COLS : COLS_MON, gap: 10, alignItems: "center",
+        padding: "6px 12px", minHeight: 40, borderBottom: "1px solid var(--border)", fontSize: 12.5,
         background: inspected ? "var(--brand-soft)" : hover ? "var(--card-2)" : "transparent",
         cursor: onInspect ? "pointer" : undefined,
         boxShadow: inspected ? "inset 2px 0 0 var(--brand)" : undefined,
@@ -226,23 +228,23 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
         style={{
           justifySelf: "start",
           color: km.color, fontSize: 10, fontWeight: 600,
-          letterSpacing: "0.1em", textTransform: "uppercase",
+          letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap",
         }}
       >
         {oppKindLabel(o)}
       </span>
 
       {/* pair */}
-      <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
-        <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{o.base}</span>
+      <span style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0, overflow: "hidden" }}>
+        <span style={{ fontWeight: 700, letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>{o.base}</span>
         {o.suspectApr && (
-          <span title="APR 스파이크 — 신규상장/얇은 OI로 실체결 용량이 없을 확률이 높음" style={{ fontSize: 9, fontWeight: 700, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 9, padding: "0 4px" }}>
+          <span title="APR 스파이크 — 신규상장/얇은 OI로 실체결 용량이 없을 확률이 높음" style={{ fontSize: 9, fontWeight: 700, color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 6, padding: "0 4px" }}>
             스파이크?
           </span>
         )}
-        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 9, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
+        {o.newListing && <span title={`상장 ${o.newListing.ageSec}s 전 · ${o.newListing.overseas ? "해외 상장 있음(김프 가능)" : "해외 미상장"}`} style={{ fontSize: 9, fontWeight: 800, color: "var(--brand-ink)", background: o.newListing.opened ? "var(--pos)" : "var(--amber)", borderRadius: 6, padding: "1px 5px" }}>{o.newListing.opened ? "상장" : "공지"}</span>}
         {o.mock ? (
-          <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 9, padding: "0 4px" }}>
+          <span style={{ color: "var(--text-mute)", fontSize: 10, border: "1px solid var(--border)", borderRadius: 6, padding: "0 4px" }}>
             mock
           </span>
         ) : !isApr && <PersistChip p={o.persistence} />}
@@ -260,16 +262,22 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
         ) : "—"}
       </span>
 
-      <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-        {pct(gross, false)}{isApr ? " APR" : ""}
-      </span>
-      <span className="tnum" style={{ textAlign: "right", color: "var(--text-mute)" }}>
-        −{o.costPct.toFixed(2)}%
-      </span>
+      {!narrow && (
+        <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
+          {pct(gross, false)}{isApr ? " APR" : ""}
+        </span>
+      )}
+      {!narrow && (
+        <span className="tnum" style={{ textAlign: "right", color: "var(--text-mute)" }}>
+          −{o.costPct.toFixed(2)}%
+        </span>
+      )}
       {/* 30분 추이 — APR 행은 스파크 없음(서버가 안 붙임) → "—" */}
-      <span style={{ justifySelf: "end" }}>
-        <Spark data={o.spark} costPct={o.costPct} />
-      </span>
+      {!narrow && (
+        <span style={{ justifySelf: "end" }}>
+          <Spark data={o.spark} costPct={o.costPct} />
+        </span>
+      )}
       <span
         className="tnum"
         style={{ justifySelf: "end", color: netTone, fontWeight: 700, fontSize: 14 }}
@@ -294,12 +302,13 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
           disabled={!o.executable}
           onClick={(e) => { e.stopPropagation(); onExecute(o); }}
           style={{
+            // 모든 행에 같은 채움 버튼이면 시선이 갈 곳이 없다 — 선택·호버 행만 채우고 나머지는 윤곽.
             justifySelf: "end",
-            borderRadius: 9, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,
+            borderRadius: 6, padding: "5px 14px", fontSize: 12, fontWeight: 700,
             cursor: o.executable ? "pointer" : "not-allowed",
-            border: o.executable ? "none" : "1px solid var(--border-strong)",
-            background: o.executable ? "var(--brand-grad)" : "transparent",
-            color: o.executable ? "var(--brand-ink)" : "var(--text-mute)",
+            border: `1px solid ${o.executable ? "var(--brand)" : "var(--border-strong)"}`,
+            background: o.executable && (hover || inspected) ? "var(--brand)" : "transparent",
+            color: !o.executable ? "var(--text-mute)" : hover || inspected ? "var(--brand-ink)" : "var(--brand-2)",
             boxShadow: "none",
           }}
         >
@@ -351,7 +360,7 @@ export const OppCard = React.memo(OppCardImpl, (p, n) =>
 export const Row = React.memo(RowImpl, (p, n) =>
   sameOpp(p.o, n.o) && sameGap(p.live, n.live) &&
   p.flashing === n.flashing && p.showExecute === n.showExecute &&
-  p.inspected === n.inspected && p.onExecute === n.onExecute && p.onInspect === n.onInspect,
+  p.inspected === n.inspected && p.narrow === n.narrow && p.onExecute === n.onExecute && p.onInspect === n.onInspect,
 );
 
 export default Board;

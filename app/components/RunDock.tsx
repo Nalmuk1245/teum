@@ -57,13 +57,13 @@ export function RunDock({ runs, hidden, isMobile, onOpen, onMore }: {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ width: 6, height: 6, borderRadius: 9, background: ph.color, boxShadow: `0 0 6px ${ph.color}`, flex: "0 0 auto" }} />
+              <span style={{ width: 6, height: 6, borderRadius: 6, background: ph.color, boxShadow: `0 0 6px ${ph.color}`, flex: "0 0 auto" }} />
               <span style={{ fontWeight: 700, fontSize: 12.5 }}>{r.base}</span>
               <span className="tnum" style={{ fontSize: 10, color: "var(--text-mute)" }}>{usd(r.sizeUsd)}</span>
               <span style={{ flex: 1 }} />
               <span style={{ fontSize: 10.5, fontWeight: 700, color: ph.color }}>{ph.label}</span>
             </div>
-            <div style={{ display: "flex", height: 4, borderRadius: 9, overflow: "hidden", background: "var(--bg)", marginTop: 7 }}>
+            <div style={{ display: "flex", height: 4, borderRadius: 6, overflow: "hidden", background: "var(--bg)", marginTop: 7 }}>
               <div style={{ width: `${total ? (done / total) * 100 : 0}%`, background: r.phase === "error" ? "var(--neg)" : "var(--brand)", transition: "width 200ms" }} />
             </div>
             <div className="tnum" style={{ marginTop: 5, fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

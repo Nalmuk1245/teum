@@ -67,7 +67,7 @@ export function ChartSection({ base, cex, dex, krVenue }: { base: string; cex: C
               border: "1px solid " + (active?.key === o.key ? "var(--brand)" : "var(--border)"),
               background: active?.key === o.key ? "var(--brand-soft)" : "transparent",
               color: active?.key === o.key ? "var(--brand-2)" : "var(--text-dim)",
-              borderRadius: 9, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
+              borderRadius: 6, padding: "3px 9px", fontSize: 10.5, fontWeight: 600, cursor: "pointer",
             }}
           >
             {o.label}
@@ -77,7 +77,7 @@ export function ChartSection({ base, cex, dex, krVenue }: { base: string; cex: C
         <button type="button" style={BTN_GHOST} onClick={() => setOpen(!open)}>{open ? "접기" : "펼치기"}</button>
       </div>
       {open && active?.gap && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", background: "var(--card)" }}>
+        <div style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", background: "var(--card)" }}>
           <PremiumChart key={active.key} coin={base} a={active.gap.a} b={active.gap.b} unit={1} compact costPct={null} />
         </div>
       )}
@@ -86,7 +86,7 @@ export function ChartSection({ base, cex, dex, krVenue }: { base: string; cex: C
           key={active.key /* venue 전환 시 강제 재로드 */}
           src={active.src}
           title={`${base} chart — ${active.label}`}
-          style={{ width: "100%", height: 440, border: "1px solid var(--border)", borderRadius: 9, background: "#0e0f12" }}
+          style={{ width: "100%", height: 440, border: "1px solid var(--border)", borderRadius: 6, background: "#0e0f12" }}
           allow="clipboard-write"
           loading="lazy"
         />

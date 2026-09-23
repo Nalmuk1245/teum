@@ -153,7 +153,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
   const field = (label: string, key: "perTrade" | "inFlight" | "dailyLoss") => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)" }}>
         <span style={{ color: "var(--text-mute)", fontSize: 12 }}>$</span>
         <input
           className="tnum"
@@ -193,7 +193,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
               <span>총 노출 (진행 중)</span>
               <span className="tnum">{usd(inFlight)} / {usd(rs.maxInFlightUsd)}</span>
             </div>
-            <div style={{ height: 5, borderRadius: 9, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 5, borderRadius: 6, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
               <div style={{ width: `${flightPct}%`, height: "100%", background: flightPct > 90 ? "var(--neg)" : "var(--brand)" }} />
             </div>
           </div>
@@ -204,7 +204,7 @@ export function RiskCard({ inFlight }: { inFlight: number }) {
                 {rs.realizedPnlUsd >= 0 ? "+" : "−"}${Math.abs(rs.realizedPnlUsd).toFixed(2)}
               </span>
             </div>
-            <div style={{ height: 5, borderRadius: 9, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 5, borderRadius: 6, background: "var(--bg)", overflow: "hidden", marginTop: 4 }}>
               <div style={{ width: `${lossPct}%`, height: "100%", background: lossPct > 80 ? "var(--neg)" : "var(--amber)" }} />
             </div>
             <div style={{ fontSize: 10, color: "var(--text-mute)", marginTop: 3 }}>손실 한도까지 {usd(Math.max(0, rs.maxDailyLossUsd - loss))} 남음</div>
@@ -260,7 +260,7 @@ export function SellTriggerCard() {
         <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>입금 도착 시 즉시 매도{dry ? " · 페이퍼" : ""}</span>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={() => setFormOpen((v) => !v)}
-          style={{ border: `1px solid ${formOpen ? "var(--border-strong)" : "var(--brand)"}`, background: "transparent", color: formOpen ? "var(--text-dim)" : "var(--brand-2)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+          style={{ border: `1px solid ${formOpen ? "var(--border-strong)" : "var(--brand)"}`, background: "transparent", color: formOpen ? "var(--text-dim)" : "var(--brand-2)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
           {formOpen ? "닫기" : "+ 등록"}
         </button>
       </div>
@@ -292,7 +292,7 @@ export function SellTriggerCard() {
             </label>
             <span style={{ flex: 1 }} />
             <button type="button" onClick={() => void submit()} disabled={!f.base.trim()}
-              style={{ border: "none", borderRadius: 9, padding: "7px 14px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: f.base.trim() ? 1 : 0.5 }}>
+              style={{ border: "none", borderRadius: 6, padding: "7px 14px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: f.base.trim() ? 1 : 0.5 }}>
               트리거 등록
             </button>
           </div>
@@ -327,8 +327,8 @@ export function SellTriggerCard() {
     </div>
   );
 }
-const SEL: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12, minWidth: 0 };
-const INP: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 };
+const SEL: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 8px", color: "var(--text)", fontSize: 12, minWidth: 0 };
+const INP: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 0 };
 
 // ── 기회 복기 — 지난 에피소드(임계 위 구간)를 다시 본다 ──────────────────────
 // "어제 그 김프, 얼마나 지속됐고 왜 못 먹었나"의 답. 데이터는 스캔 루프가
@@ -429,7 +429,7 @@ export function EpisodeCard() {
         </span>
       </div>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="코인 필터 (예: XRP)"
-        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12.5, outline: "none", marginBottom: 6 }} />
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", color: "var(--text)", fontSize: 12.5, outline: "none", marginBottom: 6 }} />
       {groups.length === 0 ? (
         <div style={{ fontSize: 11.5, color: "var(--text-mute)", padding: "8px 0" }}>
           아직 기록 없음 — 순수익이 임계(기본 0%)를 넘는 기회가 생기면 자동으로 쌓입니다
@@ -499,7 +499,7 @@ export function EpisodeCard() {
                             <span style={{ fontSize: 9, color: "var(--text-mute)" }}>{eOpen ? "▲" : "▼"}</span>
                           </div>
                           {eOpen && (
-                            <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9 }}>
+                            <div style={{ margin: "2px 0 8px", padding: "8px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6 }}>
                               <EpisodeChart curve={e.curve} peak={{ ts: e.peakTs, net: e.peakNetPct }} />
                               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 10.5, color: "var(--text-dim)", marginTop: 6 }} className="tnum">
                                 <span>평균 {e.avgNetPct >= 0 ? "+" : ""}{e.avgNetPct.toFixed(2)}%</span>
@@ -571,32 +571,32 @@ export function ManualTokenCard() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 6, marginBottom: 6 }}>
         <input value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value.toUpperCase() })} placeholder="코인 (예: EUL)"
-          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 12.5, outline: "none", minWidth: 0 }} />
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", color: "var(--text)", fontSize: 12.5, outline: "none", minWidth: 0 }} />
         <select value={form.chain} onChange={(e) => setForm({ ...form, chain: e.target.value })}
-          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
+          style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 8px", color: "var(--text)", fontSize: 12 }}>
           {MANUAL_CHAINS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
       <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="컨트랙트 주소 (0x…)"
         className="tnum"
-        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, padding: "7px 10px", color: "var(--text)", fontSize: 11.5, outline: "none", marginBottom: 6 }} />
+        style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", color: "var(--text)", fontSize: 11.5, outline: "none", marginBottom: 6 }} />
       {needForce ? (
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 11, color: "var(--neg)", marginBottom: 6 }}>⚠ {needForce}</div>
           <div style={{ display: "flex", gap: 6 }}>
             <button type="button" disabled={busy} onClick={() => void submit(true)}
-              style={{ border: "1px solid var(--neg)", background: "transparent", color: "var(--neg)", borderRadius: 9, padding: "6px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+              style={{ border: "1px solid var(--neg)", background: "transparent", color: "var(--neg)", borderRadius: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
               그래도 등록 (책임 확인)
             </button>
             <button type="button" disabled={busy} onClick={() => setNeedForce(null)}
-              style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "6px 12px", fontSize: 11.5, cursor: "pointer" }}>
+              style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "6px 12px", fontSize: 11.5, cursor: "pointer" }}>
               취소
             </button>
           </div>
         </div>
       ) : (
         <button type="button" disabled={busy || !form.base.trim() || !form.address.trim()} onClick={() => void submit(false)}
-          style={{ width: "100%", border: "none", borderRadius: 9, padding: "8px 0", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: busy || !form.base.trim() || !form.address.trim() ? 0.5 : 1, marginBottom: 6 }}>
+          style={{ width: "100%", border: "none", borderRadius: 6, padding: "8px 0", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: busy || !form.base.trim() || !form.address.trim() ? 0.5 : 1, marginBottom: 6 }}>
           {busy ? "온체인 확인 중…" : "온체인 확인 후 등록"}
         </button>
       )}
@@ -747,7 +747,7 @@ function PnlViz({ trades }: { trades: TradeRec[] }) {
       {byKind.length > 0 && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           {byKind.map(([k, v]) => (
-            <span key={k} className="tnum" style={{ fontSize: 10.5, border: "1px solid var(--border)", borderRadius: 9, padding: "3px 9px", color: "var(--text-dim)" }}>
+            <span key={k} className="tnum" style={{ fontSize: 10.5, border: "1px solid var(--border)", borderRadius: 6, padding: "3px 9px", color: "var(--text-dim)" }}>
               {k} {v.n}건{v.real ? <b style={{ marginLeft: 5, color: v.pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{v.pnl >= 0 ? "+" : "−"}${Math.abs(v.pnl).toFixed(2)}</b> : <span style={{ marginLeft: 5, color: "var(--text-mute)" }}>페이퍼</span>}{v.leakN > 0 && <span title="실현 − 탐지 순수익 평균 (음수 = 탐지보다 실현이 나쁨)" style={{ marginLeft: 5, color: v.leakSum / v.leakN < -0.1 ? "var(--amber)" : "var(--text-mute)" }}>누수 {(v.leakSum / v.leakN).toFixed(2)}%p</span>}
             </span>
           ))}
@@ -978,11 +978,11 @@ export function TelegramCard() {
     <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>텔레그램 알림</span>
-        <span style={{ width: 6, height: 6, borderRadius: 9, background: on ? "var(--pos)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 6, background: on ? "var(--pos)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, color: on ? "var(--pos)" : "var(--text-mute)" }}>{on ? "연결됨" : "키 필요"}</span>
         <span style={{ flex: 1 }} />
         {on && (
-          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+          <button type="button" onClick={test} disabled={busy} style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             {busy ? "…" : "테스트 발송"}
           </button>
         )}
@@ -1035,7 +1035,7 @@ function ReopenCard({ killed }: { killed: boolean }) {
   const field = (label: string, key: "sizeUsd" | "minNet" | "prepositionLeadMin" | "prepositionMaxWaitMin", suffix: string) => (
     <label style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
       <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)", minWidth: 0 }}>
         <input className="tnum" inputMode="decimal" value={String(draft?.[key] ?? "")} disabled={armed}
           onChange={(e) => setDraft((d) => (d ? { ...d, [key]: num(e.target.value) } : d))}
           onBlur={() => draft && void save({ [key]: draft[key] })}
@@ -1049,7 +1049,7 @@ function ReopenCard({ killed }: { killed: boolean }) {
     <div style={{ background: armed ? "color-mix(in srgb, var(--amber) 12%, transparent)" : "var(--card)", border: `1px solid ${armed ? "var(--amber)" : "var(--border)"}`, borderRadius: "var(--radius)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>입출금 재개 대응</span>
-        <span style={{ width: 6, height: 6, borderRadius: 9, background: armed ? "var(--amber)" : "var(--text-mute)" }} />
+        <span style={{ width: 6, height: 6, borderRadius: 6, background: armed ? "var(--amber)" : "var(--text-mute)" }} />
         <span style={{ fontSize: 11, fontWeight: armed ? 700 : 400, color: armed ? "var(--amber)" : "var(--text-mute)" }}>{armed ? "자동 실행 무장됨" : "감시만"}</span>
         <span style={{ flex: 1 }} />
         {confirming && !armed && <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 600 }}>재개 순간 자동 매수 — 한 번 더</span>}
@@ -1084,7 +1084,7 @@ function ReopenCard({ killed }: { killed: boolean }) {
           onChange={(e) => setDraft((d) => (d ? { ...d, whitelist: e.target.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) } : d))}
           onBlur={() => draft && void save({ whitelist: draft.whitelist })}
           placeholder="예: XRP,SOL"
-          style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "6px 8px", background: "var(--bg)", color: "var(--text)", fontSize: 12.5, outline: "none" }} />
+          style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", background: "var(--bg)", color: "var(--text)", fontSize: 12.5, outline: "none" }} />
       </label>
       {/* 사전 포지션 */}
       <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
@@ -1094,7 +1094,7 @@ function ReopenCard({ killed }: { killed: boolean }) {
           <span style={{ flex: 1 }} />
           <button type="button" disabled={!armed} onClick={() => void save({ preposition: !(snap?.cfg.preposition) })}
             title={armed ? undefined : "자동 실행을 먼저 켜야 합니다"}
-            style={{ border: "1px solid var(--border-strong)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", background: snap?.cfg.preposition ? "var(--amber)" : "transparent", color: snap?.cfg.preposition ? "var(--brand-ink)" : "var(--text-dim)" }}>
+            style={{ border: "1px solid var(--border-strong)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", background: snap?.cfg.preposition ? "var(--amber)" : "transparent", color: snap?.cfg.preposition ? "var(--brand-ink)" : "var(--text-dim)" }}>
             {snap?.cfg.preposition ? "켜짐" : "꺼짐"}
           </button>
         </div>
@@ -1186,7 +1186,7 @@ export function HoldingsCard({ base }: { base?: string } = {}) {
         <button
           type="button" disabled={importing} onClick={() => void runImport()}
           title="Etherscan 공개 라벨 덤프에서 거래소 지갑 주소를 가져옵니다 (1회, ~22MB)"
-          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "0 0 auto" }}
+          style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "0 0 auto" }}
         >
           {importing ? "임포트 중…" : `라벨 가져오기${totalAddrs != null ? ` (${totalAddrs})` : ""}`}
         </button>
@@ -1197,11 +1197,11 @@ export function HoldingsCard({ base }: { base?: string } = {}) {
           onChange={(e) => setSym(e.target.value.toUpperCase())}
           onKeyDown={(e) => { if (e.key === "Enter") void lookup(sym); }}
           placeholder="티커 (예: PYR)"
-          style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "7px 10px", fontSize: 12.5, outline: "none" }}
+          style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", padding: "7px 10px", fontSize: 12.5, outline: "none" }}
         />
         <button
           type="button" disabled={busy || !sym.trim()} onClick={() => void lookup(sym)}
-          style={{ border: "none", borderRadius: 9, padding: "7px 16px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+          style={{ border: "none", borderRadius: 6, padding: "7px 16px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
         >
           {busy ? "…" : "조회"}
         </button>
@@ -1295,7 +1295,7 @@ export function RunsDashboard({ runs, onOpen, hero }: {
         <span style={{ fontSize: hero ? 14 : 12, fontWeight: 700, color: hero ? "var(--text)" : "var(--text-dim)" }}>
           {hero ? `진행 중인 실행 ${active}건` : `실행 현황 · ${runs.length}`}
         </span>
-        {hero && <span style={{ width: 7, height: 7, borderRadius: 9, background: "var(--amber)", boxShadow: "0 0 8px var(--amber)" }} />}
+        {hero && <span style={{ width: 7, height: 7, borderRadius: 6, background: "var(--amber)", boxShadow: "0 0 8px var(--amber)" }} />}
         <span style={{ flex: 1 }} />
         {hasDone && (
           <button type="button" onClick={() => clearFinished()} style={{ background: "transparent", border: "none", color: "var(--text-mute)", fontSize: 11, cursor: "pointer" }}>
@@ -1323,7 +1323,7 @@ export function RunsDashboard({ runs, onOpen, hero }: {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 6, height: 6, borderRadius: 9, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
+                <span style={{ width: 6, height: 6, borderRadius: 6, background: ph.c, boxShadow: r.phase === "running" ? `0 0 6px ${ph.c}` : "none" }} />
                 <span style={{ fontWeight: 700, fontSize: hero ? 16 : 13.5 }}>{r.base}</span>
                 <span style={{ fontSize: 11, color: "var(--text-mute)" }}>{r.route}</span>
                 <span style={{ flex: 1 }} />
@@ -1331,7 +1331,7 @@ export function RunsDashboard({ runs, onOpen, hero }: {
                 <span style={{ fontSize: 11, fontWeight: 600, color: ph.c }}>{ph.t}</span>
               </div>
               {/* progress */}
-              <div style={{ display: "flex", height: hero ? 8 : 5, borderRadius: 9, overflow: "hidden", background: "var(--bg)", marginTop: hero ? 10 : 8 }}>
+              <div style={{ display: "flex", height: hero ? 8 : 5, borderRadius: 6, overflow: "hidden", background: "var(--bg)", marginTop: hero ? 10 : 8 }}>
                 <div style={{ width: `${total ? (doneCount / total) * 100 : 0}%`, background: r.phase === "error" ? "var(--neg)" : "var(--brand)", transition: "width 200ms" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: hero ? 6 : 4, fontSize: hero ? 12 : 10.5, color: hero ? "var(--text-dim)" : "var(--text-mute)" }}>

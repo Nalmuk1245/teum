@@ -79,7 +79,7 @@ export function AssetSummary({ isMobile, onOpen }: { isMobile?: boolean; onOpen?
       {skewed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--neg)" }}>편중</span>}
       <span style={{ flex: 1 }} />
       {pf.mock && (
-        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 9, padding: "1px 7px" }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 6, padding: "1px 7px" }}>
           데모
         </span>
       )}
@@ -121,7 +121,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color: "var(--text-dim)", fontSize: 12, fontWeight: 600 }}>총자본 (USD 환산)</span>
           {pf.mock && (
-            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 9, padding: "1px 7px" }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 6, padding: "1px 7px" }}>
               데모 — 키 넣으면 실잔고
             </span>
           )}
@@ -142,7 +142,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
           <span className="tnum" style={{ color: "var(--brand-2)" }}>글로벌 · USDT {usd(pf.globalUsd)} <span style={{ color: "var(--text-mute)" }}>({krwShort(pf.globalUsd * pf.usdKrw)})</span></span>
           <span className="tnum" style={{ color: "var(--sky)" }}>KR · 원화 {usd(pf.krUsd)} <span style={{ color: "var(--text-mute)" }}>({krwShort(pf.krUsd * pf.usdKrw)})</span></span>
         </div>
-        <div style={{ display: "flex", height: 10, borderRadius: 9, overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)" }}>
           <div style={{ width: `${g}%`, background: "var(--brand)" }} />
           <div style={{ width: `${100 - g}%`, background: "var(--sky)" }} />
         </div>
@@ -152,7 +152,7 @@ export default function AssetsPanel({ isMobile }: { isMobile?: boolean }) {
         </div>
 
         {skewed ? (
-          <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 9, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
+          <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 6, background: "var(--neg-soft)", color: "var(--neg)", fontSize: 11.5, fontWeight: 500 }}>
             {g > 85
               ? "글로벌 과다 — USDT 놀고 있음. KR 재고 보충하거나 규모 확대"
               : `KR 과다 — 원화가 묶임. USD 회수(원화 회수)를 원/USDT 유리할 때 배치로 (목표 글로벌 ${target}%)`}
@@ -269,7 +269,7 @@ function BridgeCard() {
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState<{ bridge?: string; outUsd?: number; feeUsd?: number; etaMin?: number; error?: string; alts?: { bridge: string; outUsd: number; etaMin: number }[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const sel: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 9, color: "var(--text)", padding: "6px 8px", fontSize: 12, outline: "none" };
+  const sel: React.CSSProperties = { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", padding: "6px 8px", fontSize: 12, outline: "none" };
   const getQuote = async () => {
     setBusy(true); setQ(null); setMsg(null);
     try { setQ(await (await fetch(`/api/bridge?from=${from}&to=${to}&amountUsd=${Number(amt) || 0}`, { cache: "no-store" })).json()); }
@@ -295,7 +295,7 @@ function BridgeCard() {
         <span style={{ color: "var(--text-mute)", fontSize: 11 }}>$</span>
         <input value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^0-9]/g, ""))} style={{ ...sel, width: 70, textAlign: "right" }} />
         <button type="button" disabled={busy || from === to} onClick={() => void getQuote()}
-          style={{ border: "none", borderRadius: 9, padding: "6px 13px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" }}>
+          style={{ border: "none", borderRadius: 6, padding: "6px 13px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 11.5, cursor: "pointer" }}>
           {busy ? "…" : "견적"}
         </button>
       </div>
@@ -308,7 +308,7 @@ function BridgeCard() {
             <span style={{ color: "var(--text-dim)" }}>수수료 ${q.feeUsd?.toFixed(2)}</span>
             <span style={{ color: "var(--text-dim)" }}>ETA {q.etaMin}분</span>
             <button type="button" disabled={busy} onClick={() => void exec()}
-              style={{ marginLeft: "auto", border: "1px solid var(--border-strong)", borderRadius: 9, padding: "5px 12px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" }}>
+              style={{ marginLeft: "auto", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "5px 12px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 11, cursor: "pointer" }}>
               실행
             </button>
           </div>
@@ -389,7 +389,7 @@ function AssetTable({ rows, header }: {
           <span style={{ textAlign: "right" }}>
             <span className="tnum" style={{ fontSize: 12.5, fontWeight: 600 }}>{usd(r.usdValue)}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 2 }}>
-              <span style={{ width: 46, height: 3, borderRadius: 9, background: "var(--bg)", overflow: "hidden" }}>
+              <span style={{ width: 46, height: 3, borderRadius: 6, background: "var(--bg)", overflow: "hidden" }}>
                 <span style={{ display: "block", width: `${Math.min(100, r.sharePct)}%`, height: "100%", background: "var(--brand)" }} />
               </span>
               <span className="tnum" style={{ fontSize: 9.5, color: "var(--text-mute)", minWidth: 26 }}>{r.sharePct.toFixed(0)}%</span>

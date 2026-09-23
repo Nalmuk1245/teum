@@ -35,7 +35,7 @@ export function ErrBox({ raw, compact }: { raw: string; compact?: boolean }) {
   const k = explainError(raw);
   const color = k.tone === "bad" ? "var(--neg)" : k.tone === "info" ? "var(--text-dim)" : "var(--amber)";
   return (
-    <div style={{ fontSize: 11, color, padding: compact ? "4px 8px" : "6px 10px", background: "var(--card)", borderRadius: 9, border: `1px solid ${k.tone === "bad" ? "var(--neg-soft)" : "var(--border)"}` }}>
+    <div style={{ fontSize: 11, color, padding: compact ? "4px 8px" : "6px 10px", background: "var(--card)", borderRadius: 6, border: `1px solid ${k.tone === "bad" ? "var(--neg-soft)" : "var(--border)"}` }}>
       <b>{k.title}</b>
       {k.hint && <span style={{ color: "var(--text-dim)", marginLeft: 6 }}>· {k.hint}</span>}
       {k.title !== raw && <span style={{ color: "var(--text-mute)", marginLeft: 6, fontSize: 10 }}>({raw.slice(0, 60)})</span>}

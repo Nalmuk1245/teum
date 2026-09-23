@@ -49,9 +49,9 @@ export function CoinSheet({ base, opps, mobile, onClose, onOpenCoin, onInspect }
             onKeyDown={(e) => { if (e.key === "Enter") onOpenCoin(q.trim()); }}
             style={{ flex: 1, minWidth: 0, background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: 10, padding: "8px 12px", color: "var(--text)", fontSize: 15, fontWeight: 700, outline: "none" }} />
           <button type="button" onClick={() => onOpenCoin(q.trim())}
-            style={{ border: "none", borderRadius: 9, padding: "8px 14px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>조회</button>
+            style={{ border: "none", borderRadius: 6, padding: "8px 14px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>조회</button>
           <button type="button" onClick={onClose} aria-label="닫기"
-            style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 9, padding: "7px 10px", fontSize: 12, cursor: "pointer" }}>✕</button>
+            style={{ border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-dim)", borderRadius: 6, padding: "7px 10px", fontSize: 12, cursor: "pointer" }}>✕</button>
         </div>
         {base ? <CoinDetail key={base} base={base} opps={opps} onInspect={onInspect} /> : <BlockedList onOpenCoin={onOpenCoin} />}
       </div>
