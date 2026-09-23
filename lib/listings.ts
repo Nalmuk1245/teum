@@ -81,6 +81,8 @@ export type ListingPlay = {
   pctAt?: Record<string, number>;
   /** 국내 거래 개시 순간의 김프(%) — KR 가격 vs 공지 때 고른 해외 거래소 가격 */
   krOpenPremPct?: number;
+  /** 국내 매도 경로 런 (lib/listingKr) — 해외 매수 → 국내 입금 → 개장 순간 매도 */
+  krRun?: { runId: string; startedAt: number; sizeUsd: number; released?: boolean };
   /** 감지 타이밍(ms) — 이 제품의 승부처라 구간을 쪼개 기록한다.
    *  publishLagMs가 진짜 실력치(공지가 뜬 뒤 몇 ms 만에 봤나),
    *  나머지는 우리 코드가 쓴 시간이라 줄일 수 있는 몫이다. */
@@ -188,16 +190,18 @@ export async function globalVenueFor(base: string): Promise<{ venue: string; pri
 // ── 자동매수 프리셋 (공지 감지 즉시) ──────────────────────────────────────────
 // UI에서 켜짐; 서버가 공지 등록 직후 바로 산다. 라이브 실행은 env
 // LISTING_AUTO_LIVE=true 를 추가로 요구 (무인 자금 집행은 이중 옵트인).
-export type ListingAutoCfg = { armed: boolean; sizeUsd: number };
+/** route: "global" = 해외에서 사서 해외에서 판다(자동 청산 규칙) · "kr" = 사서 국내로 보내 개장 순간 판다(lib/listingKr) */
+export type ListingAutoCfg = { armed: boolean; sizeUsd: number; route: "global" | "kr" };
 export function getListingAuto(): ListingAutoCfg {
-  const saved = loadSection<ListingAutoCfg>("listingAuto");
-  return { armed: saved?.armed ?? false, sizeUsd: saved?.sizeUsd ?? Number(process.env.LISTING_BUY_USD ?? 500) };
+  const saved = loadSection<Partial<ListingAutoCfg>>("listingAuto");
+  return { armed: saved?.armed ?? false, sizeUsd: saved?.sizeUsd ?? Number(process.env.LISTING_BUY_USD ?? 500), route: saved?.route === "kr" ? "kr" : "global" };
 }
 export function setListingAuto(cfg: Partial<ListingAutoCfg>): ListingAutoCfg {
   const cur = getListingAuto();
   const next = {
     armed: typeof cfg.armed === "boolean" ? cfg.armed : cur.armed,
     sizeUsd: typeof cfg.sizeUsd === "number" && cfg.sizeUsd > 0 ? cfg.sizeUsd : cur.sizeUsd,
+    route: cfg.route === "kr" || cfg.route === "global" ? cfg.route : cur.route,
   };
   saveSection("listingAuto", next);
   return next;
@@ -258,6 +262,14 @@ async function autoBuy(base: string, gVenue: string, gPrice: number) {
   } catch { /* resolve 오류 → 아래 주문은 진행하지 않음 */ return; }
   const slip = await listingSlipGate(gVenue, base, cfg.sizeUsd);
   if (slip) { void notifyNow(`⏸ 자동매수 차단 — <b>${base}</b>: ${slip}`); return; }
+  // 국내 매도 경로 — 사서 국내로 보내 개장 순간 판다. 입출금이 안 열려 있으면 해외 매수로 대신한다
+  // (공지 순간 해외 선점 자체는 여전히 가치가 있다). 대신했다는 사실은 알린다.
+  if (cfg.route === "kr") {
+    const { startListingKrRun } = await import("./listingKr");
+    const kr = await startListingKrRun(base, cfg.sizeUsd);
+    if (kr.ok) return;
+    void notifyNow(`↪️ <b>${base}</b> 국내 매도 경로 불가 — ${kr.reason}\n해외 매수로 대신합니다 (자동 청산 규칙 적용)`);
+  }
   const { binanceSpot, bybitOrder, okxOrder } = await import("./orders");
   const r =
     gVenue === "binance" ? await binanceSpot(base, "BUY", { quoteUsd: cfg.sizeUsd })
@@ -658,16 +670,25 @@ export function listingHistory(): ListingHistoryRow[] {
 }
 
 /** 모의 상장 드릴 — 가짜 공지를 주입해 전체 플로우(알림→카드→매수)를 리허설. */
-export async function startDrill(base: string): Promise<void> {
+export async function startDrill(base: string, openInMs = 10 * 60_000): Promise<void> {
   L.plays.delete(base); // 재드릴 허용
   void notifyNow(`🥁 [드릴] 상장 공지 시뮬 — <b>${base}</b> (업비트) · 실제 상장 아님`);
   // 드릴도 감지 타이밍 경로를 그대로 태운다 — 리허설의 목적이 "실제와 같은 흐름"이고,
   // 반응 구간(거래소 탐색·알림·자동매수)이 몇 ms인지 여기서 미리 볼 수 있어야 한다.
   const at = Date.now();
   await registerPlay(base, "upbit", `[드릴] ${base} KRW 마켓 디지털 자산 추가 (모의)`, true, {
-    drill: true, opensAt: at + 10 * 60_000, // 10분 뒤 개장 가정 → 카운트다운 리허설
+    drill: true, opensAt: at + openInMs, // 개장 가정 → 카운트다운 리허설
     detect: { at, source: "ann" },
   });
+  // 예정 시각에 드릴도 "개장"한다 — 개장 순간에 걸린 흐름(국내 매도 승인·개장 후 N분 청산)까지
+  // 리허설이 이어지게. 예전엔 카운트다운만 돌고 영원히 개장 전이었다.
+  setTimeout(() => {
+    const p = L.plays.get(base);
+    if (!p || !p.drill || p.opened) return;
+    p.opened = true; p.openedAt = Date.now();
+    saveSection("listingPlays", [...L.plays.entries()]);
+    void notifyNow(`🥁 [드릴] <b>${base}</b> 개장 (모의)`);
+  }, openInMs).unref?.();
 }
 
 // ── 활성 플레이 추적 (60s): 피크 수익률 + 핫월렛 급증 알림 ─────────────────────
@@ -901,6 +922,13 @@ export function recordListingBuy(base: string, buy: ListingBuy): void {
     L.plays.set(base, p);
   }
   (p.buys ??= []).push(buy);
+  saveSection("listingPlays", [...L.plays.entries()]);
+}
+
+export function patchPlay(base: string, p: Partial<ListingPlay>): void {
+  const cur = L.plays.get(base);
+  if (!cur) return;
+  L.plays.set(base, { ...cur, ...p });
   saveSection("listingPlays", [...L.plays.entries()]);
 }
 

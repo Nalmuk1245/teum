@@ -12,6 +12,8 @@ export type Listing = {
   base: string; venue: string; announcedAt: number; overseas: boolean; opened: boolean;
   openedAt?: number; opensAt?: number; drill?: boolean; globalVenue?: string; globalPrice?: number; title?: string;
   buys?: Buy[]; sells?: Buy[]; peakPct?: number;
+  krRun?: { runId: string; startedAt: number; sizeUsd: number; released?: boolean };
+  krOpenPremPct?: number;
 };
 export type HistoryRow = {
   base: string; venue: string; announcedAt: number; openedAt: number | null; opensAt: number | null;
@@ -29,7 +31,7 @@ export type Holdings = {
   venues: { venue: string; hot: number; hotUsd: number | null; cold: number; hotDeltaPerMin: number | null; hotInPerMin: number | null; hotOutPerMin: number | null; breakdown?: WalletBreak[] }[];
   priceUsd: number | null; globalHotUsd: number | null; dumpRatioPct: number | null; note?: string;
 };
-export type AutoCfg = { armed: boolean; sizeUsd: number };
+export type AutoCfg = { armed: boolean; sizeUsd: number; route?: "global" | "kr" };
 
 export const fmtUsd = (n: number | null | undefined, digits = 0): string =>
   n == null ? "—" : n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${(n / 1e3).toFixed(1)}K` : `$${n.toFixed(digits)}`;

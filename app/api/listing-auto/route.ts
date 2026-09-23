@@ -16,7 +16,7 @@ export async function GET() {
 // 이중 옵트인(armed + LISTING_AUTO_LIVE=true)은 그대로다.
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { armed?: boolean; sizeUsd?: number };
+    const body = (await req.json()) as { armed?: boolean; sizeUsd?: number; route?: "global" | "kr" };
     const cfg = setListingAuto(body);
     return NextResponse.json({ cfg, liveEnabled: process.env.LISTING_AUTO_LIVE === "true" });
   } catch (e) {

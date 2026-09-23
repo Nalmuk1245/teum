@@ -269,6 +269,7 @@ export async function getScan(): Promise<{ opps: Opportunity[]; ts: number }> {
     startListingWatch(); // 상장따리: notice/TG/market watchers
     void import("./listingExit").then((m) => m.startListingExit()).catch(() => {}); // 상장따리 자동 청산 (기본 꺼짐)
     void import("./unrealized").then((m) => m.startUnrealized()).catch(() => {}); // 미실현 손익 → 리스크 게이트
+    void import("./listingKr").then((m) => m.startListingKr()).catch(() => {}); // 상장 국내 매도 — 개장 시 매도 승인
     void import("./sellTriggers").then((m) => m.bootSellTriggers()).catch(() => {}); // 자동매도 재무장
     // 실행 엔진 부팅 — 모듈 로드가 곧 boot()(재시작으로 끊긴 런을 error로 표시 +
     // 텔레그램 통보)와 헷지 마진 워치 시작이다. 예전엔 /api/runs가 처음 불릴 때만

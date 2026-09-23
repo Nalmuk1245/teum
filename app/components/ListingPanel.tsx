@@ -192,6 +192,12 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         <span style={{ fontSize: 12, fontWeight: 600, color: auto?.armed ? "var(--amber)" : "var(--text-dim)" }}>공지 즉시 자동매수</span>
         <span style={{ fontSize: 10, color: "var(--text-mute)" }}>{auto?.armed ? (autoLive ? "켜짐 · 라이브" : "켜짐 · 모의") : "꺼짐"}</span>
         <span style={{ flex: 1 }} />
+        {/* 매도처 — 해외(자동 청산 규칙) / 국내(개장 순간 매도, 입출금 안 열려 있으면 해외로 대신) */}
+        <button type="button" style={BTN_GHOST}
+          title={auto?.route === "kr" ? "산 코인을 국내로 보내 개장 순간 매도 (입출금 막혀 있으면 해외 매수로 대신)" : "해외에서 사서 해외에서 매도 (자동 청산 규칙)"}
+          onClick={() => void saveAuto({ route: auto?.route === "kr" ? "global" : "kr" })}>
+          매도처 {auto?.route === "kr" ? "국내" : "해외"}
+        </button>
         <span style={CAP}>$</span>
         <input
           value={autoSize}

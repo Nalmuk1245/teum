@@ -25,7 +25,8 @@ export type EventType =
   | "reopen.auto_start"  // 재개 자동 실행 시작/거부
   | "reopen.cfg"         // 설정 변경
   | "prepos.start" | "prepos.abort" // 사전 포지션 시작/철회
-  | "listing.exit" | "listing.exit_cfg"; // 상장따리 자동 청산
+  | "listing.exit" | "listing.exit_cfg" // 상장따리 자동 청산
+  | "listing.kr_run" | "listing.kr_sell"; // 상장따리 국내 매도 경로
 
 export type EventRecord = { ts: number; type: EventType; base?: string; [k: string]: unknown };
 

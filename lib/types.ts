@@ -108,6 +108,9 @@ export type Opportunity = {
   reopenedAt?: number;
   /** 공지로 파악한 입출금 재개 예정 시각 (reopen.ts) — 🔒 행에 카운트다운. */
   reopenAt?: number;
+  /** 상장따리 국내 매도 런 (lib/listingKr) — 국내 개장 전이라 호가가 없어 재검증을 건너뛰고,
+   *  매도 직전에 멈췄다가 개장 순간 승인된다. */
+  listingRun?: { krVenue: "upbit" | "bithumb"; announcedAt: number };
   ts: number;
 };
 

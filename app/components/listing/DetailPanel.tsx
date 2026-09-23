@@ -1,5 +1,6 @@
 "use client";
 
+import { authHeaders } from "@/lib/runStore";
 import React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vlabel, VenueLink } from "../cockpit-ui";
@@ -235,7 +236,8 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
   const act = useCallback(async (key: string, url: string, body: Record<string, unknown>) => {
     setBusy(key); setMsg(null); setErrMsg(null);
     try {
-      const j = await (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+      // authHeaders — 라이브에선 돈이 나가는 라우트가 EXEC_TOKEN을 요구한다(예전엔 안 실어서 라이브 수동 매수가 403).
+      const j = await (await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: JSON.stringify(body) })).json();
       setMsg(j.ok ? `✓ ${j.message ?? "완료"}${j.dryRun ? " (모의)" : ""}` : null);
       setErrMsg(j.ok ? null : (j.message ?? "요청 실패"));
       if (j.ok && j.tx?.hash && typeof body.chain === "string") {
@@ -665,6 +667,32 @@ export function DetailPanel({ base, narrow }: { base: string; narrow?: boolean }
           거래소 API에서 직접 받고(클라이언트 주소 불신), 컨트랙트는 검증 경로를
           거친다 — 검증 실패 코인은 서버가 차단하고 수동 등록을 안내한다. */}
       <TransferSection base={base} play={play} dex={d.dex} busy={busy} act={act} />
+
+      {/* ③″ 국내 매도 경로 — 해외 매수 → 국내 입금 → 개장 순간 매도 (lib/listingKr) */}
+      {play && (
+        <div style={{ marginTop: 12, border: "1px solid var(--border)", borderRadius: 9, padding: "10px 12px", background: "var(--card)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontWeight: 700 }}>국내 매도 경로</span>
+            <span style={{ fontSize: 10.5, color: "var(--text-mute)" }}>해외에서 사서 {play.venue === "upbit" ? "업비트" : "빗썸"}로 보내 두고 개장 순간 매도 — 상장 김프까지</span>
+            <span style={{ flex: 1 }} />
+            {!play.krRun ? (
+              <button type="button" style={BTN} disabled={busy != null || size <= 0}
+                onClick={() => void act("kr", "/api/listing-kr-run", { base, sizeUsd: size })}>
+                {busy === "kr" ? "…" : `$${size} 실행`}
+              </button>
+            ) : (
+              <span style={{ fontSize: 11, fontWeight: 700, color: play.krRun.released ? "var(--pos)" : "var(--amber)" }}>
+                {play.krRun.released ? "개장 — 매도 승인됨" : play.opened ? "개장됨 — 코인 도착 대기" : "진행 중 — 개장 대기"}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginTop: 4, lineHeight: 1.5 }}>
+            {play.krRun
+              ? <>런 {play.krRun.runId} · ${play.krRun.sizeUsd} · 운영 탭에서 단계별 진행을 봅니다. 국내 개장이 감지되면 매도 단계를 자동 승인합니다.</>
+              : <>실행 엔진의 김프 런으로 돕니다(퍼프 있으면 헷지). 입금까지 자동으로 가고 매도 직전에 멈춘 뒤 개장 감지 순간 매도. 라이브는 양쪽 입출금이 확인된 열림이어야 시작됩니다.</>}
+          </div>
+        </div>
+      )}
 
       {/* ④ 내 포지션 */}
       {(buys.length > 0 || sells.length > 0) && (

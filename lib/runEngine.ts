@@ -402,6 +402,10 @@ async function callStep(id: string, eng: Engine, stepId: StepId, opts?: { rollba
 
 async function revalidate(eng: Engine, sizeUsd: number, hedged: boolean) {
   if (eng.opp.mock) return { ok: true as const, netPct: eng.opp.netPct, extraPct: 0, maxSizeUsd: 0 };
+  // 상장 국내 매도 런 — 개장 전엔 국내 호가 자체가 없어 견적이 불가능하고, 매도 시점엔 이미 코인이
+  // 국내에 도착해 있어 "엣지가 없으니 멈춤"이 오히려 위험(헷지 들고 무기한 대기)이다. 매도 단계의
+  // 슬리피지 상한은 그대로 걸린다.
+  if (eng.opp.listingRun) return { ok: true as const, netPct: eng.opp.netPct, extraPct: 0, maxSizeUsd: 0 };
   try {
     // fresh: 돈이 움직이기 직전 — 캐시된 호가로 판단하지 않는다
     const q = await quoteOpportunity(eng.opp, sizeUsd, { fresh: true });
