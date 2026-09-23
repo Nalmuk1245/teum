@@ -157,3 +157,28 @@ export function listingBacktest(rows: { schema?: number; pctAt?: Record<string, 
   const legacy = rows.filter((r) => r.schema !== 2);
   return { marks, schema2: v2.length, legacy: legacy.length, legacyMedianPeak: med(legacy.map((r) => r.peakPct).filter((x): x is number => x != null)) };
 }
+
+// ── 설정 탐색 — 최소 순수익 × 최소 지속 격자를 전부 돌려 비교 ─────────────────
+// "어느 설정이 제일 나았나"를 눈으로 고르게. 과최적화 주의: 격자 최고값은 과거에 맞춘 값이라
+// 실전에선 그보다 못하다. 그래서 추천에서 빼는 칸:
+//   · 거래 20건 미만 — 우연일 수 있다
+//   · 지속 0초 — 한 번 스친 갭에 진입. 기록상으론 돈이 되지만(2026-09 전체 기록 최고 칸) 승률 49%·
+//     중앙 청산 +0.01%로, 스캔 지연·호가 소진을 생각하면 실전에서 못 잡는 몫이다
+//   · 중앙 청산 순수익 ≤ 0 — 소수 대박이 합계를 끌어올린 설정
+export const SWEEP_NETS = [0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0];
+export const SWEEP_HELDS = [0, 30, 60, 120, 300];
+export type SweepCell = { minNet: number; minHeldSec: number; trades: number; totalUsd: number; winRate: number | null; medianExitNet: number | null; perTradeUsd: number | null };
+export function sweep(eps: BtEpisode[], base: Omit<BtParams, "minNet" | "minHeldSec">): { cells: SweepCell[]; best: SweepCell | null } {
+  const cells: SweepCell[] = [];
+  for (const minNet of SWEEP_NETS) for (const minHeldSec of SWEEP_HELDS) {
+    const r = runBacktest(eps, { ...base, minNet, minHeldSec });
+    cells.push({
+      minNet, minHeldSec, trades: r.trades, totalUsd: r.totalUsd,
+      winRate: r.trades ? Math.round((r.wins / r.trades) * 100) : null,
+      medianExitNet: r.medianExitNet, perTradeUsd: r.trades ? r2(r.totalUsd / r.trades) : null,
+    });
+  }
+  const eligible = cells.filter((c) => c.trades >= 20 && c.minHeldSec > 0 && (c.medianExitNet ?? 0) > 0);
+  const best = eligible.length ? eligible.reduce((a, b) => (b.totalUsd > a.totalUsd ? b : a)) : null;
+  return { cells, best };
+}

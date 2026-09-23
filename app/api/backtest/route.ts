@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadEpisodes, runBacktest, listingBacktest } from "@/lib/backtest";
+import { loadEpisodes, runBacktest, listingBacktest, sweep } from "@/lib/backtest";
 import { listingHistory } from "@/lib/listings";
 
 export const dynamic = "force-dynamic";
@@ -16,5 +16,9 @@ export async function GET(req: Request) {
     kinds, executableOnly: u.searchParams.get("exec") === "1",
     excludeAbovePct: num("maxEntry", 10),
   });
-  return NextResponse.json({ gap, listing: listingBacktest(listingHistory()) });
+  // ?sweep=1 → 최소 순수익 × 최소 지속 격자 전체
+  const sw = u.searchParams.get("sweep") === "1"
+    ? sweep(eps, { sizeUsd: num("size", 300), kinds, executableOnly: u.searchParams.get("exec") === "1", excludeAbovePct: num("maxEntry", 10) })
+    : undefined;
+  return NextResponse.json({ gap, listing: listingBacktest(listingHistory()), sweep: sw });
 }

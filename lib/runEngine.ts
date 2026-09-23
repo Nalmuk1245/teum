@@ -797,7 +797,9 @@ export async function unwindRun(id: string, fraction: number): Promise<UnwindRun
   const run = E.runs[id];
   if (!run) return { error: "런 없음" };
   if (run.unwinding) return { error: "이미 청산 진행 중" };
-  if (run.remaining <= 0) return { error: "청산할 잔량 없음" };
+  // fraction이 빠진 요청(NaN)이 잔량을 NaN으로 덮어 런이 영영 청산 불가가 됐다 (2026-09-23 발견).
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) return { error: "청산 비율은 0~1" };
+  if (!(run.remaining > 0)) return { error: "청산할 잔량 없음" };
   const eng = E.engines.get(id);
   // The loop and an unwind must never touch the same position concurrently:
   // unwinding while the loop is mid-`sell` (or paused right before it) sold the

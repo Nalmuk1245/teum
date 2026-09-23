@@ -12,6 +12,8 @@ type Gap = {
   avgExitNet: number | null; medianExitNet: number | null; avgEntryNet: number | null; estimated: number; spanDays: number;
   byKind: Record<string, { trades: number; totalUsd: number; wins: number }>; best: Trade[]; worst: Trade[];
 };
+type Cell = { minNet: number; minHeldSec: number; trades: number; totalUsd: number; winRate: number | null; medianExitNet: number | null; perTradeUsd: number | null };
+type Sweep = { cells: Cell[]; best: Cell | null };
 type Listing = { marks: { min: number; n: number; avgPct: number | null; medianPct: number | null; winRate: number | null }[]; schema2: number; legacy: number; legacyMedianPeak: number | null };
 
 const KIND_KO: Record<string, string> = { kimchi: "김프·역프", "cross-cex": "크로스", "cex-dex": "CEX-DEX" };
@@ -31,6 +33,16 @@ export function BacktestCard() {
   const [scope, setScope] = useState<"recent" | "all">("recent");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<{ gap: Gap; listing: Listing } | null>(null);
+  const [sw, setSw] = useState<Sweep | null>(null);
+  const [swBusy, setSwBusy] = useState(false);
+  const runSweep = async () => {
+    setSwBusy(true);
+    try {
+      const q = new URLSearchParams({ size, kinds: kinds.join(","), exec: exec ? "1" : "0", scope, maxEntry: dropBig ? "10" : "0", sweep: "1" });
+      const j = await (await fetch(`/api/backtest?${q}`, { cache: "no-store" })).json();
+      setSw(j.sweep ?? null);
+    } catch { /* */ } finally { setSwBusy(false); }
+  };
   const [err, setErr] = useState<string | null>(null);
 
   const run = async () => {
@@ -75,6 +87,8 @@ export function BacktestCard() {
         <span style={{ flex: 1 }} />
         <button type="button" onClick={() => void run()} disabled={busy}
           style={{ border: "none", borderRadius: 8, padding: "6px 14px", background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{busy ? "계산 중…" : "돌려보기"}</button>
+        <button type="button" onClick={() => void runSweep()} disabled={swBusy} title="최소 순수익 × 최소 지속 조합 35개를 전부 돌려 비교"
+          style={{ border: "1px solid var(--border-strong)", borderRadius: 8, padding: "6px 12px", background: "transparent", color: "var(--text-dim)", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>{swBusy ? "탐색 중…" : "설정 탐색"}</button>
       </div>
       {err && <div style={{ fontSize: 11.5, color: "var(--neg)", marginTop: 8 }}>{err}</div>}
 
@@ -121,6 +135,43 @@ export function BacktestCard() {
           )}
         </>
       )}
+
+      {sw && (() => {
+        const nets = [...new Set(sw.cells.map((c) => c.minNet))];
+        const helds = [...new Set(sw.cells.map((c) => c.minHeldSec))];
+        const max = Math.max(1, ...sw.cells.map((c) => Math.abs(c.totalUsd)));
+        const at = (n: number, h: number) => sw.cells.find((c) => c.minNet === n && c.minHeldSec === h)!;
+        return (
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>설정 탐색 — 총 손익 (칸을 누르면 그 설정으로)</div>
+            <div style={{ fontSize: 10.5, color: "var(--text-mute)", marginBottom: 6 }}>
+              {sw.best ? <>추천(20건↑·지속 30초↑·중앙 청산 +): 순수익 ≥{sw.best.minNet}% · {sw.best.minHeldSec}초 지속 → {sw.best.trades}건 {usd(sw.best.totalUsd)} (건당 {usd(sw.best.perTradeUsd ?? 0)}). </> : "추천 조건(20건↑·지속 30초↑·중앙 청산 +)을 채운 설정이 없음. "}
+              과거에 맞춘 최고값이라 실전은 이보다 못하다 — 이웃 칸도 괜찮은 설정을 고를 것.
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: 420 }}>
+                <thead><tr><th style={{ ...CAP, textAlign: "left", padding: "3px 6px" }}>순수익 \ 지속</th>{helds.map((h) => <th key={h} style={{ ...CAP, padding: "3px 6px" }}>{h}초</th>)}</tr></thead>
+                <tbody>{nets.map((n) => (
+                  <tr key={n}><td style={{ ...CAP, padding: "3px 6px" }}>≥{n}%</td>{helds.map((h) => {
+                    const c = at(n, h);
+                    const a = Math.min(0.55, Math.abs(c.totalUsd) / max * 0.55);
+                    const isBest = sw.best && c.minNet === sw.best.minNet && c.minHeldSec === sw.best.minHeldSec;
+                    return (
+                      <td key={h} onClick={() => { setMinNet(String(n)); setMinHeld(String(h)); }}
+                        title={`${c.trades}건 · 승률 ${c.winRate ?? "—"}% · 청산 중앙값 ${pct(c.medianExitNet)}`}
+                        className="tnum"
+                        style={{ padding: "4px 6px", textAlign: "right", cursor: "pointer", border: isBest ? "1.5px solid var(--brand)" : "1px solid var(--border)", opacity: c.trades < 20 ? 0.5 : 1,
+                          background: c.totalUsd >= 0 ? `color-mix(in srgb, var(--pos) ${Math.round(a * 100)}%, transparent)` : `color-mix(in srgb, var(--neg) ${Math.round(a * 100)}%, transparent)` }}>
+                        {usd(c.totalUsd)}<div style={{ fontSize: 9, color: "var(--text-mute)" }}>{c.trades}건</div>
+                      </td>
+                    );
+                  })}</tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {res?.listing && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>

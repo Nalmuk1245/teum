@@ -10,6 +10,7 @@ import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFin
 import { EpisodeChart } from "./EpisodeChart";
 import { PnlCalendar } from "./PnlCalendar";
 import { useCoinSheet } from "./coinSheetCtx";
+import { GapAutoCard } from "./GapAutoCard";
 import { longestWindowSec, longestProfitableRunSec, mergeWindows, outlastsEta } from "@/lib/episodeStats";
 import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
 
@@ -28,6 +29,7 @@ export function ControlPanel({ runs, killed, onOpen, wide }: { runs: RunView[]; 
     <div style={col}>
       <SectionLabel>안전장치</SectionLabel>
       <KillCard killed={killed} />
+      <GapAutoCard killed={killed} />
       <ReopenCard killed={killed} />
     </div>
   );

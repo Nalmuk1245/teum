@@ -212,6 +212,13 @@
 - [ ] 미개방 철회: 예정 시각을 지난 공지(또는 `prepositionMaxWaitMin`을 1로) → `prepos.abort`와 청산 런 기록
 **실패하면:** `lib/reopen.ts` `onConfirmedOpen()`, `prepositionTick()`, `decideOnOpen()`/`shouldPreposition()`(테스트 있음). 자금 경로는 기존 엔진(`startRun`/`confirmRun`/`unwindRun`) 그대로다.
 
+### T28. 서버 갭 자동 진입 ⚠️ 라이브 — 소액, 페이퍼 먼저
+**바뀐 것 (2026-09-23):** 운영 탭 "갭 자동 진입" 카드. 스캔마다 서버가 순수익 ≥ 최소값이 최소 지속시간 이상 이어진 갭(대형 갭 10%↑·잠긴 게이트·헷지 불가 김프 제외, 라이브는 확인된 열림만) 중 최고 하나에 런을 띄운다. 기본 "출금 전 정지". 라이브는 서버 env `GAP_AUTO_LIVE=true` + 켤 때 EXEC_TOKEN. "백테스트 추천값 불러오기"가 설정 탐색 결과(20건↑·지속 30초↑·중앙 청산 +)를 넣는다.
+- [ ] **DRY**: 추천값으로 켜고 하루. `grep gap_auto.entry data/events.jsonl` 건수·코인이 백테스트 예상(하루 ~9건)과 비슷한지, 같은 코인이 쿨다운(30분) 안에 두 번 안 들어가는지
+- [ ] 킬 스위치 ON → 새 `gap_auto.entry`가 안 찍히는지
+- [ ] 라이브: 규모 $60, 김프만, 출금 전 정지. 1건이 매수·헷지 후 멈추는지 → 수동 승인으로 끝까지. 체결가와 진입 시 `netPct` 차이 기록
+**실패하면:** `lib/gapAuto.ts` `pickCandidate()`(테스트 있음), `onScan()` · `lib/scanCache.ts` 호출부 · `app/api/gap-auto/route.ts`.
+
 ## C. 관찰 항목 — 일부러 재현하기 어렵다. 실사용 중 **발생하면** 기록
 
 | ID | 무엇을 보나 | 기대 동작 | 실패 신호 |
@@ -273,3 +280,4 @@
 | T25 | `lib/reopen.ts` `watchTick()` · `lib/transfers.ts` `fetchVenueStatus()` |
 | T26 | `lib/reopen.ts` `parseReopenNotice()`, `pollUpbit()`, `pollBithumb()` |
 | T27 | `lib/reopen.ts` `onConfirmedOpen()`, `prepositionTick()` · `app/api/reopen/route.ts` · `ControlPanel.tsx` `ReopenCard` |
+| T28 | `lib/gapAuto.ts` · `app/api/gap-auto/route.ts` · `app/components/GapAutoCard.tsx` |

@@ -59,3 +59,21 @@ describe("대형 갭 제외", () => {
     expect(r.excluded).toBe(1);
   });
 });
+
+import { sweep } from "@/lib/backtest";
+describe("sweep", () => {
+  it("격자 전체를 돌리고, 20건 미만 칸은 추천하지 않는다", () => {
+    const eps = [ep([[0, 2], [60_000, 2], [6 * MIN, 1]])];
+    const r = sweep(eps, { sizeUsd: 100, kinds: ["kimchi"], executableOnly: false });
+    expect(r.cells.length).toBe(35);
+    expect(r.best).toBeNull();
+  });
+  it("지속 0초·중앙 청산 ≤0 칸은 추천하지 않는다", () => {
+    // 25건: 0초 지속이면 진입(청산 −0.1), 30초 이상 지속은 못 채움 → 추천 없음
+    const eps = Array.from({ length: 25 }, (_, i) => ep([[0, 2], [6 * MIN, -0.1]], { base: `B${i}` }));
+    expect(sweep(eps, { sizeUsd: 100, kinds: ["kimchi"], executableOnly: false }).best).toBeNull();
+    const good = Array.from({ length: 25 }, (_, i) => ep([[0, 2], [60_000, 2], [7 * MIN, 0.5]], { base: `G${i}` }));
+    const b = sweep(good, { sizeUsd: 100, kinds: ["kimchi"], executableOnly: false }).best!;
+    expect(b.minHeldSec).toBeGreaterThan(0);
+  });
+});

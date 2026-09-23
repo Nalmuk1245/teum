@@ -130,6 +130,8 @@ async function refresh(): Promise<void> {
         // 기회 에피소드 기록 (복기용) — 임계 위 구간을 열고 닫는다. throw 안 함.
         import("./episodes").then((m) => m.recordEpisodes(next)).catch(() => {});
         C.ts = Date.now();
+        // 갭 자동 진입 (기본 꺼짐) — 이 스냅샷으로 판단
+        import("./gapAuto").then((m) => m.onScan(next)).catch((e) => console.error("[gapAuto]", e));
       }
     },
     (e) => { console.error("[scan refresh]", e); }, // 직전 스냅샷 유지
