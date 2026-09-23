@@ -31,6 +31,28 @@ async function j<T>(url: string): Promise<T> {
   return (await r.json()) as T;
 }
 
+// ── 업비트 캔들 한도 — group=candles 초당 10회(IP 단위) ────────────────────────
+// 차트 하나가 4회(코인 2페이지 + USDT/KRW 2페이지)를 동시에 쏘고, 차트 여러 개·재시도가
+// 겹치면 한도를 넘어 429로 통째로 실패했다. 호출 간격을 120ms로 줄 세우고(초당 ~8회),
+// 그래도 429면 잠깐 쉬고 두 번까지 다시 부른다.
+const UPBIT_GAP_MS = 120;
+const gq = globalThis as unknown as { __upCandleNext?: number };
+async function upbitSlot(): Promise<void> {
+  const now = Date.now();
+  const at = Math.max(now, gq.__upCandleNext ?? 0);
+  gq.__upCandleNext = at + UPBIT_GAP_MS;
+  if (at > now) await new Promise((r) => setTimeout(r, at - now));
+}
+async function upbitJ<T>(url: string): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    await upbitSlot();
+    const r = await fetch(url, { cache: "no-store", headers: UA, signal: AbortSignal.timeout(12_000) });
+    if (r.status === 429 && attempt < 2) { await new Promise((res) => setTimeout(res, 600 * (attempt + 1))); continue; }
+    if (!r.ok) throw new Error(r.status === 429 ? "업비트 요청 한도 초과 — 잠시 후 다시 시도" : `${r.status} ${url.slice(0, 60)}`);
+    return (await r.json()) as T;
+  }
+}
+
 // ── 거래소별 캔들 ─────────────────────────────────────────────────────────────
 
 async function upbitCandles(market: string, unit: Unit, count: number): Promise<Candle[]> {
@@ -41,7 +63,7 @@ async function upbitCandles(market: string, unit: Unit, count: number): Promise<
   while (out.length < count) {
     const n = Math.min(200, count - out.length);
     const url = `https://api.upbit.com/v1/candles/${path}?market=${market}&count=${n}${to ? `&to=${encodeURIComponent(to)}` : ""}`;
-    const rows = await j<{ candle_date_time_utc: string; trade_price: number }[]>(url);
+    const rows = await upbitJ<{ candle_date_time_utc: string; trade_price: number }[]>(url);
     if (!rows.length) break;
     for (const c of rows) out.push({ t: Math.floor(Date.parse(`${c.candle_date_time_utc}Z`) / 1000), close: c.trade_price });
     to = rows[rows.length - 1].candle_date_time_utc;
@@ -111,9 +133,18 @@ async function legCandles(spec: VenueSpec, coin: string, unit: Unit, count: numb
   }
 }
 
-/** 원화 → USD 환산용 USDT/KRW 캔들 (그 거래소 자신의 USDT 가격). */
+/** 원화 → USD 환산용 USDT/KRW 캔들 (그 거래소 자신의 USDT 가격).
+ *  코인과 무관한 값이라 30초 공유 캐시 — 여러 코인 차트가 매번 같은 환율 캔들을 다시 받지 않게. */
+const gfx = globalThis as unknown as { __fxCandles?: Map<string, { ts: number; p: Promise<Candle[]> }> };
+gfx.__fxCandles ??= new Map();
 async function fxCandles(venue: ChartVenue, unit: Unit, count: number): Promise<Candle[]> {
-  return venue === "bithumb" ? bithumbCandles("USDT", unit, count) : upbitCandles("KRW-USDT", unit, count);
+  const key = `${venue}:${unit}:${count}`;
+  const hit = gfx.__fxCandles!.get(key);
+  if (hit && Date.now() - hit.ts < 30_000) return hit.p;
+  const p = venue === "bithumb" ? bithumbCandles("USDT", unit, count) : upbitCandles("KRW-USDT", unit, count);
+  gfx.__fxCandles!.set(key, { ts: Date.now(), p });
+  p.catch(() => gfx.__fxCandles!.delete(key)); // 실패는 캐시하지 않는다
+  return p;
 }
 
 // ── 정렬 + 갭 계산 ────────────────────────────────────────────────────────────

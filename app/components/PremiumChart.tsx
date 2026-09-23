@@ -77,10 +77,14 @@ export function PremiumChart({
   const [autoCost, setAutoCost] = useState<number | null>(null);
   const effectiveCost = costPct === undefined ? autoCost : costPct;
 
+  // 재조회 판단은 **값**으로 한다. a/b를 객체로 deps에 넣으면 부모가 다시 그려질 때마다
+  // (상장 상세는 4초 폴링) 새 객체라 캔들을 다시 불렀고, 차트 하나가 업비트 캔들 한도
+  // (초당 10회)를 계속 긁어 다른 차트까지 429로 "조회 실패"가 났다.
+  const aKey = specParam(a), bKey = specParam(b);
   const load = useCallback(async () => {
     onBusy?.(true); setLoading(true); setErr(null); onError?.(null);
     try {
-      const q = `coin=${encodeURIComponent(coin)}&a=${specParam(a)}&b=${specParam(b)}&unit=${unit}&count=${unit >= 240 ? 500 : 400}`;
+      const q = `coin=${encodeURIComponent(coin)}&a=${aKey}&b=${bKey}&unit=${unit}&count=${unit >= 240 ? 500 : 400}`;
       const r = await fetch(`/api/premium?${q}`, { cache: "no-store" });
       const j = await r.json();
       if (j.error) { setErr(j.error); onError?.(j.error); setData(null); } else { setData(j); }
@@ -90,7 +94,8 @@ export function PremiumChart({
       setErr(m); onError?.(m); setData(null);
     }
     finally { onBusy?.(false); setLoading(false); }
-  }, [coin, a, b, unit, onBusy, onError]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- onBusy/onError는 콜백 정체성이 바뀌어도 재조회할 이유가 없다
+  }, [coin, aKey, bKey, unit]);
   useEffect(() => { void load(); }, [load]);
 
   // 비용선 자동 조회 — 부모가 costPct를 안 넘길 때만. 현재 스캔 스냅샷에서 같은
