@@ -103,7 +103,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
   const [listWatch, setListWatch] = useState<{ plays: { base: string; venue: string; opensAt?: number; opened: boolean }[]; watching: boolean } | null>(null);
   // 감시 상태 카드 데이터 — 전부 기존 API에서 읽는다.
   const [health, setHealth] = useState<{ ok: boolean; scanAgeSec: number | null; killed: boolean; dryRun: boolean; loopLagMs?: { worstMs: number; worstAgoSec: number | null }; srcHeat?: Record<string, { h: number; ok: number; n: number }[]> } | null>(null);
-  const [watch, setWatch] = useState<{ annOkAgoSec: number | null; annBlocked: boolean; annLagP50Ms?: number | null; mktOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null } | null>(null);
+  const [watch, setWatch] = useState<{ annOkAgoSec: number | null; annBlocked: boolean; annLagP50Ms?: number | null; mktOkAgoSec: number | null; tgConfigured: boolean; tgOkAgoSec: number | null; btAnnOkAgoSec?: number | null } | null>(null);
   const [gatesBlocked, setGatesBlocked] = useState<number | null>(null);
   /** 키가 없어 일부 거래소 상태를 못 본 상태 — "중단 없음"이라고 단정할 수 없다. */
   const [gatesPartial, setGatesPartial] = useState(false);
@@ -239,6 +239,11 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
           heatKey: "ann", label: "업비트 공지", sec: "감지 소스", state: annV ?? "off",
           text: `${annV === "warn" ? "멈춤 " : ""}${agoTxt(watch.annOkAgoSec)}${watch.annLagP50Ms != null ? ` · 감지 p50 ${(watch.annLagP50Ms / 1000).toFixed(1)}s` : ""}`,
         });
+    // 빗썸 공지 — 공식 API라 해외 IP에서도 열린다. 3초 주기라 30초 넘게 조용하면 멈춤.
+    rows.push(!watch ? { label: "빗썸 공지", sec: "감지 소스", state: stale ? "warn" : "off", text: pendingText }
+      : watch.btAnnOkAgoSec == null ? { label: "빗썸 공지", sec: "감지 소스", state: "off", text: "수신 대기" }
+      : watch.btAnnOkAgoSec < 30 ? { label: "빗썸 공지", sec: "감지 소스", state: "ok", text: agoTxt(watch.btAnnOkAgoSec) }
+      : { label: "빗썸 공지", sec: "감지 소스", state: "warn", text: `멈춤 (${agoTxt(watch.btAnnOkAgoSec)})` });
     const mktV = watch ? srcVerdict("mkt", wi) : null;
     rows.push(!watch ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: stale ? "warn" : "off", text: pendingText }
       : watch.mktOkAgoSec == null ? { heatKey: "mkt", label: "마켓 diff", sec: "감지 소스", state: "off", text: "수신 대기" }

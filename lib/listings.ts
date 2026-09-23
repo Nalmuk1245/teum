@@ -77,13 +77,17 @@ export type ListingPlay = {
   peakPct?: number; // max % above announcement price seen so far
   peakAt?: number; // when the peak was seen
   surgeAlerted?: boolean; // hot-wallet inflow alert already sent
+  /** 공지 후 N분 시점의 해외 가격 변화율(%) — 키 "5"·"15"·"30"·"60". 기대값 계산의 근거. */
+  pctAt?: Record<string, number>;
+  /** 국내 거래 개시 순간의 김프(%) — KR 가격 vs 공지 때 고른 해외 거래소 가격 */
+  krOpenPremPct?: number;
   /** 감지 타이밍(ms) — 이 제품의 승부처라 구간을 쪼개 기록한다.
    *  publishLagMs가 진짜 실력치(공지가 뜬 뒤 몇 ms 만에 봤나),
    *  나머지는 우리 코드가 쓴 시간이라 줄일 수 있는 몫이다. */
   detect?: DetectTiming;
 };
 
-export type DetectSource = "ann" | "market" | "tg";
+export type DetectSource = "ann" | "market" | "tg" | "bt-ann";
 export type DetectTiming = {
   at: number; // 감지 시각 (ms epoch)
   source: DetectSource;
@@ -132,7 +136,9 @@ type State = {
   primedAnn: boolean;
   primedMkt: boolean;
   /** Watcher health — last successful poll ts per source (0 = never). */
-  srcOk: { ann: number; annBlocked: boolean; mkt: number; tg: number };
+  srcOk: { ann: number; annBlocked: boolean; mkt: number; tg: number; bt?: number };
+  btSeen?: Set<string>;
+  primedBt?: boolean;
 };
 const g = globalThis as unknown as { __arbListings?: State };
 g.__arbListings ??= { annSeen: new Set(), tgSeen: new Set(), mkt: {}, plays: new Map(loadSection<[string, ListingPlay][]>("listingPlays") ?? []), loops: [], primedAnn: false, primedMkt: false, srcOk: { ann: 0, annBlocked: false, mkt: 0, tg: 0 } };
@@ -492,6 +498,53 @@ async function pollAnnouncements() {
   L.primedAnn = true;
 }
 
+// ── 빗썸 공지 (공식 API, 해외 IP에서도 열림) ─────────────────────────────────
+// feed-api.bithumb.com/v1/notices — api.bithumb.com/v1/notices가 여기로 302. 최신 5건만
+// 주지만(페이지 파라미터 무시) 상장 공지는 항상 최신이라 짧은 주기로 보면 된다.
+// 예전엔 빗썸 상장을 개장 뒤(마켓 목록 변화)에야 잡았다 — 26건 중 10건이 빗썸이었다.
+const BT_NOTICE_URL = "https://feed-api.bithumb.com/v1/notices";
+const BT_POLL_MS = 3000;
+/** "2026-09-23 18:00:00" (KST) → epoch ms */
+export function kstStrToMs(s: string | undefined): number | undefined {
+  const m = s ? /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(s) : null;
+  if (!m) return undefined;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5], +(m[6] ?? 0));
+}
+async function pollBithumbNotices() {
+  const pollT0 = Date.now();
+  let items: { id: string; title: string; publishedAt?: number }[] = [];
+  try {
+    const r = await fetch(BT_NOTICE_URL, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return;
+    const j = (await r.json()) as Array<{ title?: string; pc_url?: string; published_at?: string }>;
+    if (!Array.isArray(j)) return;
+    L.srcOk.bt = Date.now();
+    items = j.map((x) => ({ id: x.pc_url ?? x.title ?? "", title: x.title ?? "", publishedAt: kstStrToMs(x.published_at) })).filter((x) => x.id && x.title);
+  } catch { return; }
+  L.btSeen ??= new Set();
+  const first = !L.primedBt;
+  const now = Date.now();
+  for (const it of items) {
+    if (L.btSeen.has(it.id)) continue;
+    L.btSeen.add(it.id);
+    if (L.btSeen.size > 300) L.btSeen = new Set([...L.btSeen].slice(-200));
+    // 첫 폴은 baseline — 단 발행 10분 이내면 처리(재시작 창에 떨어진 공지)
+    if (first && !(it.publishedAt && now - it.publishedAt < ANN_BOOT_FRESH_MS)) continue;
+    if (!LISTING_RE.test(it.title)) continue;
+    const tickers = new Set<string>();
+    let m: RegExpExecArray | null;
+    TICKER_RE.lastIndex = 0;
+    while ((m = TICKER_RE.exec(it.title))) tickers.add(m[1]);
+    if (!tickers.size) continue;
+    const at = Date.now();
+    const detect: DetectTiming = { at, source: "bt-ann", publishedAt: it.publishedAt, publishLagMs: it.publishedAt ? at - it.publishedAt : undefined, pollLagMs: at - pollT0 };
+    logDetect([...tickers].join(","), detect, `bithumb "${it.title.slice(0, 40)}"`);
+    const opensAt = parseOpenTimeKst(it.title);
+    for (const t of tickers) void registerPlay(t, "bithumb", it.title, true, { opensAt: opensAt ?? undefined, detect });
+  }
+  L.primedBt = true;
+}
+
 // ── Market-list diff (confirmation: trading opened) ───────────────────────────
 async function upbitMarkets(): Promise<Set<string>> {
   try {
@@ -517,6 +570,7 @@ function diffMarkets(venue: "upbit" | "bithumb", now: Set<string>) {
         if (play) {
           play.opened = true;
           play.openedAt = at;
+          void captureOpenPremium(play);
           // 공지 감지 → 실제 거래 개시까지 걸린 시간. 선점 창이 얼마였는지 = 이 값.
           const lead = play.detect?.at ? at - play.detect.at : null;
           console.log(`[listing] ${new Date(at).toISOString()} ${base} src=market OPENED${lead != null ? ` leadFromDetect=${lead}ms` : ""}`);
@@ -562,6 +616,16 @@ export type ListingHistoryRow = {
   openedAt: number | null; opensAt: number | null;
   peakPct: number | null; peakAfterMin: number | null; // 공지 → 피크까지 분
   buys: number; buyUsd: number; realizedUsd: number | null; // 실거래만 (dry 제외)
+  // ── schema 2 (2026-09-23~) — 기대값을 계산할 수 있게. 1(이전) 행에는 없다.
+  //    이전 행은 해외 거래소 가격 대조 없이 기록돼 다른 토큰 가격이 섞였을 수 있다(LIT).
+  schema?: 2;
+  overseas?: boolean;            // 공지 때 해외에 이미 상장돼 있었나 (= 선점 가능)
+  globalVenue?: string | null;   // 기준 해외 거래소 (가격 합의 통과)
+  globalPrice?: number | null;   // 공지 감지 시점 해외 가격 = 기준가
+  detectSource?: string | null;  // ann(업비트 공지) · bt-ann(빗썸 공지) · tg · market(개장 후 = 늦음)
+  publishLagMs?: number | null;  // 공지 발행 → 우리가 본 시각
+  pctAt?: Record<string, number>; // 공지 후 5·15·30·60분 해외 가격 변화율
+  krOpenPremPct?: number | null; // 국내 개장 순간 김프
 };
 function archivePlay(p: ListingPlay) {
   if (p.drill) return;
@@ -582,6 +646,10 @@ function archivePlay(p: ListingPlay) {
     realizedUsd: realBuys.length && realSells.length
       ? realSells.reduce((s, x) => s + x.usd, 0) - realBuys.reduce((s, x) => s + x.usd, 0)
       : null,
+    schema: 2,
+    overseas: p.overseas, globalVenue: p.globalVenue ?? null, globalPrice: p.globalPrice ?? null,
+    detectSource: p.detect?.source ?? null, publishLagMs: p.detect?.publishLagMs ?? null,
+    pctAt: p.pctAt, krOpenPremPct: p.krOpenPremPct ?? null,
   });
   saveSection("listingHistory", hist.slice(0, 100));
 }
@@ -606,6 +674,28 @@ export async function startDrill(base: string): Promise<void> {
 const TRACK_MS = 60_000;
 const SURGE_USD_PER_MIN = Number(process.env.LISTING_SURGE_USD_MIN ?? 25_000);
 
+const PCT_MARKS = [5, 15, 30, 60];
+
+/** 국내 개장 순간 김프 — KR 원화가 → USD(그 거래소 USDT/KRW) vs 공지 때 고른 해외 거래소 현재가. */
+async function captureOpenPremium(p: ListingPlay): Promise<void> {
+  try {
+    if (!p.globalVenue) return;
+    const { venueTickerPx } = await import("./listingExit");
+    const { fetchUsdKrw } = await import("./exchanges");
+    const krUrl = p.venue === "upbit" ? `https://api.upbit.com/v1/ticker?markets=KRW-${p.base}` : `https://api.bithumb.com/public/ticker/${p.base}_KRW`;
+    const [kj, fx, g] = await Promise.all([
+      fetch(krUrl, { cache: "no-store", signal: AbortSignal.timeout(4000) }).then((r) => r.json()).catch(() => null),
+      fetchUsdKrw(p.venue),
+      venueTickerPx(p.globalVenue, p.base),
+    ]);
+    const krw = p.venue === "upbit" ? Number(kj?.[0]?.trade_price) : Number(kj?.data?.closing_price);
+    if (!(krw > 0) || !fx || !g) return;
+    p.krOpenPremPct = Math.round(((krw / fx / g) - 1) * 10000) / 100;
+    saveSection("listingPlays", [...L.plays.entries()]);
+    console.log(`[listing] ${p.base} 개장 김프 ${p.krOpenPremPct}% (${p.venue} vs ${p.globalVenue})`);
+  } catch { /* 기록용 — 실패해도 무시 */ }
+}
+
 async function trackPlays() {
   const now = Date.now();
   const active = [...L.plays.values()].filter((p) => now - p.announcedAt <= 2 * 3600_000);
@@ -616,6 +706,7 @@ async function trackPlays() {
   // matter most — the 60s tracker could overrun its own interval and the alerts
   // arrived late.
   const { fetchHoldings } = await import("./holdings");
+  let pctTouched = false;
   await Promise.all(active.map(async (p) => {
     // Peak vs announcement price (성과 히스토리 데이터).
     if (p.overseas && p.globalPrice && p.globalPrice > 0) {
@@ -624,6 +715,14 @@ async function trackPlays() {
       if (g2 && g2.price > 0 && !g2.ambiguous && (!p.globalVenue || g2.venue === p.globalVenue)) {
         const pct = ((g2.price - p.globalPrice) / p.globalPrice) * 100;
         if (p.peakPct == null || pct > p.peakPct) { p.peakPct = pct; p.peakAt = now; }
+        // 공지 후 N분 표본 — 60초 틱이라 해당 분을 지난 첫 틱의 값 (최대 1분 늦음)
+        const ageMin = (now - p.announcedAt) / 60_000;
+        for (const m of PCT_MARKS) {
+          if (ageMin >= m && ageMin < m + 10 && (p.pctAt ??= {})[String(m)] == null) {
+            p.pctAt[String(m)] = Math.round(pct * 100) / 100;
+            pctTouched = true;
+          }
+        }
       }
     }
     // 개장 임박 알림 (T−5분 이내, 1회).
@@ -647,6 +746,7 @@ async function trackPlays() {
       }
     } catch { /* best-effort */ }
   }));
+  if (pctTouched) saveSection("listingPlays", [...L.plays.entries()]);
   saveSection("listingPlays", [...L.plays.entries()]);
 }
 
@@ -752,7 +852,7 @@ async function pollTgChannel() {
 export function startListingWatch(): void {
   for (const l of L.loops) clearInterval(l);
   L.loops = [];
-  void pollAnnouncements(); void pollMarkets(); void pollTgChannel();
+  void pollAnnouncements(); void pollMarkets(); void pollTgChannel(); void pollBithumbNotices();
   // 공지·TG는 setInterval이 아니라 자기 재스케줄 — 차단 시 백오프 간격이
   // 다음 폴에 반영돼야 하는데 고정 인터벌로는 불가능하다.
   const annBackoff = { ms: 0 };
@@ -776,6 +876,7 @@ export function startListingWatch(): void {
   const annSlot = L.loops.push(annLoop()) - 1;
   const tgSlot = L.loops.push(tgLoop()) - 1;
   L.loops.push(setInterval(() => void pollMarkets(), MKT_POLL_MS));
+  L.loops.push(setInterval(() => void pollBithumbNotices().catch(() => {}), BT_POLL_MS));
   L.loops.push(setInterval(() => void trackPlays(), TRACK_MS)); // 피크·급증 추적
 }
 
@@ -838,6 +939,7 @@ export function watchStatus() {
     tgConfigured: !!process.env.LISTING_TG_CHANNEL,
     tgChannel: process.env.LISTING_TG_CHANNEL ?? null,
     tgOkAgoSec: ago(L.srcOk.tg),
+    btAnnOkAgoSec: ago(L.srcOk.bt ?? 0),
     plays: L.plays.size,
   };
 }

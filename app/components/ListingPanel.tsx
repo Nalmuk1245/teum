@@ -101,6 +101,24 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     return () => clearInterval(id);
   }, []);
 
+  // 자동 청산 — 산 코인을 언제 파나 (lib/listingExit)
+  type ExitCfg = { enabled: boolean; takeProfitPct: number; stopLossPct: number; trailingPct: number; afterOpenMin: number; maxHoldMin: number };
+  const [exitCfg, setExitCfg] = useState<ExitCfg | null>(null);
+  const [exitDraft, setExitDraft] = useState<ExitCfg | null>(null);
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exitErr, setExitErr] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/listing-exit", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (j.cfg) { setExitCfg(j.cfg); setExitDraft(j.cfg); } }).catch(() => {});
+  }, []);
+  const saveExit = async (p: Partial<ExitCfg>) => {
+    try {
+      const res = await fetch("/api/listing-exit", { method: "POST", headers: authHeaders(), body: JSON.stringify(p) });
+      const j = await res.json();
+      if (!res.ok) { setExitErr(j.error ?? "청산 설정 실패"); return; }
+      setExitErr(null); if (j.cfg) { setExitCfg(j.cfg); setExitDraft(j.cfg); }
+    } catch { setExitErr("청산 설정 실패"); }
+  };
+
   const runDrill = async () => {
     setDrilling(true);
     try {
@@ -121,7 +139,7 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
     } catch { /* ignore */ }
   };
 
-  const watchOk = watch != null && ((!watch.annBlocked && watch.annOkAgoSec != null) || (watch.tgConfigured && watch.tgOkAgoSec != null));
+  const watchOk = watch != null && ((!watch.annBlocked && watch.annOkAgoSec != null) || (watch.tgConfigured && watch.tgOkAgoSec != null) || (watch.btAnnOkAgoSec != null && watch.btAnnOkAgoSec < 30));
   const watchTitle = watch == null ? "감시 상태 로딩 중"
     : [
         `공지 API: ${watch.annBlocked ? "차단(비KR IP)" : watch.annOkAgoSec != null ? `정상 (${watch.annOkAgoSec}s 전)` : "대기"}`,
@@ -194,6 +212,42 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
           {autoErr}
         </div>
       )}
+
+      {/* 자동 청산 — 자동매수와 짝. 먼저 걸리는 규칙으로 전량 매도 */}
+      <div
+        title={`산 코인을 규칙대로 판다 (5초마다 확인, 먼저 걸리는 규칙).\n손절·익절·트레일링·국내 개장 후 N분·최대 보유. 0이면 그 규칙 끔.\n킬스위치면 주문 보류. 라이브는 LISTING_AUTO_LIVE=true 필요.`}
+        style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", background: exitCfg?.enabled ? "color-mix(in srgb, var(--amber) 6%, transparent)" : "transparent" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 6, height: 6, borderRadius: 9, background: exitCfg?.enabled ? "var(--amber)" : "var(--text-mute)" }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: exitCfg?.enabled ? "var(--amber)" : "var(--text-dim)" }}>자동 청산</span>
+          {exitCfg && (
+            <span className="tnum" style={{ fontSize: 10, color: "var(--text-mute)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {[exitCfg.takeProfitPct && `익절 +${exitCfg.takeProfitPct}%`, exitCfg.stopLossPct && `손절 −${exitCfg.stopLossPct}%`, exitCfg.trailingPct && `트레일 ${exitCfg.trailingPct}%`, exitCfg.afterOpenMin && `개장+${exitCfg.afterOpenMin}분`, exitCfg.maxHoldMin && `최대 ${exitCfg.maxHoldMin}분`].filter(Boolean).join(" · ")}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          <button type="button" style={BTN_GHOST} onClick={() => setExitOpen(!exitOpen)}>{exitOpen ? "접기" : "설정"}</button>
+          <button type="button" onClick={() => void saveExit({ enabled: !exitCfg?.enabled })}
+            style={{ ...BTN, background: exitCfg?.enabled ? "var(--neg)" : "var(--brand)", color: exitCfg?.enabled ? "#fff" : "var(--brand-ink)" }}>
+            {exitCfg?.enabled ? "끄기" : "켜기"}
+          </button>
+        </div>
+        {exitOpen && exitDraft && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(84px, 1fr))", gap: 6, marginTop: 8 }}>
+            {([["익절 %", "takeProfitPct"], ["손절 %", "stopLossPct"], ["트레일 %", "trailingPct"], ["개장 후 분", "afterOpenMin"], ["최대 보유 분", "maxHoldMin"]] as const).map(([label, k]) => (
+              <label key={k} style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                <span style={CAP}>{label}</span>
+                <input className="tnum" inputMode="decimal" value={String(exitDraft[k])}
+                  onChange={(e) => setExitDraft({ ...exitDraft, [k]: Number(e.target.value.replace(/[^\d.]/g, "")) || 0 })}
+                  onBlur={() => void saveExit({ [k]: exitDraft[k] })}
+                  style={{ ...INPUT, width: "100%", textAlign: "right" }} />
+              </label>
+            ))}
+          </div>
+        )}
+        {exitErr && <div style={{ fontSize: 11, color: "var(--neg)", marginTop: 6 }}>{exitErr}</div>}
+      </div>
 
       {/* 플레이 리스트 */}
       {rows.length === 0 ? (
@@ -275,10 +329,14 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
         {histOpen && history.length > 0 && (
           // 전 건 표시 — 잘라 보여주면 "이게 전부"로 오독한다. 길이는 스크롤이 감당.
           <div style={{ maxHeight: 300, overflowY: "auto" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: "4px 12px", padding: "0 14px 12px", fontSize: 11, alignItems: "baseline" }}>
+            <HistorySummary rows={history} />
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto auto auto auto", gap: "4px 10px", padding: "0 14px 12px", fontSize: 11, alignItems: "baseline" }}>
               <span style={CAP}>티커</span><span style={CAP}>공지</span>
+              <span style={{ ...CAP, textAlign: "right" }} title="어디서 감지했나 — 업·빗 공지는 빠름, 개장은 늦음">감지</span>
+              <span style={{ ...CAP, textAlign: "right" }} title="공지 후 5분 해외 가격 변화">5분</span>
+              <span style={{ ...CAP, textAlign: "right" }} title="공지 후 30분 해외 가격 변화">30분</span>
               <span style={{ ...CAP, textAlign: "right" }}>피크</span>
-              <span style={{ ...CAP, textAlign: "right" }}>도달</span>
+              <span style={{ ...CAP, textAlign: "right" }} title="국내 거래 개시 순간 김프">개장김프</span>
               <span style={{ ...CAP, textAlign: "right" }}>실현</span>
               {history.map((h) => (
                 <Fragment key={h.base + h.announcedAt}>
@@ -291,11 +349,19 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
                   <span className="tnum" style={{ color: "var(--text-mute)" }}>
                     {new Date(h.announcedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </span>
-                  <span className="tnum" style={{ textAlign: "right", fontWeight: 700, color: (h.peakPct ?? 0) > 0 ? "var(--pos)" : "var(--text-mute)" }}>
+                  <span style={{ textAlign: "right", fontSize: 10, color: h.detectSource === "market" ? "var(--amber)" : "var(--text-mute)" }}
+                    title={h.schema !== 2 ? "구버전 기록 — 해외 가격 대조 없이 기록돼 기준가가 틀렸을 수 있음" : h.publishLagMs != null ? `공지 발행 후 ${(h.publishLagMs / 1000).toFixed(1)}초에 감지` : undefined}>
+                    {h.schema !== 2 ? "구" : h.detectSource === "ann" ? "업공지" : h.detectSource === "bt-ann" ? "빗공지" : h.detectSource === "tg" ? "TG" : h.detectSource === "market" ? "개장" : "—"}
+                  </span>
+                  {(["5", "30"] as const).map((m) => {
+                    const v = h.pctAt?.[m];
+                    return <span key={m} className="tnum" style={{ textAlign: "right", color: v == null ? "var(--text-mute)" : v >= 0 ? "var(--pos)" : "var(--neg)" }}>{v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`}</span>;
+                  })}
+                  <span className="tnum" title={h.peakAfterMin != null ? `공지 후 ${h.peakAfterMin}분에 피크` : undefined} style={{ textAlign: "right", fontWeight: 700, color: (h.peakPct ?? 0) > 0 ? "var(--pos)" : "var(--text-mute)", opacity: h.schema === 2 ? 1 : 0.6 }}>
                     {h.peakPct != null ? `+${h.peakPct.toFixed(1)}%` : "—"}
                   </span>
-                  <span className="tnum" style={{ textAlign: "right", color: "var(--text-dim)" }}>
-                    {h.peakAfterMin != null ? `${h.peakAfterMin}분` : "—"}
+                  <span className="tnum" style={{ textAlign: "right", color: h.krOpenPremPct == null ? "var(--text-mute)" : h.krOpenPremPct >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                    {h.krOpenPremPct == null ? "—" : `${h.krOpenPremPct >= 0 ? "+" : ""}${h.krOpenPremPct.toFixed(1)}%`}
                   </span>
                   <span className="tnum" style={{ textAlign: "right", color: h.realizedUsd == null ? "var(--text-mute)" : h.realizedUsd >= 0 ? "var(--pos)" : "var(--neg)" }}>
                     {h.realizedUsd != null ? `${h.realizedUsd >= 0 ? "+" : "−"}$${Math.abs(h.realizedUsd).toFixed(0)}` : "—"}
@@ -345,3 +411,20 @@ export function ListingPanel({ wide }: { wide?: boolean }) {
 }
 
 export default ListingPanel;
+
+/** 히스토리 요약 — schema 2(가격 대조 후) 기록만으로 "공지 매수가 기대값이 있나"를 본다. */
+function HistorySummary({ rows }: { rows: HistoryRow[] }) {
+  const v2 = rows.filter((r) => r.schema === 2);
+  const med = (xs: number[]) => { if (!xs.length) return null; const a = [...xs].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
+  const at = (m: string) => med(v2.map((r) => r.pctAt?.[m]).filter((x): x is number => x != null));
+  const open = med(v2.map((r) => r.krOpenPremPct).filter((x): x is number => x != null));
+  const early = v2.filter((r) => r.detectSource === "ann" || r.detectSource === "bt-ann").length;
+  const f = (x: number | null) => (x == null ? "—" : `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`);
+  return (
+    <div style={{ padding: "0 14px 8px", fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6 }}>
+      {v2.length === 0
+        ? <span style={{ color: "var(--text-mute)" }}>새 형식 기록 0건 — 공지 후 5·30분 수익률·개장 김프는 이제부터 쌓입니다 (기존 {rows.length}건은 구버전)</span>
+        : <>새 형식 <b>{v2.length}</b>건 · 공지 감지 {early}건 · 5분 후 중앙값 <b>{f(at("5"))}</b> · 30분 후 <b>{f(at("30"))}</b> · 개장 김프 중앙값 <b>{f(open)}</b></>}
+    </div>
+  );
+}

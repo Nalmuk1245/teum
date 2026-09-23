@@ -26,7 +26,7 @@ import { notifyNow } from "./telegram";
 import { loadSection, flushSection } from "./persist";
 import { isKilled } from "./killswitch";
 import { CONFIG } from "./config";
-import { parseOpenTimeKst } from "./listings";
+import { parseOpenTimeKst, kstStrToMs } from "./listings";
 
 // ── 설정 ──────────────────────────────────────────────────────────────────────
 export type ReopenAutoCfg = {
@@ -113,7 +113,8 @@ export function pickTargets(opps: Opportunity[], schedule: Record<string, Schedu
 /** 재개 공지 제목/본문 → 코인들 + 예정 시각. 재개가 아니면 null. */
 export const REOPEN_RE = /(입출금|입금|출금|네트워크|지갑)[^\n]{0,24}(재개|정상화|정상\s*운영|점검\s*완료|서비스\s*재개)/;
 // 재개가 아닌 것: 중단·지연·연기 공지. "재개 지연 안내"는 제목에 재개가 있어도 재개가 아니다.
-const NOT_REOPEN_RE = /(지연|연기|중단\s*예정|일시\s*중단\s*안내|중단\s*안내)/;
+// 빗썸은 "입출금 일시 중지 안내 (09/23 재개)"처럼 중지 공지 제목에 재개 날짜를 넣는다 — 중지 공지다.
+const NOT_REOPEN_RE = /(지연|연기|중단\s*예정|일시\s*중단|일시\s*중지|중지\s*안내|중단\s*안내)/;
 const TICKER_RE = /\(([A-Z0-9]{2,10})\)/g;
 export function parseReopenNotice(title: string, body?: string): { bases: string[]; at: number | null } | null {
   if (!REOPEN_RE.test(title)) return null;
@@ -308,19 +309,20 @@ function publishedAtOf(raw: Record<string, unknown>): number | undefined {
   for (const k of ["listed_at", "first_listed_at", "created_at", "published_at", "updated_at", "regDate", "reg_date"]) {
     const v = raw[k];
     if (typeof v === "number" && v > 1e12) return v;
-    if (typeof v === "string") { const t = Date.parse(v); if (Number.isFinite(t) && t > 0) return t; }
+    // 빗썸은 "2026-09-23 18:00:00"(KST, 시간대 없음) — Date.parse는 서버 시간대로 읽어 9시간 틀린다.
+    if (typeof v === "string") { const k = kstStrToMs(v); if (k) return k; const t = Date.parse(v); if (Number.isFinite(t) && t > 0) return t; }
   }
   return undefined;
 }
 async function pollBithumb(): Promise<void> {
   // 빗썸 공지 API는 문서가 얇다 — 실패해도 조용히. 응답 모양은 관대하게 읽는다.
-  const url = process.env.BITHUMB_NOTICE_URL || "https://api.bithumb.com/v1/notices?count=20";
+  const url = process.env.BITHUMB_NOTICE_URL || "https://feed-api.bithumb.com/v1/notices";
   const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(4000) });
   if (!r.ok) return;
   const j = await r.json() as unknown;
   const list = (Array.isArray(j) ? j : (j as { data?: unknown[] })?.data ?? []) as Array<Record<string, unknown>>;
   for (const x of list) {
-    const id = String(x.id ?? x.notice_id ?? x.seq ?? "");
+    const id = String(x.id ?? x.notice_id ?? x.seq ?? x.pc_url ?? "");
     await handleNotice("bithumb", id, String(x.title ?? ""), publishedAtOf(x), async () => (typeof x.content === "string" ? x.content : null));
   }
 }

@@ -57,3 +57,11 @@ describe("setLimits — 재시작 내성", () => {
     expect(saved.maxPerTradeUsd).toBe(500);
   });
 });
+
+import { kstStrToMs } from "@/lib/listings";
+describe("kstStrToMs — 빗썸 공지 발행 시각(KST, 시간대 표기 없음)", () => {
+  it("KST로 읽는다", () => {
+    expect(kstStrToMs("2026-09-23 18:00:00")).toBe(Date.UTC(2026, 8, 23, 9, 0, 0));
+    expect(kstStrToMs("nope")).toBeUndefined();
+  });
+});

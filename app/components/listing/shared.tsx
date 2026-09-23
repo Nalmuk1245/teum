@@ -16,10 +16,13 @@ export type Listing = {
 export type HistoryRow = {
   base: string; venue: string; announcedAt: number; openedAt: number | null; opensAt: number | null;
   peakPct: number | null; peakAfterMin: number | null; buys: number; buyUsd: number; realizedUsd: number | null;
+  schema?: 2; overseas?: boolean; globalVenue?: string | null; globalPrice?: number | null;
+  detectSource?: string | null; publishLagMs?: number | null; pctAt?: Record<string, number>; krOpenPremPct?: number | null;
 };
 export type Watch = {
   annOkAgoSec: number | null; annBlocked: boolean; mktOkAgoSec: number | null;
   tgConfigured: boolean; tgChannel: string | null; tgOkAgoSec: number | null; plays: number;
+  btAnnOkAgoSec?: number | null;
 };
 export type WalletBreak = { address: string; tag: string | null; type: "hot" | "cold"; amount: number; usd: number | null };
 export type Holdings = {

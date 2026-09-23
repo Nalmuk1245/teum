@@ -96,3 +96,9 @@ describe("shouldPreposition — 예정 시각 전 매수+헷지", () => {
     expect(shouldPreposition({ ...base, reopenAt: undefined }).ok).toBe(false);
   });
 });
+
+describe("빗썸 제목 형식", () => {
+  it("'입출금 일시 중지 안내 (09/23 재개)'는 중지 공지다 — 재개로 읽지 않는다", () => {
+    expect(parseReopenNotice("아발란체(AVAX) 네트워크 계열 가상자산 3종 입출금 일시 중지 안내 (09/23 재개)")).toBeNull();
+  });
+});
