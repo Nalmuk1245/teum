@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Opportunity } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
-import { KIND_META, vlabel, PersistChip, VenueLink, oppKindLabel } from "./cockpit-ui";
+import { KIND_META, vlabel, PersistChip, VenueLink, oppKindLabel, oppKindColor } from "./cockpit-ui";
 import { TransferPanel } from "./ExecuteModal";
 import { TV_SYMBOL } from "./ListingPanel";
 import { PremiumChart, type Spec, type Market } from "./PremiumChart";
@@ -270,7 +270,7 @@ export function GapInspect({ opp, live, onExecute, onClose }: {
       {/* 헤더 */}
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
         <span style={{ fontWeight: 700, fontSize: 15 }}>{opp.base}</span>
-        <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>{oppKindLabel(opp)}</span>
+        <span style={{ color: oppKindColor(opp), fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>{oppKindLabel(opp)}</span>
         <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
           {buy && sell ? <>매수 <VenueLink venue={buy.venue} base={opp.base} /> <span style={{ color: "var(--text-mute)" }}>→</span> 매도 <VenueLink venue={sell.venue} base={opp.base} /></> : null}
         </span>

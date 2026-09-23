@@ -474,7 +474,9 @@ export default function Cockpit() {
                   transition: "background 120ms, color 120ms",
                 }}
               >
-                {label}
+                {k === "kimchi"
+                  ? <><span style={{ color: "var(--kimchi)" }}>김프</span><span style={{ color: "var(--text-mute)" }}>·</span><span style={{ color: "var(--rkimchi)" }}>역프</span></>
+                  : label}
                 <span style={{ color: active ? "var(--brand)" : "var(--text-mute)", marginLeft: 6, fontWeight: 500 }}>
                   {n}
                 </span>

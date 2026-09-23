@@ -24,6 +24,14 @@ export function kindLabel(kind: string, buyVenue?: string, sellVenue?: string): 
   if (kind === "kimchi") return buyVenue && KR_VENUES.has(buyVenue) ? "역프" : "김프";
   return KIND_META[kind as StrategyKind]?.label ?? kind;
 }
+/** 김프·역프는 방향이 반대라 색도 나눈다. 다른 전략은 KIND_META 색. */
+export function kindColor(kind: string, buyVenue?: string): string {
+  if (kind === "kimchi") return buyVenue && KR_VENUES.has(buyVenue) ? "var(--rkimchi)" : "var(--kimchi)";
+  return KIND_META[kind as StrategyKind]?.color ?? "var(--text-dim)";
+}
+export function oppKindColor(o: Opportunity): string {
+  return kindColor(o.kind, o.legs.find((l) => l.side === "buy")?.venue);
+}
 export function oppKindLabel(o: Opportunity): string {
   return kindLabel(
     o.kind,

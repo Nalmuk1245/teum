@@ -13,7 +13,7 @@ import React from "react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Opportunity } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
-import { VENUE_LABEL, oppKindLabel } from "./cockpit-ui";
+import { VENUE_LABEL, oppKindLabel, oppKindColor } from "./cockpit-ui";
 import { HoldingsCard, type GateRow } from "./ControlPanel";
 
 type NetRow = { net: string; chainKey?: string; deposit: boolean; withdraw: boolean; feeCoin?: number; isDefault?: boolean };
@@ -83,7 +83,7 @@ function CoinDetail({ base, opps, onInspect }: { base: string; opps: Opportunity
           return (
             <button key={o.id} type="button" onClick={() => onInspect(o)}
               style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", borderBottom: "1px solid var(--border)", padding: "8px 0", color: "var(--text)", cursor: "pointer", fontSize: 12.5 }}>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--brand-2)", minWidth: 40 }}>{o.kind === "kimchi" ? oppKindLabel(o) : o.kind === "cross-cex" ? "크로스" : o.kind === "cex-dex" ? "DEX" : "펀딩"}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: oppKindColor(o), minWidth: 40 }}>{o.kind === "kimchi" ? oppKindLabel(o) : o.kind === "cross-cex" ? "크로스" : o.kind === "cex-dex" ? "DEX" : "펀딩"}</span>
               <span style={{ color: "var(--text-dim)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{buy ? vl(buy.venue) : "?"} → {sell ? vl(sell.venue) : "?"}</span>
               {locked && <span style={{ fontSize: 10.5, fontWeight: 700, color: o.gate === "closed" ? "var(--neg)" : "var(--amber)" }}>{locked}</span>}
               <span style={{ flex: 1 }} />

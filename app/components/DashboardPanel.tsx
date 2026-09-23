@@ -9,7 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Opportunity, Portfolio } from "@/lib/types";
 import { pct, usd, dur } from "@/lib/format";
 import type { LiveGap } from "@/lib/useLivePrices";
-import { vlabel, Spark, oppKindLabel, kindLabel } from "./cockpit-ui";
+import { vlabel, Spark, oppKindLabel, oppKindColor, kindLabel } from "./cockpit-ui";
 import { inFlightUsd } from "@/lib/runStore";
 import { srcVerdict } from "@/lib/watchVerdict";
 import type { RiskState } from "./ControlPanel";
@@ -376,7 +376,7 @@ export function DashboardPanel({ opps, liveOverlay, onGoTab, onExecute, onInspec
                 <span style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700 }}>{o.base}</div>
                   <div style={{ fontSize: 10.5, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {o.kind === "kimchi" ? oppKindLabel(o) : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"} · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
+                    <span style={{ color: oppKindColor(o), fontWeight: 700 }}>{o.kind === "kimchi" ? oppKindLabel(o) : o.kind === "cross-cex" ? "크로스" : "CEX-DEX"}</span> · {buy ? vlabel(buy.venue) : "?"} → {sell ? vlabel(sell.venue) : "?"}
                   </div>
                 </span>
                 {/* 30분 추이 — 전폭 승격으로 생긴 자리 (모바일은 3열 유지) */}

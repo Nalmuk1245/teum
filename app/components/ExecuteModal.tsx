@@ -7,7 +7,7 @@ import { pct, usd, price } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, oppKindColor, kindLabel } from "./cockpit-ui";
 
 export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Opportunity; onClose: () => void; isMobile?: boolean; initialRunId?: string | null }) {
   const km = KIND_META[opp.kind];
@@ -112,7 +112,7 @@ export function ExecuteModal({ opp, onClose, isMobile, initialRunId }: { opp: Op
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px", borderBottom: "1px solid var(--border)" }}>
           <span style={{ width: 8, height: 8, borderRadius: 6, background: km.color }} />
           <span style={{ fontWeight: 700, fontSize: 15 }}>실행 · {opp.base}</span>
-          <span style={{ color: "var(--text-mute)", fontSize: 12 }}>{oppKindLabel(opp)}</span>
+          <span style={{ color: oppKindColor(opp), fontSize: 12, fontWeight: 700 }}>{oppKindLabel(opp)}</span>
           <span style={{ flex: 1 }} />
           {/* 접기 = 그냥 닫기 — 런은 스토어에 살아서 계속 돌고, 우하단 독이
               진행 상황을 이어받는다. ✕와 결과는 같지만 "실행이 죽지 않는다"를

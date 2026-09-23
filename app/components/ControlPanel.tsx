@@ -12,7 +12,7 @@ import { PnlCalendar } from "./PnlCalendar";
 import { useCoinSheet } from "./coinSheetCtx";
 import { GapAutoCard } from "./GapAutoCard";
 import { longestWindowSec, longestProfitableRunSec, mergeWindows, outlastsEta } from "@/lib/episodeStats";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, xBtn, oppKindLabel, kindLabel, kindColor } from "./cockpit-ui";
 
 export type RiskState = { day: string; realizedPnlUsd: number; maxPerTradeUsd: number; maxInFlightUsd: number; maxDailyLossUsd: number; unrealizedPnlUsd?: number | null; unrealizedLossUsd?: number | null; openNotionalUsd?: number | null; unpricedPositions?: number };
 
@@ -467,7 +467,7 @@ export function EpisodeCard() {
                       {g.executedN > 0 && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--pos)" }}>실행 {g.executedN}</span>}
                     </span>
                     <span style={{ display: "block", fontSize: 10, color: "var(--text-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
-                      {kindLabel(g.kind, g.buyVenue, g.sellVenue)} · {vlabel(g.buyVenue) ?? g.buyVenue} → {vlabel(g.sellVenue) ?? g.sellVenue}
+                      <span style={{ color: kindColor(g.kind, g.buyVenue), fontWeight: 700 }}>{kindLabel(g.kind, g.buyVenue, g.sellVenue)}</span> · {vlabel(g.buyVenue) ?? g.buyVenue} → {vlabel(g.sellVenue) ?? g.sellVenue}
                       {g.windowN > 1 ? ` · ${g.windowN}회` : ""} · {when(g.lastTs)}
                     </span>
                   </span>
@@ -815,7 +815,7 @@ function TradeList({ trades }: { trades: TradeRec[] }) {
             <span style={{ minWidth: 0 }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
                 <b>{t.base}</b>
-                <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--brand-2)" }}>{kindKo}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: kindColor(t.kind === "listing" ? "listing" : t.kind, t.route?.split(" → ")[0]) }}>{kindKo}</span>
                 {t.dryRun && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--sky)", border: "1px solid var(--sky)", borderRadius: 8, padding: "0 4px" }}>페이퍼</span>}
                 {t.status && t.status !== "done" && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--neg)" }}>{t.status}</span>}
               </span>

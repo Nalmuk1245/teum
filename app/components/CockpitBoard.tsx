@@ -7,7 +7,7 @@ import { pct, usd, price } from "@/lib/format";
 import { type LiveAges, type LiveGap, type LiveStatus } from "@/lib/useLivePrices";
 import { buildPlan, type AutoLevel, type ExecStep, type StepPhase } from "@/lib/execPlan";
 import { useRuns, startRun, confirmRun, retryRun, cancelRun, unwindRun, clearFinished, setKillSwitch, inFlightUsd, setInFlightLimit, type RunView } from "@/lib/runStore";
-import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, COLS_NARROW, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn, oppKindLabel, kindLabel } from "./cockpit-ui";
+import { KIND_META, KINDS, GAP_KINDS, ALERT_NET_PCT, beep, Tile, COLS, COLS_MON, COLS_NARROW, Empty, Metric, Line, Warn, LegRow, VENUE_LABEL, vlabel, WL_KEY, statusChip, FundingCountdown, PersistChip, ScanAge, LiveDots, Pill, Spark, xBtn, oppKindLabel, oppKindColor, kindLabel } from "./cockpit-ui";
 import { isLocked } from "@/lib/gateState";
 
 // 게이트 배지 — 닫힌 갭은 지우지 않고 "왜 지금 못 잡나"를 붙인다. 열린 직후 5분은 열림 강조.
@@ -121,7 +121,7 @@ function OppCardImpl({ o, onExecute, showExecute, live, flashing }: { o: Opportu
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
         <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
           <span style={{ fontWeight: 700, fontSize: 14.5, letterSpacing: "0.01em" }}>{o.base}</span>
-          <span style={{ color: km.color, fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
+          <span style={{ color: oppKindColor(o), fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
             {oppKindLabel(o)}
           </span>
           {o.mock && <span style={{ color: "var(--text-mute)", fontSize: 9, border: "1px solid var(--border)", borderRadius: 6, padding: "0 3px" }}>mock</span>}
@@ -227,7 +227,7 @@ function RowImpl({ o, onExecute, showExecute, live, flashing, onInspect, inspect
       <span
         style={{
           justifySelf: "start",
-          color: km.color, fontSize: 10, fontWeight: 600,
+          color: oppKindColor(o), fontSize: 10, fontWeight: 600,
           letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap",
         }}
       >
